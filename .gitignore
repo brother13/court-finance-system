@@ -1,0 +1,43 @@
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor and IDE state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+
+# Logs and runtime output
+*.log
+logs/
+tmp/
+temp/
+backend/runtime/
+backend/public/uploads/
+backend/public/storage/
+
+# Frontend dependencies and build output
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/coverage/
+
+# PHP dependencies and tool output
+vendor/
+backend/vendor/
+backend/thinkphp/vendor/
+backend/thinkphp/composer.lock
+.phpunit.result.cache
+
+# Local design/tool scratch space
+.superdesign/
