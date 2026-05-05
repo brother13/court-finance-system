@@ -12,7 +12,7 @@
         </div>
       </div>
 
-      <el-menu router :default-active="$route.path" :default-openeds="['/books', '/base', '/system']" class="nav-menu">
+      <el-menu router :default-active="$route.path" :default-openeds="['/books', '/case-fund', '/base', '/system']" class="nav-menu">
         <el-menu-item v-if="context.hasPermission('menu:dashboard')" index="/dashboard">
           <el-icon><DataLine /></el-icon>
           <span>首页看板</span>
@@ -28,6 +28,14 @@
           </template>
           <el-menu-item v-if="context.hasPermission('menu:book:detail_ledger')" index="/books/detail-ledger">明细账</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:book:subject_balance')" index="/books/subject-balance">科目余额表</el-menu-item>
+        </el-sub-menu>
+        <el-sub-menu v-if="context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
+          <template #title>
+            <el-icon><Coin /></el-icon>
+            <span>案款业务</span>
+          </template>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">案款缴费登记</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds" disabled>案款退付登记</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="context.hasAnyPermission(['menu:base:subject', 'menu:base:opening', 'menu:base:aux'])" index="/base">
           <template #title>
@@ -46,6 +54,7 @@
           <el-menu-item v-if="context.hasPermission('menu:system:user')" index="/system/users">用户管理</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:system:role')" index="/system/roles">角色管理</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:system:role_permission')" index="/system/role-permissions">角色权限配置</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:system:account_set')" index="/system/account-sets">账套管理</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:system:audit_log')" index="/system/audit-logs">审计日志</el-menu-item>
         </el-sub-menu>
       </el-menu>
@@ -106,7 +115,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close, DataLine, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
+import { Close, Coin, DataLine, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
 
@@ -114,7 +123,8 @@ const route = useRoute()
 const router = useRouter()
 const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
-const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:audit_log']
+const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund']
+const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:account_set', 'menu:system:audit_log']
 
 interface PageTab {
   path: string
@@ -129,12 +139,14 @@ const titleMap: Record<string, string> = {
   '/vouchers/new': '凭证录入',
   '/books/detail-ledger': '明细账',
   '/books/subject-balance': '科目余额表',
+  '/case-fund/payments': '案款缴费登记',
   '/base/subjects': '科目',
   '/base/opening-balances': '期初',
   '/base/aux-items': '辅助核算项',
   '/system/users': '用户管理',
   '/system/roles': '角色管理',
   '/system/role-permissions': '角色权限配置',
+  '/system/account-sets': '账套管理',
   '/system/audit-logs': '审计日志'
 }
 

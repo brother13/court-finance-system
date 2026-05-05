@@ -16,6 +16,8 @@ class User extends Common
                 return $this->getList($data);
             case 'info':
                 return $this->getInfo($data);
+            case 'accountSetOptions':
+                return $this->accountSetOptions($data);
             case 'add':
                 return $this->add($data);
             case 'edit':
@@ -101,6 +103,28 @@ class User extends Common
         $row['role_ids'] = Db::name('fin_user_role')->where('user_id', $userId)->column('role_id');
         $row['account_set_ids'] = Db::name('fin_user_account_set')->where('user_id', $userId)->column('account_set_id');
         return $this->ok($row);
+    }
+
+    public function accountSetOptions($data = [])
+    {
+        $auth = $this->requirePermission('system:user:view');
+        if ($auth) {
+            return $auth;
+        }
+        $rows = Db::name('fin_account_set')
+            ->where($this->accountSetOptionWhere())
+            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,remark')
+            ->order('biz_type asc,set_code asc')
+            ->select();
+        return $this->ok($rows, 'OK', count($rows));
+    }
+
+    protected function accountSetOptionWhere()
+    {
+        return [
+            'status' => 1,
+            'del_flag' => 0,
+        ];
     }
 
     public function add($data = [])

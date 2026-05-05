@@ -100,6 +100,12 @@ create table fin_account_set (
     set_name varchar(100) not null,
     biz_type varchar(50) not null,
     enabled_year int not null,
+    enabled_period varchar(7),
+    finance_manager varchar(100),
+    paper_size varchar(20) not null default 'A5',
+    voucher_import_auto_no tinyint not null default 1,
+    voucher_print_line_count int not null default 8,
+    subject_code_rule varchar(50) not null default '4-2-2-2',
     status int not null,
     created_by varchar(36),
     created_time datetime,
@@ -271,6 +277,8 @@ create table fin_voucher_2026 (
     voucher_word varchar(10) not null default '记',
     voucher_no int not null,
     summary varchar(500),
+    debit_amount decimal(18,2) not null default 0,
+    credit_amount decimal(18,2) not null default 0,
     attachment_count int not null default 0,
     status varchar(20) not null,
     source_type varchar(50),
@@ -336,3 +344,58 @@ create table fin_voucher_aux_value_2026 (
 
 create index idx_voucher_aux_2026_detail on fin_voucher_aux_value_2026 (account_set_id, detail_id);
 create index idx_voucher_aux_2026_value on fin_voucher_aux_value_2026 (account_set_id, aux_type_code, aux_value);
+
+create table fin_case_fund_payment (
+    payment_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    case_no varchar(100) not null,
+    confirmed_flag tinyint not null default 0,
+    available_flag tinyint not null default 0,
+    business_type varchar(100) not null,
+    payer_name varchar(200),
+    party_name varchar(200),
+    invoice_title varchar(200),
+    payment_amount decimal(18,2) not null default 0,
+    register_type varchar(100),
+    trial_case_no varchar(100),
+    payment_date date not null,
+    payment_time datetime,
+    receipt_no varchar(100),
+    invoice_date date,
+    invoice_operator varchar(100),
+    payment_method varchar(100),
+    cashier_name varchar(100),
+    judge_name varchar(100),
+    clerk_name varchar(100),
+    department_name varchar(100),
+    bank_account_no varchar(100),
+    bank_serial_no varchar(100),
+    payment_order_no varchar(100),
+    internal_transfer_ticket_no varchar(100),
+    deposit_revoke_flag tinyint not null default 0,
+    source_file_name varchar(255),
+    source_row_no int,
+    source_fingerprint char(32) not null,
+    source_raw_json text,
+    voucher_status varchar(30) not null default 'UNGENERATED',
+    voucher_id varchar(36),
+    voucher_no int,
+    voucher_period varchar(7),
+    voucher_generated_time datetime,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create unique index uk_case_fund_payment_source on fin_case_fund_payment (account_set_id, source_fingerprint);
+create index idx_case_fund_payment_period on fin_case_fund_payment (account_set_id, period, payment_date);
+create index idx_case_fund_payment_case on fin_case_fund_payment (account_set_id, case_no);
+create index idx_case_fund_payment_receipt on fin_case_fund_payment (account_set_id, receipt_no);
+create index idx_case_fund_payment_bank_serial on fin_case_fund_payment (account_set_id, bank_serial_no);
+create index idx_case_fund_payment_voucher on fin_case_fund_payment (account_set_id, voucher_status, voucher_period, voucher_id);

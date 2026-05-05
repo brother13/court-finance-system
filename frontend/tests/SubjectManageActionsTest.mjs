@@ -1,0 +1,43 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import assert from 'assert'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const component = readFileSync(resolve(__dirname, '../src/views/base/SubjectManageView.vue'), 'utf8')
+const api = readFileSync(resolve(__dirname, '../src/api/base.ts'), 'utf8')
+
+assert(component.includes('@click="openCreate()"'), 'top toolbar should keep the subject create action')
+assert(component.includes('@click="chooseSubjectImportFile"'), 'subject import button should open the file selector')
+assert(component.includes('@change="handleSubjectImportFile"'), 'subject import file input should handle selected xls files')
+assert(component.includes('@click="exportSubjects"'), 'subject export button should call exportSubjects')
+assert(component.includes('await baseApi.importSubjects'), 'subject import should call the import API wrapper')
+assert(component.includes('await baseApi.exportSubjects'), 'subject export should call the export API wrapper')
+assert(!component.includes("comingSoon('导入')"), 'subject import should not be a placeholder')
+assert(!component.includes("comingSoon('导出')"), 'subject export should not be a placeholder')
+assert(!component.includes('@click="openCreate(row)"'), 'row actions should not keep per-row create after moving create to the top')
+assert(component.includes('@click="confirmDelete(row)"'), 'row actions should include subject delete')
+assert(component.includes("v-permission=\"'base:delete'\""), 'delete action should require base:delete permission')
+assert(component.includes('ElMessageBox.confirm'), 'delete action should ask for confirmation')
+assert(component.includes('await baseApi.deleteSubject'), 'delete action should call the delete API wrapper')
+assert(!component.includes('label="数量核算"'), 'subject table should not show quantity accounting column')
+assert(!component.includes('label="外币核算"'), 'subject table should not show foreign currency accounting column')
+assert(!component.includes('label="辅助核算"'), 'subject table should not show auxiliary accounting setting column')
+assert(!component.includes('openAuxConfig'), 'subject table should not keep the row auxiliary setting action')
+assert(!component.includes('<el-drawer'), 'subject auxiliary accounting should not use a separate drawer')
+assert(component.includes('subject-form-aux'), 'subject create/edit dialog should include auxiliary accounting settings')
+assert(component.includes('await baseApi.saveSubjectConfig(form.subject_code'), 'saving a subject should save auxiliary accounting settings from the dialog')
+assert(!component.includes('label="末级科目"'), 'subject create/edit dialog should not expose leaf subject switch')
+assert(!component.includes('label="允许录入凭证"'), 'subject create/edit dialog should not expose voucher entry switch')
+assert(component.includes('aux-checkbox-row'), 'auxiliary accounting settings should use compact checkbox row styling')
+assert(component.includes('v-if="auxEnabled"'), 'auxiliary accounting detail checkboxes should only appear after enabling auxiliary accounting')
+assert(component.includes('const auxEnabled = ref(false)'), 'auxiliary accounting should use an explicit enable switch')
+assert(!component.includes('.aux-checkbox-row :deep(.el-checkbox__label) {\n  font-size: 18px;'), 'auxiliary accounting checkbox labels should not use oversized text')
+assert(component.includes('font-size: 14px;'), 'auxiliary accounting checkbox labels should keep normal form text size')
+assert(!component.includes('active-text="必填"'), 'auxiliary accounting settings should not show required switches')
+assert(api.includes("deleteSubject(subjectId: string)"), 'base API should expose deleteSubject(subjectId)')
+assert(api.includes("apiAction('/subject/del'"), 'deleteSubject should call /subject/del')
+assert(api.includes("apiAction('/subject/import'"), 'base API should expose /subject/import')
+assert(api.includes("apiAction('/subject/export'"), 'base API should expose /subject/export')
+
+console.log('Subject manage actions test passed')

@@ -1,5 +1,5 @@
 import { apiAction } from './http'
-import type { ManagedUser } from '../types/api'
+import type { AccountSet, ManagedUser } from '../types/api'
 
 export const userApi = {
   page(params: Record<string, any>) {
@@ -7,6 +7,9 @@ export const userApi = {
   },
   info(userId: string) {
     return apiAction('/user/info', { user_id: userId }) as Promise<ManagedUser>
+  },
+  accountSetOptions() {
+    return apiAction('/user/accountSetOptions') as Promise<AccountSet[]>
   },
   add(payload: Record<string, any>) {
     return apiAction('/user/add', payload) as Promise<string>

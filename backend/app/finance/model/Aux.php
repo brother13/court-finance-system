@@ -2,6 +2,8 @@
 
 namespace app\finance\model;
 
+use think\Db;
+
 class Aux extends Common
 {
     const ACTION = 'aux';
@@ -18,12 +20,16 @@ class Aux extends Common
                 return $this->typeSave('', $data);
             case 'typeSave':
                 return $this->typeSave($data['aux_type_id'] ?? '', $data);
+            case 'typeDel':
+                return $this->typeDelete($data);
             case 'archiveList':
                 return $this->archiveList($data);
             case 'archiveAdd':
                 return $this->archiveSave('', $data);
             case 'archiveSave':
                 return $this->archiveSave($data['archive_id'] ?? '', $data);
+            case 'archiveDel':
+                return $this->archiveDelete($data);
             case 'subjectConfig':
                 return $this->subjectConfig($data);
             case 'subjectConfigSave':
@@ -108,6 +114,45 @@ class Aux extends Common
         return $this->ok($id, '操作成功');
     }
 
+    public function typeDelete($data = [])
+    {
+        $auth = $this->requirePermission('base:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $id = trim($data['aux_type_id'] ?? '');
+        if ($id === '') {
+            return $this->error('辅助维度ID不能为空');
+        }
+        $where = $this->accountWhere();
+        $where['aux_type_id'] = $id;
+        $before = $this->getdb(self::TABLE_TYPE)->where($where)->find();
+        if (!$before) {
+            return $this->error('辅助维度不存在');
+        }
+        if (in_array($before['aux_type_code'], $this->standardAuxTypeCodes(), true)) {
+            return $this->error('标准辅助维度不允许删除');
+        }
+        if ($this->auxTypeHasBusiness($before['aux_type_code'])) {
+            return $this->error('辅助维度已被科目或凭证使用，不允许删除');
+        }
+
+        $d = ['del_flag' => 1, 'updated_by' => $this->userid, 'updated_time' => $this->now()];
+        Db::startTrans();
+        try {
+            $this->getdb(self::TABLE_TYPE)->where($where)->update($d);
+            $archiveWhere = $this->accountWhere();
+            $archiveWhere['aux_type_code'] = $before['aux_type_code'];
+            $this->getdb(self::TABLE_ARCHIVE)->where($archiveWhere)->update($d);
+            $this->logAudit('AUX_TYPE', $id, 'DELETE', $before, $d);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('删除辅助维度失败：' . $e->getMessage());
+        }
+        return $this->ok($id, '删除成功');
+    }
+
     public function archiveList($data = [])
     {
         $auth = $this->requirePermission('base:view');
@@ -166,6 +211,31 @@ class Aux extends Common
         return $this->ok($id, '操作成功');
     }
 
+    public function archiveDelete($data = [])
+    {
+        $auth = $this->requirePermission('base:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $id = trim($data['archive_id'] ?? '');
+        if ($id === '') {
+            return $this->error('辅助档案ID不能为空');
+        }
+        $where = $this->accountWhere();
+        $where['archive_id'] = $id;
+        $before = $this->getdb(self::TABLE_ARCHIVE)->where($where)->find();
+        if (!$before) {
+            return $this->error('辅助档案不存在');
+        }
+        if ($this->auxArchiveHasBusiness($before['aux_type_code'], $before['archive_code'])) {
+            return $this->error('辅助档案已被期初或凭证使用，不允许删除');
+        }
+        $d = ['del_flag' => 1, 'updated_by' => $this->userid, 'updated_time' => $this->now()];
+        $this->getdb(self::TABLE_ARCHIVE)->where($where)->update($d);
+        $this->logAudit('AUX_ARCHIVE', $id, 'DELETE', $before, $d);
+        return $this->ok($id, '删除成功');
+    }
+
     public function subjectConfig($data = [])
     {
         $auth = $this->requirePermission('base:view');
@@ -212,14 +282,13 @@ class Aux extends Common
             return $this->error('客户、供应商、职员属于往来类辅助核算，同一科目只能选择其一');
         }
 
-        $where = $this->accountWhere();
+        $where = ['account_set_id' => $this->accountSetId];
         $where['subject_code'] = $subjectCode;
         $before = $this->getdb(self::TABLE_CONFIG)->where($where)->select();
-        $this->getdb(self::TABLE_CONFIG)->where($where)->update([
-            'del_flag' => 1,
-            'updated_by' => $this->userid,
-            'updated_time' => $this->now(),
-        ]);
+        $existingByCode = [];
+        foreach ($before as $row) {
+            $existingByCode[$row['aux_type_code']] = $row;
+        }
 
         foreach ($items as $item) {
             $code = trim($item['aux_type_code'] ?? '');
@@ -227,15 +296,36 @@ class Aux extends Common
                 continue;
             }
             $row = [
-                'config_id' => uuid(),
                 'account_set_id' => $this->accountSetId,
                 'subject_code' => $subjectCode,
                 'aux_type_code' => $code,
                 'required_flag' => $item['required_flag'] ?? 1,
                 'verification_flag' => $item['verification_flag'] ?? 0,
+                'del_flag' => 0,
             ];
-            $this->fillCreate($row);
-            $this->getdb(self::TABLE_CONFIG)->insert($row);
+            if (isset($existingByCode[$code])) {
+                $this->fillUpdate($row);
+                $updateWhere = $where;
+                $updateWhere['aux_type_code'] = $code;
+                $this->getdb(self::TABLE_CONFIG)->where($updateWhere)->update($row);
+            } else {
+                $row['config_id'] = uuid();
+                $this->fillCreate($row);
+                $this->getdb(self::TABLE_CONFIG)->insert($row);
+            }
+        }
+
+        foreach ($before as $row) {
+            if (in_array($row['aux_type_code'], $currentCodes, true) || (int)$row['del_flag'] === 1) {
+                continue;
+            }
+            $deleteWhere = $where;
+            $deleteWhere['aux_type_code'] = $row['aux_type_code'];
+            $this->getdb(self::TABLE_CONFIG)->where($deleteWhere)->update([
+                'del_flag' => 1,
+                'updated_by' => $this->userid,
+                'updated_time' => $this->now(),
+            ]);
         }
         $this->logAudit('SUBJECT_AUX_CONFIG', $subjectCode, 'SAVE', $before, $items);
         return $this->ok($subjectCode, '辅助核算配置已保存');
@@ -277,6 +367,9 @@ class Aux extends Common
         if ($configCount > 0) {
             return true;
         }
+        if ($this->auxTypeHasOpeningBusiness($auxTypeCode)) {
+            return true;
+        }
         $year = config('default_year');
         try {
             return $this->getdb('fin_voucher_aux_value_' . $year)->where([
@@ -287,5 +380,54 @@ class Aux extends Common
         } catch (\Exception $e) {
             return false;
         }
+    }
+
+    protected function auxTypeHasOpeningBusiness($auxTypeCode)
+    {
+        $rows = $this->getdb('fin_aux_opening_balance')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->select();
+        foreach ($rows as $row) {
+            $auxValues = json_decode($row['aux_values_json'] ?? '', true);
+            if (is_array($auxValues) && array_key_exists($auxTypeCode, $auxValues)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function auxArchiveHasBusiness($auxTypeCode, $archiveCode)
+    {
+        $year = config('default_year');
+        try {
+            $voucherCount = $this->getdb('fin_voucher_aux_value_' . $year)->where([
+                'account_set_id' => $this->accountSetId,
+                'aux_type_code' => $auxTypeCode,
+                'aux_value' => $archiveCode,
+                'del_flag' => 0,
+            ])->count();
+            if ($voucherCount > 0) {
+                return true;
+            }
+        } catch (\Exception $e) {
+        }
+
+        $rows = $this->getdb('fin_aux_opening_balance')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->select();
+        foreach ($rows as $row) {
+            $auxValues = json_decode($row['aux_values_json'] ?? '', true);
+            if (is_array($auxValues) && isset($auxValues[$auxTypeCode]) && (string)$auxValues[$auxTypeCode] === (string)$archiveCode) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function standardAuxTypeCodes()
+    {
+        return ['customer', 'supplier', 'department', 'employee', 'project'];
     }
 }

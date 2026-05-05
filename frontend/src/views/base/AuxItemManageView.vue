@@ -33,19 +33,33 @@
 
       <div class="aux-dimension-section">
         <div class="aux-dimension-title">自定义辅助维度</div>
-        <button
+        <div
           v-for="item in customTypes"
           :key="item.aux_type_code"
           class="aux-dimension-item"
           :class="{ active: selectedTypeCode === item.aux_type_code }"
+          role="button"
+          tabindex="0"
           @click="selectType(item.aux_type_code)"
+          @keydown.enter="selectType(item.aux_type_code)"
         >
           <span>
             <strong>{{ item.aux_type_name }}</strong>
             <small>{{ item.aux_type_code }}</small>
           </span>
-          <el-tag size="small" type="info">自定义</el-tag>
-        </button>
+          <div class="aux-dimension-actions">
+            <el-tag size="small" type="info">自定义</el-tag>
+            <el-button
+              v-permission="'base:delete'"
+              link
+              type="danger"
+              :icon="DeleteIcon"
+              title="删除自定义维度"
+              aria-label="删除自定义维度"
+              @click.stop="confirmTypeDelete(item)"
+            />
+          </div>
+        </div>
         <el-empty v-if="customTypes.length === 0" description="暂无自定义维度" :image-size="72" />
       </div>
     </aside>
@@ -96,9 +110,10 @@
               </template>
             </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="220" />
-            <el-table-column label="操作" width="110" fixed="right">
+            <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
                 <el-button v-permission="'base:edit'" link type="primary" @click="openArchiveEdit(row)">编辑</el-button>
+                <el-button v-permission="'base:delete'" link type="danger" @click="confirmArchiveDelete(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -172,8 +187,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete as DeleteIcon, Plus, Refresh } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 
 const standardTypes = [
@@ -343,6 +358,18 @@ const saveType = async () => {
   }
 }
 
+const confirmTypeDelete = async (row: any) => {
+  await ElMessageBox.confirm(`确认删除自定义辅助维度 ${row.aux_type_name}？该维度下未使用的档案也会一并删除。`, '删除辅助维度', {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消'
+  })
+  await baseApi.deleteAuxType(row.aux_type_id)
+  ElMessage.success('辅助维度已删除')
+  selectedTypeCode.value = standardTypes[0].code
+  await loadAll()
+}
+
 const saveArchive = async () => {
   archiveForm.aux_type_code = selectedTypeCode.value
   if (!archiveForm.archive_code || !archiveForm.archive_name) {
@@ -358,6 +385,17 @@ const saveArchive = async () => {
   } finally {
     archiveSaving.value = false
   }
+}
+
+const confirmArchiveDelete = async (row: any) => {
+  await ElMessageBox.confirm(`确认删除档案 ${row.archive_name}？已被期初或凭证使用的档案不能删除。`, '删除辅助档案', {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消'
+  })
+  await baseApi.deleteAuxArchive(row.archive_id)
+  ElMessage.success('辅助档案已删除')
+  await loadArchives()
 }
 
 onMounted(loadAll)

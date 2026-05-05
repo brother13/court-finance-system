@@ -165,7 +165,7 @@ const load = async () => {
 }
 
 const loadOptions = async () => {
-  const [unitRows, roleRows, accountRows] = await Promise.all([authApi.units(), roleApi.list(), authApi.accountSets()])
+  const [unitRows, roleRows, accountRows] = await Promise.all([authApi.units(), roleApi.list(), userApi.accountSetOptions()])
   units.value = unitRows
   roles.value = roleRows
   accountSets.value = accountRows

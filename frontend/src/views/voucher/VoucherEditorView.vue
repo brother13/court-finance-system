@@ -1,13 +1,12 @@
 <template>
   <div class="page-header">
     <div>
-      <h1>{{ isViewMode ? '凭证查看' : '凭证录入' }}</h1>
-      <p>{{ isViewMode ? '查看当前账套内凭证头、分录和辅助核算信息，已入账数据只读展示。' : '按用友 U8 / 金蝶标准凭证格式录入，保存后进入未审核状态。' }}</p>
+      <h1>{{ pageTitle }}</h1>
     </div>
     <div class="page-actions">
-      <el-button v-if="isViewMode" :icon="ArrowLeft" @click="router.push('/vouchers')">返回列表</el-button>
-      <template v-else>
-        <el-button :icon="Refresh" @click="resetVoucher">新增凭证</el-button>
+      <el-button v-if="isViewMode || isEditMode" :icon="ArrowLeft" @click="router.push('/vouchers')">返回列表</el-button>
+      <template v-if="!isReadonly">
+        <el-button v-if="!isEditMode" :icon="Refresh" @click="resetVoucher">新增凭证</el-button>
         <el-button v-if="context.hasAnyPermission(['voucher:add', 'voucher:edit'])" type="primary" :icon="DocumentChecked" :loading="saving" @click="submit">保存凭证</el-button>
       </template>
     </div>
@@ -22,7 +21,7 @@
     <div class="voucher-head-grid">
       <label>
         <span>凭证字</span>
-        <el-select v-model="form.voucherWord" :disabled="isViewMode" style="width: 92px">
+        <el-select v-model="form.voucherWord" :disabled="isReadonly" style="width: 92px">
           <el-option v-for="word in voucherWords" :key="word" :label="word" :value="word" />
         </el-select>
       </label>
@@ -32,11 +31,11 @@
       </label>
       <label>
         <span>日期</span>
-        <el-date-picker v-model="form.voucherDate" type="date" value-format="YYYY-MM-DD" :disabled="isViewMode" style="width: 150px" />
+        <el-date-picker v-model="form.voucherDate" type="date" value-format="YYYY-MM-DD" :disabled="isReadonly" style="width: 150px" />
       </label>
       <label>
         <span>附单据数</span>
-        <el-input-number v-model="form.attachmentCount" :min="0" :precision="0" :disabled="isViewMode" controls-position="right" style="width: 110px" />
+        <el-input-number v-model="form.attachmentCount" :min="0" :precision="0" :disabled="isReadonly" controls-position="right" style="width: 110px" />
       </label>
       <label>
         <span>制单人</span>
@@ -71,9 +70,8 @@
             <td>
               <el-input
                 v-model="row.summary"
-                placeholder="// 复制首行，.. 复制上行"
                 class="paper-cell-control"
-                :disabled="isViewMode"
+                :disabled="isReadonly"
                 @blur="applySummaryShortcut(row, index)"
               />
             </td>
@@ -81,16 +79,15 @@
               <el-select
                 v-model="row.subjectCode"
                 filterable
-                remote
                 clearable
                 placeholder="输入编码或 F7 选择科目"
                 class="paper-cell-control"
                 style="width: 100%"
-                :disabled="isViewMode"
+                :disabled="isReadonly"
                 @change="handleSubjectChange(row)"
               >
                 <el-option
-                  v-for="subject in entrySubjects"
+                  v-for="subject in terminalVoucherSubjects"
                   :key="subject.subject_code"
                   :label="`${subject.subject_code} ${subject.subject_name}`"
                   :value="subject.subject_code"
@@ -114,9 +111,9 @@
                 v-model="row.debitText"
                 class="paper-cell-control paper-money-input"
                 placeholder="0.00"
-                :disabled="isViewMode"
-                @focus="row.creditText = ''"
-                @blur="normalizeAmount(row, 'DEBIT')"
+                :disabled="isReadonly"
+                @input="handleDebitInput(row)"
+                @blur="handleDebitBlur(row, index)"
               />
             </td>
             <td>
@@ -124,13 +121,13 @@
                 v-model="row.creditText"
                 class="paper-cell-control paper-money-input"
                 placeholder="= 找平"
-                :disabled="isViewMode"
-                @focus="row.debitText = ''"
+                :disabled="isReadonly"
+                @input="handleCreditInput(row)"
                 @blur="normalizeAmount(row, 'CREDIT')"
               />
             </td>
             <td class="entry-action">
-              <template v-if="!isViewMode">
+              <template v-if="!isReadonly">
                 <el-button link type="primary" @click="insertLine(index)">插行</el-button>
                 <el-button link type="danger" :disabled="form.details.length <= 2" @click="removeLine(index)">删行</el-button>
               </template>
@@ -156,11 +153,11 @@
       <div :class="['balance-indicator', isBalanced ? '' : 'unbalanced']">
         <span>
           <el-icon><component :is="isBalanced ? CircleCheck : WarningFilled" /></el-icon>
-          {{ isBalanced ? (isViewMode ? '借贷平衡' : '借贷平衡，可以保存') : `借贷不平衡，差额 ${money(Math.abs(difference))}` }}
+          {{ isBalanced ? (isReadonly ? '借贷平衡' : '借贷平衡，可以保存') : `借贷不平衡，差额 ${money(Math.abs(difference))}` }}
         </span>
         <small>分录 {{ validLineCount }} 行 · 状态：{{ statusText(form.status) }}</small>
       </div>
-      <div v-if="!isViewMode" class="paper-actions-buttons">
+      <div v-if="!isReadonly" class="paper-actions-buttons">
         <el-button :icon="Plus" @click="addLine">增行</el-button>
         <el-button @click="fillBalanceForLastLine">当前行找平</el-button>
         <el-button v-if="context.hasAnyPermission(['voucher:add', 'voucher:edit'])" type="success" :icon="DocumentChecked" :loading="saving" @click="submit">保存凭证</el-button>
@@ -168,10 +165,10 @@
     </div>
   </div>
 
-  <el-dialog v-model="auxDialogVisible" :title="isViewMode ? '辅助核算查看' : '辅助核算录入'" width="560px" :close-on-click-modal="false">
+  <el-dialog v-model="auxDialogVisible" :title="isReadonly ? '辅助核算查看' : '辅助核算录入'" width="560px" :close-on-click-modal="false">
     <template v-if="currentLine">
       <el-alert
-        v-if="!isViewMode"
+        v-if="!isReadonly"
         class="mb-16"
         type="warning"
         :closable="false"
@@ -190,7 +187,7 @@
             v-model="currentLine.auxValues[config.aux_type_code]"
             filterable
             clearable
-            :disabled="isViewMode"
+            :disabled="isReadonly"
             placeholder="请选择辅助档案"
           >
             <el-option
@@ -200,13 +197,13 @@
               :value="archive.archive_code"
             />
           </el-select>
-          <el-input v-else v-model.trim="currentLine.auxValues[config.aux_type_code]" :disabled="isViewMode" placeholder="请输入辅助信息" />
+          <el-input v-else v-model.trim="currentLine.auxValues[config.aux_type_code]" :disabled="isReadonly" placeholder="请输入辅助信息" />
         </el-form-item>
       </el-form>
     </template>
     <template #footer>
-      <el-button @click="auxDialogVisible = false">{{ isViewMode ? '关闭' : '取消' }}</el-button>
-      <el-button v-if="!isViewMode" type="primary" @click="confirmAuxDialog">确定</el-button>
+      <el-button @click="auxDialogVisible = false">{{ isReadonly ? '关闭' : '取消' }}</el-button>
+      <el-button v-if="!isReadonly" type="primary" @click="confirmAuxDialog">确定</el-button>
     </template>
   </el-dialog>
 </template>
@@ -228,6 +225,7 @@ interface VoucherLine {
   debitText: string
   creditText: string
   auxValues: Record<string, string>
+  auxLabels: Record<string, string>
 }
 
 const router = useRouter()
@@ -240,6 +238,7 @@ const auxDialogVisible = ref(false)
 const currentLine = ref<VoucherLine | null>(null)
 const saving = ref(false)
 const voucherWords = ['记', '收', '付', '转']
+const DEFAULT_VOUCHER_LINE_COUNT = 6
 
 const todayInPeriod = () => {
   const today = new Date()
@@ -256,8 +255,13 @@ const createLine = (): VoucherLine => ({
   subjectCode: '',
   debitText: '',
   creditText: '',
-  auxValues: {}
+  auxValues: {},
+  auxLabels: {}
 })
+
+const createVoucherLines = (count = DEFAULT_VOUCHER_LINE_COUNT) => {
+  return Array.from({ length: count }, () => createLine())
+}
 
 const form = reactive({
   voucherWord: '记',
@@ -269,10 +273,16 @@ const form = reactive({
   auditBy: '',
   postedBy: '',
   status: 'SUBMITTED',
-  details: [createLine(), createLine()]
+  details: createVoucherLines()
 })
 
-const isViewMode = computed(() => Boolean(route.params.voucherId))
+const pageMode = computed(() => String(route.meta.mode || (route.params.voucherId ? 'view' : 'new')))
+const isViewMode = computed(() => pageMode.value === 'view')
+const isEditMode = computed(() => pageMode.value === 'edit')
+const editableStatuses = ['DRAFT', 'SUBMITTED']
+const isEditableStatus = computed(() => !form.status || editableStatuses.includes(form.status))
+const isReadonly = computed(() => isViewMode.value || (isEditMode.value && !isEditableStatus.value))
+const pageTitle = computed(() => (isViewMode.value ? '凭证查看' : isEditMode.value ? '凭证编辑' : '凭证录入'))
 
 const statusText = (status: string) =>
   ({
@@ -284,7 +294,7 @@ const statusText = (status: string) =>
     VOIDED: '已作废'
   }[status] || status || '草稿')
 
-const entrySubjects = computed(() => subjects.value.filter((subject: any) => {
+const terminalVoucherSubjects = computed(() => subjects.value.filter((subject: any) => {
   return Number(subject.leaf_flag) === 1 && Number(subject.voucher_entry_flag ?? subject.leaf_flag) === 1 && Number((subject as any).status ?? 1) === 1
 }))
 const totalDebit = computed(() => form.details.reduce((sum, line) => sum + parseAmount(line.debitText), 0))
@@ -328,16 +338,21 @@ const handleSubjectChange = async (line: VoucherLine) => {
   await loadSubjectConfig(line.subjectCode)
   const configs = lineAuxConfigs(line)
   const nextValues: Record<string, string> = {}
+  const nextLabels: Record<string, string> = {}
   configs.forEach((config) => {
     nextValues[config.aux_type_code] = line.auxValues[config.aux_type_code] || ''
+    nextLabels[config.aux_type_code] = line.auxLabels[config.aux_type_code] || ''
   })
   line.auxValues = nextValues
+  line.auxLabels = nextLabels
   if (configs.length > 0) {
+    blurActiveElement()
     openAuxDialog(line)
   }
 }
 
 const openAuxDialog = (line: VoucherLine) => {
+  blurActiveElement()
   currentLine.value = line
   auxDialogVisible.value = true
 }
@@ -348,6 +363,14 @@ const confirmAuxDialog = () => {
     return
   }
   auxDialogVisible.value = false
+  blurActiveElement()
+}
+
+const blurActiveElement = () => {
+  window.setTimeout(() => {
+    const active = document.activeElement
+    if (active instanceof HTMLElement) active.blur()
+  }, 0)
 }
 
 const isLineAuxComplete = (line: VoucherLine) => {
@@ -357,8 +380,13 @@ const isLineAuxComplete = (line: VoucherLine) => {
 const auxSummary = (line: VoucherLine) => {
   return Object.entries(line.auxValues)
     .filter(([, value]) => value)
-    .map(([code, value]) => `${auxTypeName(code)}:${value}`)
+    .map(([code, value]) => `${auxTypeName(code)}:${auxDisplayValue(code, value, line)}`)
     .join(' / ')
+}
+
+const auxDisplayValue = (code: string, value: string, line?: VoucherLine) => {
+  const archive = (auxArchives[code] || []).find((item) => item.archive_code === value)
+  return archive?.archive_name || line?.auxLabels[code] || value
 }
 
 const auxTypeName = (code: string) => {
@@ -396,6 +424,37 @@ const normalizeAmount = (row: VoucherLine, side: 'DEBIT' | 'CREDIT') => {
   row[key] = value > 0 ? value.toFixed(2) : ''
 }
 
+const handleDebitInput = (row: VoucherLine) => {
+  if (row.debitText.trim()) {
+    row.creditText = ''
+  }
+}
+
+const handleCreditInput = (row: VoucherLine) => {
+  if (row.creditText.trim()) {
+    row.debitText = ''
+  }
+}
+
+const handleDebitBlur = (row: VoucherLine, index: number) => {
+  normalizeAmount(row, 'DEBIT')
+  fillNextCreditLine(row, index)
+}
+
+const fillNextCreditLine = (row: VoucherLine, index: number) => {
+  const debit = parseAmount(row.debitText)
+  if (debit <= 0) return
+  if (!form.details[index + 1]) {
+    form.details.push(createLine())
+  }
+  const next = form.details[index + 1]
+  const nextHasBusiness = Boolean(next.subjectCode || parseAmount(next.debitText) || parseAmount(next.creditText))
+  if (nextHasBusiness) return
+  next.summary = next.summary || row.summary
+  next.debitText = ''
+  next.creditText = debit.toFixed(2)
+}
+
 const addLine = () => form.details.push(createLine())
 const insertLine = (index: number) => form.details.splice(index + 1, 0, createLine())
 const removeLine = (index: number) => form.details.splice(index, 1)
@@ -421,7 +480,7 @@ const resetVoucher = async () => {
   form.auditBy = ''
   form.postedBy = ''
   form.status = 'SUBMITTED'
-  form.details = [createLine(), createLine()]
+  form.details = createVoucherLines()
   await loadNextNo()
 }
 
@@ -433,7 +492,7 @@ const validateBeforeSave = () => {
     const line = validRows[i]
     if (!line.summary.trim()) return `第 ${i + 1} 行摘要不能为空`
     if (!line.subjectCode) return `第 ${i + 1} 行科目不能为空`
-    const subject = entrySubjects.value.find((item) => item.subject_code === line.subjectCode)
+    const subject = terminalVoucherSubjects.value.find((item) => item.subject_code === line.subjectCode)
     if (!subject) return `第 ${i + 1} 行科目不是末级或不允许录入`
     const debit = parseAmount(line.debitText)
     const credit = parseAmount(line.creditText)
@@ -447,7 +506,7 @@ const validateBeforeSave = () => {
 
 const toPayload = (): Voucher => {
   const validRows = form.details.filter((line) => line.summary || line.subjectCode || parseAmount(line.debitText) || parseAmount(line.creditText))
-  return {
+  const payload = {
     period: form.period,
     voucher_date: form.voucherDate,
     voucher_word: form.voucherWord,
@@ -464,10 +523,15 @@ const toPayload = (): Voucher => {
         .map(([code, value]) => ({
           aux_type_code: code,
           aux_value: value,
-          aux_label: value
+          aux_label: auxDisplayValue(code, value, line)
         })) as any
     }))
   } as Voucher
+  if (isEditMode.value && route.params.voucherId) {
+    payload.voucher_id = String(route.params.voucherId)
+    payload.status = form.status || 'SUBMITTED'
+  }
+  return payload
 }
 
 const submit = async () => {
@@ -478,8 +542,13 @@ const submit = async () => {
   }
   saving.value = true
   try {
-    await voucherApi.submit(toPayload())
-    ElMessage.success('凭证已保存，状态：未审核')
+    const payload = toPayload()
+    if (isEditMode.value) {
+      await voucherApi.save(payload)
+    } else {
+      await voucherApi.submit(payload)
+    }
+    ElMessage.success(isEditMode.value ? '凭证修改已保存' : '凭证已保存，状态：未审核')
     await router.push('/vouchers')
   } finally {
     saving.value = false
@@ -538,9 +607,9 @@ async function loadVoucherDetail(period: string, voucherId: string) {
   form.period = data.period || period
   form.voucherDate = data.voucher_date || data.voucherDate || todayInPeriod()
   form.attachmentCount = Number(data.attachment_count || data.attachmentCount || 0)
-  form.preparedBy = data.prepared_by || data.preparedBy || ''
-  form.auditBy = data.audit_by || data.auditBy || ''
-  form.postedBy = data.posted_by || data.postedBy || ''
+  form.preparedBy = data.prepared_by_name || data.preparedByName || data.prepared_by || data.preparedBy || ''
+  form.auditBy = data.audit_by_name || data.auditByName || data.audit_by || data.auditBy || ''
+  form.postedBy = data.posted_by_name || data.postedByName || data.posted_by || data.postedBy || ''
   form.status = data.status || ''
 
   const detailRows = (data.details || []) as any[]
@@ -551,10 +620,13 @@ async function loadVoucherDetail(period: string, voucherId: string) {
     const credit = Number(item.credit_amount || item.creditAmount || 0)
     const auxArr = (item.aux_values || item.auxValues || []) as any[]
     const auxValues: Record<string, string> = {}
+    const auxLabels: Record<string, string> = {}
     auxArr.forEach((aux: any) => {
       const code = aux.aux_type_code || aux.auxTypeCode
       const value = aux.aux_value || aux.auxValue
+      const label = aux.aux_label || aux.auxLabel
       if (code) auxValues[code] = value || ''
+      if (code) auxLabels[code] = label || ''
     })
     if (subjectCode) {
       await loadSubjectConfig(subjectCode)
@@ -565,7 +637,8 @@ async function loadVoucherDetail(period: string, voucherId: string) {
       subjectCode,
       debitText: debit > 0 ? debit.toFixed(2) : '',
       creditText: credit > 0 ? credit.toFixed(2) : '',
-      auxValues
+      auxValues,
+      auxLabels
     })
   }
   form.details = lines.length > 0 ? lines : [createLine(), createLine()]

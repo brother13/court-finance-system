@@ -1,12 +1,27 @@
 import { apiAction } from './http'
-import type { Subject } from '../types/api'
+import type { Subject, SubjectCodeRule } from '../types/api'
 
 export const baseApi = {
   subjects() {
     return apiAction('/subject/list') as Promise<Subject[]>
   },
+  subjectCodeRule() {
+    return apiAction('/subject/codeRule') as Promise<SubjectCodeRule>
+  },
+  saveSubjectCodeRule(rule: string) {
+    return apiAction('/subject/codeRuleSave', { rule }) as Promise<SubjectCodeRule>
+  },
   saveSubject(payload: any) {
     return apiAction('/subject/save', payload) as Promise<string>
+  },
+  deleteSubject(subjectId: string) {
+    return apiAction('/subject/del', { subject_id: subjectId }) as Promise<string>
+  },
+  importSubjects(filename: string, contentBase64: string) {
+    return apiAction('/subject/import', { filename, content_base64: contentBase64 }) as Promise<{ total: number; created: number; updated: number }>
+  },
+  exportSubjects() {
+    return apiAction('/subject/export') as Promise<{ filename: string; mime: string; content_base64: string }>
   },
   createSubject(payload: Subject) {
     return apiAction('/subject/add', {
@@ -28,8 +43,14 @@ export const baseApi = {
   saveAuxType(payload: any) {
     return apiAction(payload.aux_type_id ? '/aux/typeSave' : '/aux/typeAdd', payload) as Promise<string>
   },
+  deleteAuxType(auxTypeId: string) {
+    return apiAction('/aux/typeDel', { aux_type_id: auxTypeId }) as Promise<string>
+  },
   saveAuxArchive(payload: any) {
     return apiAction(payload.archive_id ? '/aux/archiveSave' : '/aux/archiveAdd', payload) as Promise<string>
+  },
+  deleteAuxArchive(archiveId: string) {
+    return apiAction('/aux/archiveDel', { archive_id: archiveId }) as Promise<string>
   },
   subjectConfig(subjectCode: string) {
     return apiAction('/aux/subjectConfig', { subject_code: subjectCode }) as Promise<any[]>

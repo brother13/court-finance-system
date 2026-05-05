@@ -4,7 +4,9 @@ namespace app\finance\controller;
 
 use app\finance\model\Aux;
 use app\finance\model\Auth;
+use app\finance\model\AccountSet;
 use app\finance\model\Book;
+use app\finance\model\CaseFund;
 use app\finance\model\Log;
 use app\finance\model\Opening;
 use app\finance\model\Permission;
@@ -61,6 +63,10 @@ class Index extends Controller
                 $model = new Auth();
                 $data = $model->index($actionArr[2], $postdata);
                 break;
+            case 'accountSet':
+                $model = new AccountSet();
+                $data = $model->index($actionArr[2], $postdata);
+                break;
             case 'subject':
                 $model = new Subject();
                 $data = $model->index($actionArr[2], $postdata);
@@ -75,6 +81,10 @@ class Index extends Controller
                 break;
             case 'book':
                 $model = new Book();
+                $data = $model->index($actionArr[2], $postdata);
+                break;
+            case 'caseFund':
+                $model = new CaseFund();
                 $data = $model->index($actionArr[2], $postdata);
                 break;
             case 'period':

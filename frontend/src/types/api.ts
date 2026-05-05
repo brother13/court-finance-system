@@ -39,6 +39,16 @@ export interface AccountSet {
   set_name: string
   biz_type: string
   enabled_year: number
+  enabled_period?: string
+  enabled_period_label?: string
+  current_period?: string
+  current_period_label?: string
+  finance_manager?: string
+  paper_size?: string
+  voucher_import_auto_no?: number
+  voucher_print_line_count?: number
+  is_current?: number
+  status?: number
   remark?: string
   id?: string
   code?: string
@@ -117,6 +127,10 @@ export interface Voucher {
   voucher_date?: string
   voucherNo?: number
   voucher_word?: string
+  debitAmount?: number
+  debit_amount?: number
+  creditAmount?: number
+  credit_amount?: number
   attachment_count?: number
   summary?: string
   status?: string
@@ -141,6 +155,16 @@ export interface Subject {
   level_no?: number
   leafFlag?: number
   leaf_flag?: number
+  voucher_entry_flag?: number
+  status?: number
+  remark?: string
+  children?: Subject[]
+}
+
+export interface SubjectCodeRule {
+  rule: string
+  segments: number[]
+  lengths: number[]
 }
 
 export interface SubjectAuxConfig {
@@ -159,4 +183,43 @@ export interface LedgerRow {
   debitAmount: number
   creditAmount: number
   auxDesc: string
+}
+
+export interface CaseFundPayment {
+  payment_id: string
+  account_set_id: string
+  fiscal_year: number
+  period: string
+  case_no: string
+  confirmed_flag: number
+  available_flag: number
+  business_type: string
+  payer_name?: string
+  party_name?: string
+  invoice_title?: string
+  payment_amount: string | number
+  register_type?: string
+  trial_case_no?: string
+  payment_date: string
+  payment_time?: string
+  receipt_no?: string
+  invoice_date?: string
+  invoice_operator?: string
+  payment_method?: string
+  cashier_name?: string
+  judge_name?: string
+  clerk_name?: string
+  department_name?: string
+  bank_account_no?: string
+  bank_serial_no?: string
+  payment_order_no?: string
+  internal_transfer_ticket_no?: string
+  deposit_revoke_flag: number
+  source_file_name?: string
+  source_row_no?: number
+  voucher_status: 'UNGENERATED' | 'GENERATED' | 'VOIDED' | string
+  voucher_id?: string
+  voucher_no?: number
+  voucher_period?: string
+  voucher_generated_time?: string
 }

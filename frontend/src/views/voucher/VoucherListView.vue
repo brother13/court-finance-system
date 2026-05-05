@@ -6,6 +6,15 @@
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新数据</el-button>
+      <el-button
+        v-if="context.hasPermission('voucher:delete')"
+        type="danger"
+        :icon="DeleteIcon"
+        :disabled="selectedRows.length === 0"
+        @click="batchDelete"
+      >
+        批量删除
+      </el-button>
       <el-button v-if="context.hasPermission('voucher:add')" type="primary" :icon="Plus" @click="$router.push('/vouchers/new')">新增凭证</el-button>
     </div>
   </div>
@@ -88,7 +97,8 @@
       <span class="muted">共 {{ pageTotal }} 条记录</span>
     </div>
     <div class="panel-body compact">
-      <el-table v-loading="loading" :data="rows" height="calc(100vh - 420px)">
+      <el-table v-loading="loading" :data="rows" height="calc(100vh - 420px)" @row-dblclick="openDetail" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="46" :selectable="canSelectRow" />
         <el-table-column prop="voucher_no" label="凭证号" width="110" align="center">
           <template #default="{ row }">
             <span class="text-mono" style="color: var(--brand-blue); font-weight: 600">
@@ -98,21 +108,43 @@
         </el-table-column>
         <el-table-column prop="voucher_date" label="制单日期" width="130" align="center" />
         <el-table-column prop="summary" label="摘要" min-width="240" />
+        <el-table-column prop="debit_amount" label="借方金额" width="150" align="right">
+          <template #default="{ row }">
+            <span :class="['text-mono', Number(row.debit_amount || row.debitAmount) > 0 ? 'amount-debit' : 'muted']">
+              {{ amountText(row.debit_amount || row.debitAmount) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="credit_amount" label="贷方金额" width="150" align="right">
+          <template #default="{ row }">
+            <span :class="['text-mono', Number(row.credit_amount || row.creditAmount) > 0 ? 'amount-credit' : 'muted']">
+              {{ amountText(row.credit_amount || row.creditAmount) }}
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column prop="source_type" label="来源" width="110" align="center">
           <template #default="{ row }">{{ sourceTypeText(row.source_type) }}</template>
         </el-table-column>
-        <el-table-column prop="prepared_by" label="制单人" width="120" align="center" />
-        <el-table-column prop="audit_by" label="审核人" width="120" align="center" />
-        <el-table-column prop="posted_by" label="记账人" width="120" align="center" />
+        <el-table-column prop="prepared_by_name" label="制单人" width="120" align="center">
+          <template #default="{ row }">{{ row.prepared_by_name || row.prepared_by || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="audit_by_name" label="审核人" width="120" align="center">
+          <template #default="{ row }">{{ row.audit_by_name || row.audit_by || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="posted_by_name" label="记账人" width="120" align="center">
+          <template #default="{ row }">{{ row.posted_by_name || row.posted_by || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" effect="light" size="small">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right" align="center">
+        <el-table-column label="操作" width="240" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button link type="primary" :icon="View" @click="openDetail(row)">查看</el-button>
+            <el-button v-if="canEditRow(row)" link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="row.status === 'SUBMITTED' && context.hasPermission('voucher:audit')" link type="success" :icon="Check" @click="audit(row)">审核</el-button>
+            <el-button v-if="row.status === 'AUDITED' && context.hasPermission('voucher:unaudit')" link type="warning" :icon="RefreshLeft" @click="unaudit(row)">取消审核</el-button>
+            <el-button v-if="canDeleteRow(row)" link type="danger" :icon="DeleteIcon" @click="deleteOne(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -187,8 +219,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Check, Filter, Plus, Refresh, RefreshLeft, Search, Tickets, View } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Check, Delete as DeleteIcon, Edit, Filter, Plus, Refresh, RefreshLeft, Search, Tickets } from '@element-plus/icons-vue'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
 
@@ -219,6 +251,7 @@ type AdvancedFilter = {
 const context = useContextStore()
 const router = useRouter()
 const rows = ref<any[]>([])
+const selectedRows = ref<any[]>([])
 const pageTotal = ref(0)
 const loading = ref(false)
 const advancedVisible = ref(false)
@@ -297,6 +330,7 @@ const load = async () => {
   try {
     const page: any = await voucherApi.page(buildQueryParams())
     rows.value = page.items || []
+    selectedRows.value = []
     pageTotal.value = Number(page.total || rows.value.length || 0)
   } finally {
     loading.value = false
@@ -338,9 +372,62 @@ const openDetail = (row: any) => {
   router.push(`/vouchers/detail/${row.period}/${row.voucher_id}`)
 }
 
+const openEdit = (row: any) => {
+  router.push(`/vouchers/edit/${row.period}/${row.voucher_id}`)
+}
+
+const unreviewedStatuses = ['DRAFT', 'SUBMITTED']
+const isUnreviewed = (row: any) => unreviewedStatuses.includes(row.status)
+const isAutoCarry = (row: any) => row.source_type === 'AUTO_CARRY'
+const canEditRow = (row: any) => context.hasPermission('voucher:edit') && isUnreviewed(row)
+const canDeleteRow = (row: any) => context.hasPermission('voucher:delete') && isUnreviewed(row) && !isAutoCarry(row)
+const canSelectRow = (row: any) => canDeleteRow(row)
+
+const handleSelectionChange = (selection: any[]) => {
+  selectedRows.value = selection
+}
+
+const deleteOne = async (row: any) => {
+  try {
+    await ElMessageBox.confirm(`确认删除凭证 ${row.voucher_word || '记'}-${String(row.voucher_no).padStart(4, '0')}？`, '删除凭证', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    })
+    await voucherApi.remove(row.period, row.voucher_id)
+    ElMessage.success('凭证已删除')
+    await load()
+  } catch {
+    // 用户取消时不提示。
+  }
+}
+
+const batchDelete = async () => {
+  if (selectedRows.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 张凭证？`, '批量删除凭证', {
+      type: 'warning',
+      confirmButtonText: '批量删除',
+      cancelButtonText: '取消'
+    })
+    await voucherApi.batchRemove(topFilter.period, selectedRows.value.map((row) => row.voucher_id))
+    ElMessage.success('凭证已批量删除')
+    selectedRows.value = []
+    await load()
+  } catch {
+    // 用户取消时不提示。
+  }
+}
+
 const audit = async (row: any) => {
   await voucherApi.audit(topFilter.period, row.voucher_id)
   ElMessage.success('审核完成')
+  await load()
+}
+
+const unaudit = async (row: any) => {
+  await voucherApi.unaudit(topFilter.period, row.voucher_id)
+  ElMessage.success('已取消审核')
   await load()
 }
 
@@ -365,6 +452,11 @@ const statusType = (status: string) =>
 
 const sourceTypeText = (sourceType: string) =>
   ({ MANUAL: '手工录入', AUTO_CARRY: '自动结转', RED_REVERSAL: '红字冲销', BUSINESS: '业务生成' }[sourceType] || sourceType || '-')
+
+const amountText = (value: any) => {
+  const amount = Number(value || 0)
+  return amount > 0 ? '¥ ' + amount.toFixed(2) : '-'
+}
 
 onMounted(load)
 </script>

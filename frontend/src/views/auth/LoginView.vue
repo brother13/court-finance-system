@@ -12,21 +12,30 @@
       </div>
 
       <div class="login-hero">
-        <span class="login-kicker">单院部署 · 专项资金核算</span>
-        <h1>凭证、账簿、辅助核算一体化处理</h1>
+        <span class="login-kicker">
+          <el-icon><CircleCheck /></el-icon>
+          单院部署 · 专项资金核算
+        </span>
+        <h1>
+          <span>凭证、账簿、辅助核算</span>
+          <span class="login-hero-gradient">一体化处理</span>
+        </h1>
         <p>面向法院案款、诉讼费等专项账务场景，提供清晰、可追溯的记账工作台。</p>
       </div>
 
       <div class="login-status-grid">
         <div>
+          <el-icon><Coin /></el-icon>
           <span>账务引擎</span>
           <strong>双分录</strong>
         </div>
         <div>
+          <el-icon><Calendar /></el-icon>
           <span>期间</span>
           <strong>{{ context.period }}</strong>
         </div>
         <div>
+          <el-icon><Connection /></el-icon>
           <span>部署</span>
           <strong>内网独立</strong>
         </div>
@@ -61,6 +70,9 @@
               :loading="unitLoading"
               class="login-control"
             >
+              <template #prefix>
+                <el-icon><OfficeBuilding /></el-icon>
+              </template>
               <el-option
                 v-for="unit in units"
                 :key="unit.unit_id"
@@ -102,8 +114,14 @@
         </el-form>
 
         <div class="login-footnote">
-          <span>初始账号：admin</span>
-          <span>初始密码：123456</span>
+          <span>
+            <el-icon><InfoFilled /></el-icon>
+            初始账号: <strong>admin</strong>
+          </span>
+          <span>
+            <el-icon><Key /></el-icon>
+            初始密码: <strong>123456</strong>
+          </span>
         </div>
       </div>
     </section>
@@ -114,7 +132,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Key, Lock, Right, User } from '@element-plus/icons-vue'
+import { Calendar, CircleCheck, Coin, Connection, InfoFilled, Key, Lock, OfficeBuilding, Right, User } from '@element-plus/icons-vue'
 import { authApi } from '../../api/auth'
 import { useContextStore } from '../../stores/context'
 import type { Unit } from '../../types/api'

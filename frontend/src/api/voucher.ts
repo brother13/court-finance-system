@@ -18,6 +18,15 @@ export const voucherApi = {
   submit(payload: Voucher) {
     return apiAction('/voucher/submit', payload) as Promise<Voucher>
   },
+  save(payload: Voucher) {
+    return apiAction('/voucher/save', payload) as Promise<Voucher>
+  },
+  remove(period: string, voucherId: string) {
+    return apiAction('/voucher/delete', { period, voucher_id: voucherId }) as Promise<{ deleted_count: number }>
+  },
+  batchRemove(period: string, voucherIds: string[]) {
+    return apiAction('/voucher/batchDelete', { period, voucher_ids: voucherIds }) as Promise<{ deleted_count: number }>
+  },
   audit(period: string, voucherId: string) {
     return apiAction('/voucher/audit', { period, voucher_id: voucherId }) as Promise<void>
   },

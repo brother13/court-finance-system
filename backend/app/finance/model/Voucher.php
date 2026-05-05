@@ -30,6 +30,11 @@ class Voucher extends Common
                 return $this->changeStatus($data, 'SUBMITTED', 'AUDITED', 'AUDIT');
             case 'unaudit':
                 return $this->changeStatus($data, 'AUDITED', 'SUBMITTED', 'UNAUDIT');
+            case 'delete':
+            case 'del':
+                return $this->deleteVoucher($data);
+            case 'batchDelete':
+                return $this->batchDeleteVouchers($data);
             case 'void':
                 return $this->voidVoucher($data);
             case 'printMark':
@@ -65,6 +70,7 @@ class Voucher extends Common
             ->order('voucher_no asc')
             ->page($page, $pagesize)
             ->select();
+        $this->fillUserDisplayNames($rows);
         return $this->ok(['items' => $rows, 'total' => $num], 'OK', $num);
     }
 
@@ -221,6 +227,9 @@ class Voucher extends Common
         if ($this->currentViewScope() === 'SELF' && $voucher['prepared_by'] !== $this->userid) {
             return $this->error('无权限查看该凭证');
         }
+        $voucherRows = [$voucher];
+        $this->fillUserDisplayNames($voucherRows);
+        $voucher = $voucherRows[0];
         $detailTable = $this->yearTable('fin_voucher_detail', $period);
         $auxTable = $this->yearTable('fin_voucher_aux_value', $period);
         $details = $this->getdb($detailTable)->where([
@@ -242,6 +251,35 @@ class Voucher extends Common
         }
         $voucher['details'] = $details;
         return $this->ok($voucher);
+    }
+
+    protected function fillUserDisplayNames(&$rows)
+    {
+        $userIds = [];
+        foreach ($rows as $row) {
+            foreach (['prepared_by', 'audit_by', 'posted_by'] as $field) {
+                if (!empty($row[$field])) {
+                    $userIds[] = $row[$field];
+                }
+            }
+        }
+        $userIds = array_values(array_unique($userIds));
+        if (empty($userIds)) {
+            return;
+        }
+        $users = $this->getdb('sys_user')
+            ->where('user_id', 'in', $userIds)
+            ->field('user_id,username,real_name')
+            ->select();
+        $nameMap = [];
+        foreach ($users as $user) {
+            $nameMap[$user['user_id']] = $user['real_name'] ?: $user['username'];
+        }
+        foreach ($rows as &$row) {
+            $row['prepared_by_name'] = !empty($row['prepared_by']) && isset($nameMap[$row['prepared_by']]) ? $nameMap[$row['prepared_by']] : ($row['prepared_by'] ?? '');
+            $row['audit_by_name'] = !empty($row['audit_by']) && isset($nameMap[$row['audit_by']]) ? $nameMap[$row['audit_by']] : ($row['audit_by'] ?? '');
+            $row['posted_by_name'] = !empty($row['posted_by']) && isset($nameMap[$row['posted_by']]) ? $nameMap[$row['posted_by']] : ($row['posted_by'] ?? '');
+        }
     }
 
     public function saveVoucher($data, $status)
@@ -268,6 +306,7 @@ class Voucher extends Common
         if ($balanceCheck['code'] !== self::CODE_SUCCESS) {
             return $balanceCheck;
         }
+        $amountTotals = $this->sumVoucherAmounts($details);
 
         $voucherTable = $this->yearTable('fin_voucher', $period);
         $detailTable = $this->yearTable('fin_voucher_detail', $period);
@@ -289,6 +328,8 @@ class Voucher extends Common
                     'voucher_word' => $data['voucher_word'] ?? '记',
                     'voucher_no' => $voucherNo,
                     'summary' => $data['summary'] ?? '',
+                    'debit_amount' => $amountTotals['debit_amount'],
+                    'credit_amount' => $amountTotals['credit_amount'],
                     'attachment_count' => $data['attachment_count'] ?? 0,
                     'status' => $status,
                     'source_type' => $data['source_type'] ?? 'MANUAL',
@@ -319,6 +360,8 @@ class Voucher extends Common
                     'voucher_date' => $voucherDate,
                     'voucher_word' => $data['voucher_word'] ?? ($before['voucher_word'] ?? '记'),
                     'summary' => $data['summary'] ?? '',
+                    'debit_amount' => $amountTotals['debit_amount'],
+                    'credit_amount' => $amountTotals['credit_amount'],
                     'attachment_count' => $data['attachment_count'] ?? 0,
                     'status' => $status,
                     'source_type' => $data['source_type'] ?? $before['source_type'],
@@ -456,6 +499,111 @@ class Voucher extends Common
         return $this->ok($voucherId, '操作成功');
     }
 
+    public function deleteVoucher($data)
+    {
+        $voucherId = $data['voucher_id'] ?? '';
+        if ($voucherId === '') {
+            return $this->error('凭证ID不能为空');
+        }
+        return $this->deleteVoucherIds($data['period'] ?? '', [$voucherId]);
+    }
+
+    public function batchDeleteVouchers($data)
+    {
+        $voucherIds = $data['voucher_ids'] ?? [];
+        if (!is_array($voucherIds)) {
+            return $this->error('待删除凭证列表格式不正确');
+        }
+        $voucherIds = array_values(array_filter(array_unique($voucherIds)));
+        if (empty($voucherIds)) {
+            return $this->error('请选择要删除的凭证');
+        }
+        return $this->deleteVoucherIds($data['period'] ?? '', $voucherIds);
+    }
+
+    protected function deleteVoucherIds($period, $voucherIds)
+    {
+        $auth = $this->requirePermission('voucher:delete');
+        if ($auth) {
+            return $auth;
+        }
+        if ($period === '') {
+            return $this->error('会计期间不能为空');
+        }
+
+        $voucherTable = $this->yearTable('fin_voucher', $period);
+        $detailTable = $this->yearTable('fin_voucher_detail', $period);
+        $auxTable = $this->yearTable('fin_voucher_aux_value', $period);
+        $periodStatus = $this->fiscalPeriodStatus($period);
+
+        $beforeRows = [];
+        foreach ($voucherIds as $voucherId) {
+            $voucher = $this->getdb($voucherTable)->where($this->voucherWhere($voucherId, $period))->find();
+            if (!$voucher) {
+                return $this->error('凭证不存在或已删除：' . $voucherId);
+            }
+            if ($this->currentViewScope() === 'SELF' && $voucher['prepared_by'] !== $this->userid) {
+                return $this->error('无权限删除非本人制单凭证：' . ($voucher['voucher_word'] ?? '记') . '-' . $voucher['voucher_no']);
+            }
+            $reason = $this->voucherDeleteBlockReason($voucher, $periodStatus);
+            if ($reason !== '') {
+                return $this->error(($voucher['voucher_word'] ?? '记') . '-' . $voucher['voucher_no'] . '：' . $reason);
+            }
+            $beforeRows[] = $voucher;
+        }
+
+        Db::startTrans();
+        try {
+            foreach ($beforeRows as $voucher) {
+                $voucherId = $voucher['voucher_id'];
+                $update = ['del_flag' => 1];
+                $this->fillUpdate($update);
+                $this->getdb($voucherTable)->where($this->voucherWhere($voucherId, $period))->update($update);
+                $this->getdb($detailTable)->where([
+                    'account_set_id' => $this->accountSetId,
+                    'voucher_id' => $voucherId,
+                    'del_flag' => 0,
+                ])->update($update);
+                $this->getdb($auxTable)->where([
+                    'account_set_id' => $this->accountSetId,
+                    'voucher_id' => $voucherId,
+                    'del_flag' => 0,
+                ])->update($update);
+                $this->logAudit('VOUCHER', $voucherId, 'DELETE', $voucher, $update);
+            }
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('凭证删除失败：' . $e->getMessage());
+        }
+
+        return $this->ok(['deleted_count' => count($beforeRows)], '删除成功', count($beforeRows));
+    }
+
+    protected function fiscalPeriodStatus($period)
+    {
+        $row = $this->getdb('fin_fiscal_period')->where([
+            'account_set_id' => $this->accountSetId,
+            'period' => $period,
+            'del_flag' => 0,
+        ])->find();
+        return $row['status'] ?? '';
+    }
+
+    protected function voucherDeleteBlockReason($voucher, $periodStatus)
+    {
+        if ($periodStatus !== 'OPEN') {
+            return '会计期间已结账，不允许删除凭证';
+        }
+        if (($voucher['source_type'] ?? '') === 'AUTO_CARRY') {
+            return '期末自动结转凭证不允许删除';
+        }
+        if (!in_array($voucher['status'] ?? '', ['DRAFT', 'SUBMITTED'])) {
+            return '只能删除未审核凭证，已审核凭证需取消审核后再删除';
+        }
+        return '';
+    }
+
     public function printMark($data)
     {
         $auth = $this->requirePermission('voucher:print');
@@ -510,6 +658,20 @@ class Voucher extends Common
             return $this->error('凭证金额必须大于0');
         }
         return $this->ok();
+    }
+
+    protected function sumVoucherAmounts($details)
+    {
+        $debit = 0;
+        $credit = 0;
+        foreach ($details as $line) {
+            $debit += $this->decimalToCents($line['debit_amount'] ?? '0');
+            $credit += $this->decimalToCents($line['credit_amount'] ?? '0');
+        }
+        return [
+            'debit_amount' => $this->centsToDecimal($debit),
+            'credit_amount' => $this->centsToDecimal($credit),
+        ];
     }
 
     protected function checkLine($line)
