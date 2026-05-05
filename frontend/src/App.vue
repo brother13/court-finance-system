@@ -35,7 +35,7 @@
             <span>案款业务</span>
           </template>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">案款缴费登记</el-menu-item>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds" disabled>案款退付登记</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">案款退付登记</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="context.hasAnyPermission(['menu:base:subject', 'menu:base:opening', 'menu:base:aux'])" index="/base">
           <template #title>
@@ -140,6 +140,7 @@ const titleMap: Record<string, string> = {
   '/books/detail-ledger': '明细账',
   '/books/subject-balance': '科目余额表',
   '/case-fund/payments': '案款缴费登记',
+  '/case-fund/refunds': '案款退付登记',
   '/base/subjects': '科目',
   '/base/opening-balances': '期初',
   '/base/aux-items': '辅助核算项',

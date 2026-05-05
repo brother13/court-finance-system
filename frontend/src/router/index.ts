@@ -5,6 +5,7 @@ import VoucherEditorView from '../views/voucher/VoucherEditorView.vue'
 import DetailLedgerView from '../views/books/DetailLedgerView.vue'
 import SubjectBalanceView from '../views/books/SubjectBalanceView.vue'
 import PaymentRegisterView from '../views/case-fund/PaymentRegisterView.vue'
+import RefundRegisterView from '../views/case-fund/RefundRegisterView.vue'
 import SubjectManageView from '../views/base/SubjectManageView.vue'
 import OpeningBalanceView from '../views/base/OpeningBalanceView.vue'
 import AuxItemManageView from '../views/base/AuxItemManageView.vue'
@@ -31,6 +32,7 @@ const router = createRouter({
     { path: '/books/detail-ledger', component: DetailLedgerView, meta: { permission: 'menu:book:detail_ledger' } },
     { path: '/books/subject-balance', component: SubjectBalanceView, meta: { permission: 'menu:book:subject_balance' } },
     { path: '/case-fund/payments', component: PaymentRegisterView, meta: { permission: 'menu:case_fund:payment' } },
+    { path: '/case-fund/refunds', component: RefundRegisterView, meta: { permission: 'menu:case_fund:refund' } },
     { path: '/base/subjects', component: SubjectManageView, meta: { permission: 'menu:base:subject' } },
     { path: '/base/opening-balances', component: OpeningBalanceView, meta: { permission: 'menu:base:opening' } },
     { path: '/base/aux-items', component: AuxItemManageView, meta: { permission: 'menu:base:aux' } },

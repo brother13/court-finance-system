@@ -223,3 +223,43 @@ export interface CaseFundPayment {
   voucher_period?: string
   voucher_generated_time?: string
 }
+
+export interface CaseFundRefund {
+  refund_id: string
+  account_set_id: string
+  fiscal_year: number
+  period: string
+  case_no: string
+  handler_name?: string
+  clerk_name?: string
+  receipt_no?: string
+  invoice_date?: string
+  refund_date: string
+  source_receipt_no?: string
+  source_receipt_date?: string
+  out_order_no?: string
+  out_status?: string
+  out_type: string
+  litigation_position?: string
+  party_name?: string
+  refund_amount: string | number
+  total_refund_amount: string | number
+  payee_party_relation?: string
+  payment_method?: string
+  actual_payee_name?: string
+  payee_identity_no?: string
+  payee_bank_account_name?: string
+  payee_bank_account_no?: string
+  payee_bank_name?: string
+  unionpay_no?: string
+  same_bank_flag?: string
+  handler_note?: string
+  applicant_name?: string
+  source_file_name?: string
+  source_row_no?: number
+  voucher_status: 'UNGENERATED' | 'GENERATED' | 'VOIDED' | string
+  voucher_id?: string
+  voucher_no?: number
+  voucher_period?: string
+  voucher_generated_time?: string
+}

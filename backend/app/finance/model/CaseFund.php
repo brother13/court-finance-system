@@ -8,6 +8,7 @@ class CaseFund extends Common
 {
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
+    const TABLE_REFUND = 'fin_case_fund_refund';
     const PAYMENT_FIELD = [
         'payment_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'confirmed_flag',
         'available_flag', 'business_type', 'payer_name', 'party_name', 'invoice_title',
@@ -19,6 +20,18 @@ class CaseFund extends Common
         'voucher_status', 'voucher_id', 'voucher_no', 'voucher_period', 'voucher_generated_time',
         'created_by', 'created_time', 'updated_by', 'updated_time', 'del_flag', 'version', 'remark',
     ];
+    const REFUND_FIELD = [
+        'refund_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'handler_name',
+        'clerk_name', 'receipt_no', 'invoice_date', 'refund_date', 'source_receipt_no',
+        'source_receipt_date', 'out_order_no', 'out_status', 'out_type', 'litigation_position',
+        'party_name', 'refund_amount', 'total_refund_amount', 'payee_party_relation',
+        'payment_method', 'actual_payee_name', 'payee_identity_no', 'payee_bank_account_name',
+        'payee_bank_account_no', 'payee_bank_name', 'unionpay_no', 'same_bank_flag',
+        'handler_note', 'applicant_name', 'source_file_name', 'source_row_no',
+        'source_fingerprint', 'source_raw_json', 'voucher_status', 'voucher_id', 'voucher_no',
+        'voucher_period', 'voucher_generated_time', 'created_by', 'created_time', 'updated_by',
+        'updated_time', 'del_flag', 'version', 'remark',
+    ];
 
     public function index($action = '', $data = [])
     {
@@ -27,6 +40,10 @@ class CaseFund extends Common
                 return $this->paymentList($data);
             case 'paymentImport':
                 return $this->paymentImport($data);
+            case 'refundList':
+                return $this->refundList($data);
+            case 'refundImport':
+                return $this->refundImport($data);
             default:
                 return $this->error('操作【/' . self::ACTION . '/' . $action . '】并不存在！');
         }
@@ -167,6 +184,157 @@ class CaseFund extends Common
         ], '导入成功', count($rows));
     }
 
+    public function refundList($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:view');
+        if ($auth) {
+            return $auth;
+        }
+        $page = $data['page'] ?? input('param.page', 1);
+        $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
+        $where = $this->accountWhere();
+        if (!empty($data['period'])) {
+            $where['period'] = $data['period'];
+        }
+        if (!empty($data['voucher_status'])) {
+            $where['voucher_status'] = $data['voucher_status'];
+        }
+        $dateStart = $data['date_start'] ?? ($data['startDate'] ?? '');
+        $dateEnd = $data['date_end'] ?? ($data['endDate'] ?? '');
+        if ($dateStart !== '') {
+            $where['refund_date'][] = ['>=', $dateStart];
+        }
+        if ($dateEnd !== '') {
+            $where['refund_date'][] = ['<=', $dateEnd];
+        }
+        if (!empty($data['out_status'])) {
+            $where['out_status'] = $data['out_status'];
+        }
+        $bizType = $this->currentAccountSetBizType();
+        $allowedOutTypes = $this->allowedRefundOutTypes($bizType);
+        if (empty($allowedOutTypes)) {
+            return $this->error('当前账套类型不支持案款退付登记：' . $bizType);
+        }
+        $where['out_type'] = ['in', $allowedOutTypes];
+        $caseNo = trim($data['case_no'] ?? ($data['caseNo'] ?? ''));
+        $partyName = trim($data['party_name'] ?? ($data['partyName'] ?? ''));
+        $keyword = trim($data['keyword'] ?? '');
+
+        $query = $this->getdb(self::TABLE_REFUND)->where($where);
+        $totalQuery = $this->getdb(self::TABLE_REFUND)->where($where);
+        $amountQuery = $this->getdb(self::TABLE_REFUND)->where($where);
+        foreach ([$query, $totalQuery, $amountQuery] as $item) {
+            if ($caseNo !== '') {
+                $item->where('case_no', 'like', '%' . $caseNo . '%');
+            }
+            if ($partyName !== '') {
+                $item->where('party_name|actual_payee_name|payee_bank_account_name', 'like', '%' . $partyName . '%');
+            }
+            if ($keyword !== '') {
+                $item->where('case_no|party_name|actual_payee_name|receipt_no|source_receipt_no|out_order_no|payee_bank_account_no', 'like', '%' . $keyword . '%');
+            }
+        }
+
+        $total = $totalQuery->count();
+        $totalAmount = $amountQuery->sum('refund_amount');
+        $rows = $query->field(self::REFUND_FIELD)
+            ->order('refund_date desc, source_row_no asc')
+            ->page($page, $pagesize)
+            ->select();
+        return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
+    }
+
+    public function refundImport($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:import');
+        if ($auth) {
+            return $auth;
+        }
+        $content = $data['content_base64'] ?? '';
+        if ($content === '') {
+            return $this->error('导入文件不能为空');
+        }
+        $binary = base64_decode($content, true);
+        if ($binary === false || $binary === '') {
+            return $this->error('导入文件内容不正确');
+        }
+
+        try {
+            $rows = $this->parseRefundImportRowsFromXls($binary);
+        } catch (\Exception $e) {
+            return $this->error('解析案款退付登记失败：' . $e->getMessage());
+        }
+        if (empty($rows)) {
+            return $this->error('导入文件没有案款退付数据');
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        $errors = $this->validateRefundRows($rows, $bizType);
+        if (!empty($errors)) {
+            return $this->error($this->refundImportErrorMessage($errors, $bizType), $errors);
+        }
+
+        $fingerprints = [];
+        foreach ($rows as $row) {
+            $fingerprints[] = $row['source_fingerprint'];
+        }
+        $existing = [];
+        if (!empty($fingerprints)) {
+            $existingRows = $this->getdb(self::TABLE_REFUND)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->select();
+            foreach ($existingRows as $row) {
+                $existing[$row['source_fingerprint']] = true;
+            }
+        }
+
+        $created = 0;
+        $skipped = 0;
+        $seen = [];
+        Db::startTrans();
+        try {
+            foreach ($rows as $row) {
+                $fingerprint = $row['source_fingerprint'];
+                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
+                    $skipped++;
+                    $seen[$fingerprint] = true;
+                    continue;
+                }
+                $seen[$fingerprint] = true;
+                $insert = $row;
+                $insert['refund_id'] = uuid();
+                $insert['account_set_id'] = $this->accountSetId;
+                $insert['source_file_name'] = $data['filename'] ?? '';
+                $insert['voucher_status'] = 'UNGENERATED';
+                $insert['voucher_id'] = null;
+                $insert['voucher_no'] = null;
+                $insert['voucher_period'] = null;
+                $insert['voucher_generated_time'] = null;
+                $insert['remark'] = $data['remark'] ?? '';
+                $this->fillCreate($insert);
+                $this->getdb(self::TABLE_REFUND)->insert($insert);
+                $created++;
+            }
+            $this->logAudit('CASE_FUND_REFUND', 'IMPORT', 'IMPORT', null, [
+                'filename' => $data['filename'] ?? '',
+                'total' => count($rows),
+                'created' => $created,
+                'skipped' => $skipped,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('保存案款退付登记失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'total' => count($rows),
+            'created' => $created,
+            'skipped' => $skipped,
+        ], '导入成功', count($rows));
+    }
+
     protected function parsePaymentImportRowsFromXls($binary)
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
@@ -257,6 +425,99 @@ class CaseFund extends Common
         return $rows;
     }
 
+    protected function parseRefundImportRowsFromXls($binary)
+    {
+        $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
+        if (empty($cells)) {
+            throw new \Exception('文件中没有可识别的工作表数据');
+        }
+        $maxRow = -1;
+        $maxCol = -1;
+        foreach ($cells as $key => $value) {
+            list($row, $col) = array_map('intval', explode(':', $key));
+            $maxRow = max($maxRow, $row);
+            $maxCol = max($maxCol, $col);
+        }
+
+        $headers = [];
+        for ($col = 0; $col <= $maxCol; $col++) {
+            $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
+        }
+        $required = [
+            '案号', '经办人', '书记员', '票据号码', '开票日期', '出账日期',
+            '来源票据号码', '来源票据开票日期', '出账单号', '出账状态', '出账种类',
+            '诉讼地位', '当事人', '出账金额', '总出账金额', '收款人与当事人关系',
+            '支付方式', '实际收款人', '身份证号/企业', '收款人银行户名', '收款账号',
+            '开户银行', '银联号', '是否本行', '承办人情况说明', '申请人',
+        ];
+        $index = [];
+        foreach ($required as $name) {
+            $found = array_search($name, $headers, true);
+            if ($found === false) {
+                throw new \Exception('缺少表头：' . $name);
+            }
+            $index[$name] = $found;
+        }
+
+        $rows = [];
+        for ($row = 1; $row <= $maxRow; $row++) {
+            $raw = [];
+            foreach ($index as $name => $col) {
+                $raw[$name] = $this->normalizeImportCellText($cells[$row . ':' . $col] ?? '');
+            }
+            if ($this->isEmptyPaymentRawRow($raw)) {
+                continue;
+            }
+            if ($this->isMalformedPaymentRawRow($raw)) {
+                continue;
+            }
+            if ($this->isNonDetailRefundRawRow($raw)) {
+                continue;
+            }
+            $refundDate = $this->normalizeDateValue($raw['出账日期']);
+            $invoiceDate = $this->normalizeDateValue($raw['开票日期']);
+            $sourceReceiptDate = $this->normalizeDateValue($raw['来源票据开票日期']);
+            $refundAmount = $this->centsToDecimal($this->decimalToCents($raw['出账金额']));
+            $totalRefundAmount = $this->centsToDecimal($this->decimalToCents($raw['总出账金额']));
+            $period = $refundDate === '' ? '' : substr($refundDate, 0, 7);
+            $parsed = [
+                'fiscal_year' => $refundDate === '' ? '' : substr($refundDate, 0, 4),
+                'period' => $period,
+                'case_no' => $raw['案号'],
+                'handler_name' => $raw['经办人'],
+                'clerk_name' => $raw['书记员'],
+                'receipt_no' => $raw['票据号码'],
+                'invoice_date' => $invoiceDate,
+                'refund_date' => $refundDate,
+                'source_receipt_no' => $raw['来源票据号码'],
+                'source_receipt_date' => $sourceReceiptDate,
+                'out_order_no' => $raw['出账单号'],
+                'out_status' => $raw['出账状态'],
+                'out_type' => $raw['出账种类'],
+                'litigation_position' => $raw['诉讼地位'],
+                'party_name' => $raw['当事人'],
+                'refund_amount' => $refundAmount,
+                'total_refund_amount' => $totalRefundAmount,
+                'payee_party_relation' => $raw['收款人与当事人关系'],
+                'payment_method' => $raw['支付方式'],
+                'actual_payee_name' => $raw['实际收款人'],
+                'payee_identity_no' => $raw['身份证号/企业'],
+                'payee_bank_account_name' => $raw['收款人银行户名'],
+                'payee_bank_account_no' => $raw['收款账号'],
+                'payee_bank_name' => $raw['开户银行'],
+                'unionpay_no' => $raw['银联号'],
+                'same_bank_flag' => $raw['是否本行'],
+                'handler_note' => $raw['承办人情况说明'],
+                'applicant_name' => $raw['申请人'],
+                'source_row_no' => $row + 1,
+                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
+            ];
+            $parsed['source_fingerprint'] = $this->refundFingerprint($parsed);
+            $rows[] = $parsed;
+        }
+        return $rows;
+    }
+
     protected function validatePaymentRows($rows, $bizType = '')
     {
         $errors = [];
@@ -289,6 +550,38 @@ class CaseFund extends Common
         return $errors;
     }
 
+    protected function validateRefundRows($rows, $bizType = '')
+    {
+        $errors = [];
+        $allowedOutTypes = $this->allowedRefundOutTypes($bizType);
+        foreach ($rows as $row) {
+            $prefix = '第' . $row['source_row_no'] . '行：';
+            if ($row['case_no'] === '') {
+                $errors[] = $prefix . '案号不能为空';
+            }
+            if ($row['out_type'] === '') {
+                $errors[] = $prefix . '出账种类不能为空';
+            } elseif (empty($allowedOutTypes)) {
+                $errors[] = $prefix . '当前账套类型不支持案款退付登记：' . $bizType;
+            } elseif (!in_array($row['out_type'], $allowedOutTypes, true)) {
+                $errors[] = $prefix . '当前账套不允许导入出账种类【' . $row['out_type'] . '】，允许类型：' . implode('、', $allowedOutTypes);
+            }
+            if ($row['party_name'] === '' && $row['actual_payee_name'] === '') {
+                $errors[] = $prefix . '当事人和实际收款人不能同时为空';
+            }
+            if ($this->decimalToCents($row['refund_amount']) <= 0) {
+                $errors[] = $prefix . '出账金额必须大于0';
+            }
+            if ($row['refund_date'] === '') {
+                $errors[] = $prefix . '出账日期不能为空或格式不正确';
+            }
+            if ($row['receipt_no'] === '' && $row['source_receipt_no'] === '' && $row['out_order_no'] === '') {
+                $errors[] = $prefix . '票据号码、来源票据号码、出账单号至少填写一项用于追溯';
+            }
+        }
+        return $errors;
+    }
+
     protected function currentAccountSetBizType()
     {
         try {
@@ -311,10 +604,29 @@ class CaseFund extends Common
         return $map[$bizType] ?? [];
     }
 
+    protected function allowedRefundOutTypes($bizType)
+    {
+        $map = [
+            'CASE_FUND' => ['执行、调解款发放'],
+            'LITIGATION_FEE' => ['诉讼费退费'],
+        ];
+        return $map[$bizType] ?? [];
+    }
+
     protected function paymentImportErrorMessage($errors, $bizType = '')
     {
         foreach ($errors as $error) {
             if (strpos($error, '当前账套不允许导入业务类型') !== false) {
+                return '导入的不是' . $this->paymentDataLabelByBizType($bizType) . '数据';
+            }
+        }
+        return '导入校验失败';
+    }
+
+    protected function refundImportErrorMessage($errors, $bizType = '')
+    {
+        foreach ($errors as $error) {
+            if (strpos($error, '当前账套不允许导入出账种类') !== false) {
                 return '导入的不是' . $this->paymentDataLabelByBizType($bizType) . '数据';
             }
         }
@@ -349,6 +661,15 @@ class CaseFund extends Common
         return $caseNo === '' && $paymentDate === '' && $receiptNo === '' && $bankSerialNo === '';
     }
 
+    protected function isNonDetailRefundRawRow($raw)
+    {
+        $caseNo = trim((string)($raw['案号'] ?? ''));
+        $refundDate = trim((string)($raw['出账日期'] ?? ''));
+        $sourceReceiptNo = trim((string)($raw['来源票据号码'] ?? ''));
+        $outOrderNo = trim((string)($raw['出账单号'] ?? ''));
+        return $caseNo === '' && $refundDate === '' && $sourceReceiptNo === '' && $outOrderNo === '';
+    }
+
     protected function isMalformedPaymentRawRow($raw)
     {
         foreach ($raw as $value) {
@@ -371,6 +692,21 @@ class CaseFund extends Common
             $row['payment_order_no'] ?? '',
         ];
         return md5(implode('|', $parts));
+    }
+
+    protected function refundFingerprint($row)
+    {
+        $parts = [
+            $row['case_no'] ?? '',
+            $row['refund_date'] ?? '',
+            $row['out_type'] ?? '',
+            $row['refund_amount'] ?? '',
+            $row['source_receipt_no'] ?? '',
+            $row['out_order_no'] ?? '',
+            $row['actual_payee_name'] ?? '',
+            $row['payee_bank_account_no'] ?? '',
+        ];
+        return hash('sha256', implode('|', $parts));
     }
 
     protected function yesNoFlagFromText($text)
