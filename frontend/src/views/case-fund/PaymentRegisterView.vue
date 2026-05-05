@@ -22,6 +22,7 @@
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handlePaymentImportFile" />
+        <el-button v-permission="'case_fund:subject_config'" :icon="Setting" @click="openSubjectConfig">科目配置</el-button>
         <el-button v-permission="'case_fund:import'" type="primary" :icon="Upload" :loading="importing" @click="choosePaymentImportFile">导入缴费</el-button>
       </div>
     </div>
@@ -84,25 +85,71 @@
         @current-change="load"
       />
     </div>
+
+    <el-dialog v-model="subjectConfigVisible" title="缴费科目配置" width="760px" destroy-on-close>
+      <div class="subject-config-options">
+        <span>是否按天生成凭证</span>
+        <el-switch v-model="generateVoucherByDay" />
+      </div>
+      <el-table :data="subjectConfigRows" border v-loading="subjectConfigLoading">
+        <el-table-column prop="business_item_type" label="业务类型" min-width="160" />
+        <el-table-column label="借方科目" min-width="240">
+          <template #default="{ row }">
+            <el-select v-model="row.debit_subject_code" filterable clearable placeholder="借方科目" style="width: 100%">
+              <el-option
+                v-for="subject in subjectOptions"
+                :key="`debit-${subjectCode(subject)}`"
+                :label="subjectLabel(subject)"
+                :value="subjectCode(subject)"
+              />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="贷方科目" min-width="240">
+          <template #default="{ row }">
+            <el-select v-model="row.credit_subject_code" filterable clearable placeholder="贷方科目" style="width: 100%">
+              <el-option
+                v-for="subject in subjectOptions"
+                :key="`credit-${subjectCode(subject)}`"
+                :label="subjectLabel(subject)"
+                :value="subjectCode(subject)"
+              />
+            </el-select>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="subjectConfigVisible = false">取消</el-button>
+        <el-button type="primary" :loading="subjectConfigSaving" @click="saveSubjectConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Upload } from '@element-plus/icons-vue'
+import { Search, Setting, Upload } from '@element-plus/icons-vue'
+import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
-import type { CaseFundPayment } from '../../types/api'
+import type { CaseFundPayment, CaseFundSubjectConfig, Subject } from '../../types/api'
 
 const context = useContextStore()
 const rows = ref<CaseFundPayment[]>([])
+const subjects = ref<Subject[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 const importing = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
+const subjectConfigVisible = ref(false)
+const subjectConfigLoading = ref(false)
+const subjectConfigSaving = ref(false)
+const subjectConfigRows = ref<CaseFundSubjectConfig[]>([])
+const generateVoucherByDay = ref(true)
+const voucherBizType: 'PAYMENT' = 'PAYMENT'
 const initialRange = initialPaymentDateRange(context.period)
 const filters = reactive({
   quick_range: '',
@@ -118,6 +165,11 @@ const pageAmountText = computed(() => {
 })
 
 const ungeneratedCount = computed(() => rows.value.filter((row) => row.voucher_status === 'UNGENERATED').length)
+const subjectOptions = computed(() => subjects.value.filter((subject: any) => {
+  return Number(subject.leaf_flag ?? subject.leafFlag) === 1
+    && Number(subject.voucher_entry_flag ?? 1) === 1
+    && Number(subject.status ?? 1) === 1
+}))
 
 const load = async () => {
   loading.value = true
@@ -140,6 +192,42 @@ const load = async () => {
 const query = async () => {
   page.value = 1
   await load()
+}
+
+const openSubjectConfig = async () => {
+  subjectConfigVisible.value = true
+  subjectConfigLoading.value = true
+  try {
+    const [configResult] = await Promise.all([
+      caseFundApi.subjectConfigList(voucherBizType),
+      loadSubjects()
+    ])
+    generateVoucherByDay.value = Number(configResult.generate_voucher_by_day_flag ?? 1) === 1
+    subjectConfigRows.value = (configResult.items || []).map((item) => ({ ...item }))
+  } finally {
+    subjectConfigLoading.value = false
+  }
+}
+
+const saveSubjectConfig = async () => {
+  const missing = subjectConfigRows.value.find((row) => !row.debit_subject_code || !row.credit_subject_code)
+  if (missing) {
+    ElMessage.warning(`${missing.business_item_type} 的借方科目和贷方科目都不能为空`)
+    return
+  }
+  subjectConfigSaving.value = true
+  try {
+    await caseFundApi.saveSubjectConfigs(voucherBizType, subjectConfigRows.value, generateVoucherByDay.value ? 1 : 0)
+    ElMessage.success('科目配置已保存')
+    subjectConfigVisible.value = false
+  } finally {
+    subjectConfigSaving.value = false
+  }
+}
+
+const loadSubjects = async () => {
+  if (subjects.value.length > 0) return
+  subjects.value = await baseApi.subjects()
 }
 
 const applyQuickRange = () => {
@@ -257,6 +345,10 @@ const voucherStatusType = (status: string) => {
   return map[status] || 'info'
 }
 
+const subjectCode = (subject: Subject) => subject.subject_code || subject.subjectCode
+
+const subjectLabel = (subject: Subject) => `${subjectCode(subject)} ${subject.subject_name || subject.subjectName}`
+
 onMounted(load)
 </script>
 
@@ -354,6 +446,15 @@ onMounted(load)
 
 .muted-text {
   color: var(--text-mute);
+}
+
+.subject-config-options {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--text-main);
 }
 
 @media (max-width: 1100px) {

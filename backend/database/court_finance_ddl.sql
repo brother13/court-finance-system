@@ -105,6 +105,7 @@ create table fin_account_set (
     paper_size varchar(20) not null default 'A5',
     voucher_import_auto_no tinyint not null default 1,
     voucher_print_line_count int not null default 8,
+    generate_voucher_by_day_flag tinyint not null default 1,
     subject_code_rule varchar(50) not null default '4-2-2-2',
     status int not null,
     created_by varchar(36),
@@ -456,3 +457,23 @@ create index idx_case_fund_refund_out_type on fin_case_fund_refund (account_set_
 create index idx_case_fund_refund_case on fin_case_fund_refund (account_set_id, case_no);
 create index idx_case_fund_refund_source_receipt on fin_case_fund_refund (account_set_id, source_receipt_no);
 create index idx_case_fund_refund_voucher on fin_case_fund_refund (account_set_id, voucher_status, voucher_period, voucher_id);
+
+create table fin_case_fund_subject_config (
+    config_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    biz_type varchar(50) not null,
+    voucher_biz_type varchar(30) not null,
+    business_item_type varchar(100) not null,
+    debit_subject_code varchar(50) not null,
+    credit_subject_code varchar(50) not null,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create unique index uk_case_fund_subject_config on fin_case_fund_subject_config (account_set_id, biz_type, voucher_biz_type, business_item_type);
+create index idx_case_fund_subject_config_subject on fin_case_fund_subject_config (account_set_id, debit_subject_code, credit_subject_code);

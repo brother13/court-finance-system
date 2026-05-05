@@ -263,3 +263,23 @@ export interface CaseFundRefund {
   voucher_period?: string
   voucher_generated_time?: string
 }
+
+export interface CaseFundSubjectConfig {
+  config_id?: string
+  account_set_id?: string
+  biz_type?: string
+  voucher_biz_type?: 'PAYMENT' | 'REFUND'
+  business_item_type: string
+  debit_subject_code: string
+  debit_subject_name?: string
+  credit_subject_code: string
+  credit_subject_name?: string
+  remark?: string
+}
+
+export interface CaseFundSubjectConfigResult {
+  items: CaseFundSubjectConfig[]
+  biz_type: string
+  voucher_biz_type: 'PAYMENT' | 'REFUND'
+  generate_voucher_by_day_flag?: number
+}

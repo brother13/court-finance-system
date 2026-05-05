@@ -9,6 +9,7 @@ class CaseFund extends Common
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
     const TABLE_REFUND = 'fin_case_fund_refund';
+    const TABLE_SUBJECT_CONFIG = 'fin_case_fund_subject_config';
     const PAYMENT_FIELD = [
         'payment_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'confirmed_flag',
         'available_flag', 'business_type', 'payer_name', 'party_name', 'invoice_title',
@@ -32,6 +33,11 @@ class CaseFund extends Common
         'voucher_period', 'voucher_generated_time', 'created_by', 'created_time', 'updated_by',
         'updated_time', 'del_flag', 'version', 'remark',
     ];
+    const SUBJECT_CONFIG_FIELD = [
+        'config_id', 'account_set_id', 'biz_type', 'voucher_biz_type', 'business_item_type',
+        'debit_subject_code', 'credit_subject_code', 'created_by', 'created_time',
+        'updated_by', 'updated_time', 'del_flag', 'version', 'remark',
+    ];
 
     public function index($action = '', $data = [])
     {
@@ -44,6 +50,10 @@ class CaseFund extends Common
                 return $this->refundList($data);
             case 'refundImport':
                 return $this->refundImport($data);
+            case 'subjectConfigList':
+                return $this->subjectConfigList($data);
+            case 'subjectConfigSave':
+                return $this->subjectConfigSave($data);
             default:
                 return $this->error('操作【/' . self::ACTION . '/' . $action . '】并不存在！');
         }
@@ -335,6 +345,164 @@ class CaseFund extends Common
         ], '导入成功', count($rows));
     }
 
+    public function subjectConfigList($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:subject_config');
+        if ($auth) {
+            return $auth;
+        }
+        $voucherBizType = $this->normalizeVoucherBizType($data['voucher_biz_type'] ?? ($data['voucherBizType'] ?? ''));
+        if ($voucherBizType === '') {
+            return $this->error('科目配置类型不能为空');
+        }
+        $bizType = $this->currentAccountSetBizType();
+        $businessItems = $this->allowedSubjectConfigItems($bizType, $voucherBizType);
+        if (empty($businessItems)) {
+            return $this->error('当前账套类型不支持该科目配置：' . $bizType);
+        }
+        $generateVoucherByDayFlag = $this->subjectConfigAccountSetFlag();
+
+        $configs = [];
+        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
+            'account_set_id' => $this->accountSetId,
+            'biz_type' => $bizType,
+            'voucher_biz_type' => $voucherBizType,
+            'del_flag' => 0,
+        ])->where('business_item_type', 'in', $businessItems)->field(self::SUBJECT_CONFIG_FIELD)->select();
+        foreach ($rows as $row) {
+            $configs[$row['business_item_type']] = $row;
+        }
+
+        $subjectCodes = [];
+        foreach ($configs as $config) {
+            if (!empty($config['debit_subject_code'])) {
+                $subjectCodes[] = $config['debit_subject_code'];
+            }
+            if (!empty($config['credit_subject_code'])) {
+                $subjectCodes[] = $config['credit_subject_code'];
+            }
+        }
+        $subjectNames = $this->subjectNameMap($subjectCodes);
+
+        $items = [];
+        foreach ($businessItems as $businessItem) {
+            $config = $configs[$businessItem] ?? [];
+            $debitSubjectCode = $config['debit_subject_code'] ?? '';
+            $creditSubjectCode = $config['credit_subject_code'] ?? '';
+            $items[] = [
+                'config_id' => $config['config_id'] ?? '',
+                'account_set_id' => $this->accountSetId,
+                'biz_type' => $bizType,
+                'voucher_biz_type' => $voucherBizType,
+                'business_item_type' => $businessItem,
+                'debit_subject_code' => $debitSubjectCode,
+                'debit_subject_name' => $subjectNames[$debitSubjectCode] ?? '',
+                'credit_subject_code' => $creditSubjectCode,
+                'credit_subject_name' => $subjectNames[$creditSubjectCode] ?? '',
+            ];
+        }
+        return $this->ok([
+            'items' => $items,
+            'biz_type' => $bizType,
+            'voucher_biz_type' => $voucherBizType,
+            'generate_voucher_by_day_flag' => $generateVoucherByDayFlag,
+        ], 'OK', count($items));
+    }
+
+    public function subjectConfigSave($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:subject_config');
+        if ($auth) {
+            return $auth;
+        }
+        $voucherBizType = $this->normalizeVoucherBizType($data['voucher_biz_type'] ?? ($data['voucherBizType'] ?? ''));
+        if ($voucherBizType === '') {
+            return $this->error('科目配置类型不能为空');
+        }
+        $bizType = $this->currentAccountSetBizType();
+        $allowedItems = $this->allowedSubjectConfigItems($bizType, $voucherBizType);
+        if (empty($allowedItems)) {
+            return $this->error('当前账套类型不支持该科目配置：' . $bizType);
+        }
+        $items = $data['items'] ?? [];
+        if (!is_array($items) || empty($items)) {
+            return $this->error('科目配置明细不能为空');
+        }
+        $generateVoucherByDayFlag = $this->normalizeDailyVoucherFlag($data['generate_voucher_by_day_flag'] ?? ($data['generateVoucherByDayFlag'] ?? $this->subjectConfigAccountSetFlag()));
+
+        $before = [];
+        $after = [];
+        $accountSetBefore = null;
+        $accountSetAfter = null;
+        $seen = [];
+        Db::startTrans();
+        try {
+            list($accountSetBefore, $accountSetAfter) = $this->saveSubjectConfigAccountSetFlag($generateVoucherByDayFlag);
+            foreach ($items as $item) {
+                $businessItemType = trim($item['business_item_type'] ?? ($item['businessItemType'] ?? ''));
+                $debitSubjectCode = trim($item['debit_subject_code'] ?? ($item['debitSubjectCode'] ?? ''));
+                $creditSubjectCode = trim($item['credit_subject_code'] ?? ($item['creditSubjectCode'] ?? ''));
+                if ($businessItemType === '') {
+                    throw new \Exception('业务种类不能为空');
+                }
+                if (isset($seen[$businessItemType])) {
+                    throw new \Exception('业务种类重复配置：' . $businessItemType);
+                }
+                $seen[$businessItemType] = true;
+                if (!in_array($businessItemType, $allowedItems, true)) {
+                    throw new \Exception('当前账套不允许配置业务种类：' . $businessItemType);
+                }
+                $debitCheck = $this->validateVoucherSubjectCode($debitSubjectCode, '借方科目');
+                if ($debitCheck !== null) {
+                    throw new \Exception($debitCheck);
+                }
+                $creditCheck = $this->validateVoucherSubjectCode($creditSubjectCode, '贷方科目');
+                if ($creditCheck !== null) {
+                    throw new \Exception($creditCheck);
+                }
+
+                $where = [
+                    'account_set_id' => $this->accountSetId,
+                    'biz_type' => $bizType,
+                    'voucher_biz_type' => $voucherBizType,
+                    'business_item_type' => $businessItemType,
+                ];
+                $existing = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where($where)->find();
+                $save = [
+                    'debit_subject_code' => $debitSubjectCode,
+                    'credit_subject_code' => $creditSubjectCode,
+                    'remark' => $item['remark'] ?? '',
+                    'del_flag' => 0,
+                ];
+                if ($existing) {
+                    $before[] = $existing;
+                    $this->fillUpdate($save);
+                    $this->getdb(self::TABLE_SUBJECT_CONFIG)->where(['config_id' => $existing['config_id']])->update($save);
+                    $after[] = array_merge($existing, $save);
+                } else {
+                    $insert = array_merge($where, $save);
+                    $insert['config_id'] = uuid();
+                    $this->fillCreate($insert);
+                    $this->getdb(self::TABLE_SUBJECT_CONFIG)->insert($insert);
+                    $after[] = $insert;
+                }
+            }
+            $this->logAudit('CASE_FUND_SUBJECT_CONFIG', $voucherBizType . '@' . $bizType, 'SAVE', [
+                'account_set' => $accountSetBefore,
+                'subject_configs' => $before,
+            ], [
+                'account_set' => $accountSetAfter,
+                'subject_configs' => $after,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('保存科目配置失败：' . $e->getMessage());
+        }
+
+        return $this->ok(['saved' => count($after)], '保存成功', count($after));
+    }
+
     protected function parsePaymentImportRowsFromXls($binary)
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
@@ -611,6 +779,109 @@ class CaseFund extends Common
             'LITIGATION_FEE' => ['诉讼费退费'],
         ];
         return $map[$bizType] ?? [];
+    }
+
+    protected function allowedSubjectConfigItems($bizType, $voucherBizType)
+    {
+        if ($voucherBizType === 'PAYMENT') {
+            return $this->subjectConfigPaymentBusinessTypes($bizType);
+        }
+        if ($voucherBizType === 'REFUND') {
+            return $this->allowedRefundOutTypes($bizType);
+        }
+        return [];
+    }
+
+    protected function subjectConfigPaymentBusinessTypes($bizType)
+    {
+        $map = [
+            'CASE_FUND' => ['执行、调解款'],
+            'LITIGATION_FEE' => ['诉讼费预收'],
+        ];
+        return $map[$bizType] ?? [];
+    }
+
+    protected function normalizeVoucherBizType($value)
+    {
+        $value = strtoupper(trim((string)$value));
+        return in_array($value, ['PAYMENT', 'REFUND'], true) ? $value : '';
+    }
+
+    protected function validateVoucherSubjectCode($subjectCode, $label)
+    {
+        if ($subjectCode === '') {
+            return $label . '不能为空';
+        }
+        $subject = $this->getdb('fin_subject')->where([
+            'account_set_id' => $this->accountSetId,
+            'subject_code' => $subjectCode,
+            'del_flag' => 0,
+        ])->find();
+        if (!$subject) {
+            return $label . '不存在：' . $subjectCode;
+        }
+        if ((int)$subject['status'] !== 1) {
+            return $label . '未启用：' . $subjectCode;
+        }
+        if ((int)$subject['leaf_flag'] !== 1) {
+            return $label . '必须为末级科目：' . $subjectCode;
+        }
+        if (isset($subject['voucher_entry_flag']) && (int)$subject['voucher_entry_flag'] !== 1) {
+            return $label . '不允许录入凭证：' . $subjectCode;
+        }
+        return null;
+    }
+
+    protected function subjectNameMap($subjectCodes)
+    {
+        $subjectCodes = array_values(array_unique(array_filter($subjectCodes)));
+        if (empty($subjectCodes)) {
+            return [];
+        }
+        $rows = $this->getdb('fin_subject')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->where('subject_code', 'in', $subjectCodes)->field('subject_code,subject_name')->select();
+        $map = [];
+        foreach ($rows as $row) {
+            $map[$row['subject_code']] = $row['subject_name'];
+        }
+        return $map;
+    }
+
+    protected function subjectConfigAccountSetFlag()
+    {
+        $row = $this->getdb('fin_account_set')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->field('generate_voucher_by_day_flag')->find();
+        if (!$row || !array_key_exists('generate_voucher_by_day_flag', $row)) {
+            return 1;
+        }
+        return (int)$row['generate_voucher_by_day_flag'] === 0 ? 0 : 1;
+    }
+
+    protected function saveSubjectConfigAccountSetFlag($flag)
+    {
+        $before = $this->getdb('fin_account_set')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->field('account_set_id,generate_voucher_by_day_flag')->find();
+        if (!$before) {
+            throw new \Exception('账套不存在');
+        }
+        $update = ['generate_voucher_by_day_flag' => $this->normalizeDailyVoucherFlag($flag)];
+        $this->fillUpdate($update);
+        $this->getdb('fin_account_set')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->update($update);
+        return [$before, array_merge($before, $update)];
+    }
+
+    protected function normalizeDailyVoucherFlag($value)
+    {
+        return (int)$value === 0 ? 0 : 1;
     }
 
     protected function paymentImportErrorMessage($errors, $bizType = '')

@@ -1,5 +1,5 @@
 import { apiAction } from './http'
-import type { CaseFundPayment, CaseFundRefund } from '../types/api'
+import type { CaseFundPayment, CaseFundRefund, CaseFundSubjectConfig } from '../types/api'
 
 export const caseFundApi = {
   paymentList(payload: Record<string, any> = {}) {
@@ -21,5 +21,20 @@ export const caseFundApi = {
       created: number
       skipped: number
     }>
+  },
+  subjectConfigList(voucherBizType: 'PAYMENT' | 'REFUND') {
+    return apiAction('/caseFund/subjectConfigList', { voucher_biz_type: voucherBizType }) as Promise<{
+      items: CaseFundSubjectConfig[]
+      biz_type: string
+      voucher_biz_type: 'PAYMENT' | 'REFUND'
+      generate_voucher_by_day_flag: number
+    }>
+  },
+  saveSubjectConfigs(voucherBizType: 'PAYMENT' | 'REFUND', items: CaseFundSubjectConfig[], generateVoucherByDayFlag = 1) {
+    return apiAction('/caseFund/subjectConfigSave', {
+      voucher_biz_type: voucherBizType,
+      generate_voucher_by_day_flag: generateVoucherByDayFlag,
+      items
+    }) as Promise<{ saved: number }>
   }
 }

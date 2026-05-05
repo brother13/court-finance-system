@@ -103,6 +103,21 @@ prepare stmt from @sql;
 execute stmt;
 deallocate prepare stmt;
 
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_account_set add column generate_voucher_by_day_flag tinyint not null default 1 after voucher_print_line_count',
+        'select 1'
+    )
+    from information_schema.columns
+    where table_schema = database()
+      and table_name = 'fin_account_set'
+      and column_name = 'generate_voucher_by_day_flag'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
 update fin_account_set
 set enabled_period = concat(enabled_year, '-01')
 where enabled_period is null
@@ -347,3 +362,45 @@ create table if not exists fin_case_fund_refund (
     key idx_case_fund_refund_source_receipt (account_set_id, source_receipt_no),
     key idx_case_fund_refund_voucher (account_set_id, voucher_status, voucher_period, voucher_id)
 );
+
+create table if not exists fin_case_fund_subject_config (
+    config_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    biz_type varchar(50) not null,
+    voucher_biz_type varchar(30) not null,
+    business_item_type varchar(100) not null,
+    debit_subject_code varchar(50) not null,
+    credit_subject_code varchar(50) not null,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    unique key uk_case_fund_subject_config (account_set_id, biz_type, voucher_biz_type, business_item_type),
+    key idx_case_fund_subject_config_subject (account_set_id, debit_subject_code, credit_subject_code)
+);
+
+insert into fin_subject (
+    subject_id, account_set_id, subject_code, subject_name, parent_code,
+    direction, subject_type, level_no, leaf_flag, voucher_entry_flag, status,
+    created_by, created_time, updated_by, updated_time, del_flag, version, remark
+) values
+('00000000-0000-0000-0000-000000020201', '00000000-0000-0000-0000-000000000102', '1002', '银行存款', null, 'DEBIT', 'ASSET', 1, 0, 0, 1, 'system', current_timestamp, 'system', current_timestamp, 0, 0, '诉讼费账套预置科目'),
+('00000000-0000-0000-0000-000000020202', '00000000-0000-0000-0000-000000000102', '100201', '诉讼费专户', '1002', 'DEBIT', 'ASSET', 2, 1, 1, 1, 'system', current_timestamp, 'system', current_timestamp, 0, 0, '诉讼费收退费银行科目'),
+('00000000-0000-0000-0000-000000020203', '00000000-0000-0000-0000-000000000102', '2203', '预收账款', null, 'CREDIT', 'LIABILITY', 1, 0, 0, 1, 'system', current_timestamp, 'system', current_timestamp, 0, 0, '诉讼费账套预置科目'),
+('00000000-0000-0000-0000-000000020204', '00000000-0000-0000-0000-000000000102', '220301', '预收诉讼费', '2203', 'CREDIT', 'LIABILITY', 2, 1, 1, 1, 'system', current_timestamp, 'system', current_timestamp, 0, 0, '诉讼费收退费负债科目')
+on duplicate key update
+    subject_name = values(subject_name),
+    parent_code = values(parent_code),
+    direction = values(direction),
+    subject_type = values(subject_type),
+    level_no = values(level_no),
+    leaf_flag = values(leaf_flag),
+    voucher_entry_flag = values(voucher_entry_flag),
+    status = values(status),
+    updated_by = values(updated_by),
+    updated_time = values(updated_time),
+    del_flag = values(del_flag),
+    remark = values(remark);

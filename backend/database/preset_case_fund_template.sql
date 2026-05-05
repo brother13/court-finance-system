@@ -1,5 +1,5 @@
 insert into fin_account_set (
-    account_set_id, set_code, set_name, biz_type, enabled_year, subject_code_rule, status,
+    account_set_id, set_code, set_name, biz_type, enabled_year, generate_voucher_by_day_flag, subject_code_rule, status,
     created_by, created_time, updated_by, updated_time, del_flag, version, remark
 ) values (
     '00000000-0000-0000-0000-000000000101',
@@ -7,6 +7,7 @@ insert into fin_account_set (
     '案款账套',
     'CASE_FUND',
     2026,
+    1,
     '4-2-2-2',
     1,
     'system', current_timestamp, 'system', current_timestamp, 0, 0, '一期预置模板'
