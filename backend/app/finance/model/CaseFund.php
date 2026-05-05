@@ -385,7 +385,7 @@ class CaseFund extends Common
             }
             $paymentTime = $this->normalizeDateTimeValue($raw['缴费日期']);
             $paymentDate = $paymentTime === '' ? '' : substr($paymentTime, 0, 10);
-            $invoiceDate = $this->normalizeDateValue($raw['开票日期']);
+            $invoiceDate = $this->nullableDateValue($raw['开票日期']);
             $amount = $this->centsToDecimal($this->decimalToCents($raw['金额']));
             $period = $paymentDate === '' ? '' : substr($paymentDate, 0, 7);
             $parsed = [
@@ -475,8 +475,8 @@ class CaseFund extends Common
                 continue;
             }
             $refundDate = $this->normalizeDateValue($raw['出账日期']);
-            $invoiceDate = $this->normalizeDateValue($raw['开票日期']);
-            $sourceReceiptDate = $this->normalizeDateValue($raw['来源票据开票日期']);
+            $invoiceDate = $this->nullableDateValue($raw['开票日期']);
+            $sourceReceiptDate = $this->nullableDateValue($raw['来源票据开票日期']);
             $refundAmount = $this->centsToDecimal($this->decimalToCents($raw['出账金额']));
             $totalRefundAmount = $this->centsToDecimal($this->decimalToCents($raw['总出账金额']));
             $period = $refundDate === '' ? '' : substr($refundDate, 0, 7);
@@ -742,6 +742,12 @@ class CaseFund extends Common
     {
         $datetime = $this->normalizeDateTimeValue($value);
         return $datetime === '' ? '' : substr($datetime, 0, 10);
+    }
+
+    protected function nullableDateValue($value)
+    {
+        $date = $this->normalizeDateValue($value);
+        return $date === '' ? null : $date;
     }
 
     protected function normalizeImportCellText($value)

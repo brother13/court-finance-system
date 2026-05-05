@@ -85,6 +85,11 @@ foreach ($expected as $field => $value) {
     }
 }
 
+if (!array_key_exists('invoice_date', $first) || $first['invoice_date'] !== null) {
+    fwrite(STDERR, 'Blank nullable invoice date should be parsed as NULL for MySQL date columns' . PHP_EOL);
+    exit(1);
+}
+
 if (empty($first['source_fingerprint']) || strlen($first['source_fingerprint']) !== 64) {
     fwrite(STDERR, 'Expected stable sha256 source fingerprint' . PHP_EOL);
     exit(1);
