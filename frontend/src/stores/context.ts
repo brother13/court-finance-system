@@ -11,9 +11,17 @@ const loadAuth = (): Partial<LoginUser> => {
   }
 }
 
+const currentMonthPeriod = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+const periodYear = (period: string) => parseInt(period.substring(0, 4), 10)
+
 export const useContextStore = defineStore('context', {
   state: () => {
     const auth = loadAuth()
+    const period = auth.period || (auth as any).current_period || (auth as any).enabled_period || currentMonthPeriod()
     return {
       accountSetId: auth.account_set_id || '00000000-0000-0000-0000-000000000101',
       accountSetCode: (auth as any).set_code || '',
@@ -30,7 +38,8 @@ export const useContextStore = defineStore('context', {
       mustChangePassword: Boolean(auth.must_change_password),
       roles: auth.roles || [],
       accountSets: auth.account_sets || [],
-      period: '2026-05'
+      period,
+      year: auth.year || periodYear(period)
     }
   },
   getters: {
@@ -62,11 +71,14 @@ export const useContextStore = defineStore('context', {
       this.accountSets = user.account_sets || []
       localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
     },
-    selectAccountSet(accountSet: AccountSet) {
+    selectAccountSet(accountSet: AccountSet, year?: number) {
       this.accountSetId = accountSet.account_set_id
       this.accountSetCode = accountSet.set_code
       this.accountSetName = accountSet.set_name
       this.bizType = accountSet.biz_type
+      const selectedPeriod = accountSet.current_period || accountSet.enabled_period || `${year || accountSet.enabled_year || periodYear(currentMonthPeriod())}-01`
+      this.period = selectedPeriod
+      this.year = year || periodYear(selectedPeriod)
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         user_id: this.userId,
         username: this.username,
@@ -82,7 +94,9 @@ export const useContextStore = defineStore('context', {
         account_set_id: this.accountSetId,
         set_code: this.accountSetCode,
         set_name: this.accountSetName,
-        biz_type: this.bizType
+        biz_type: this.bizType,
+        year: this.year,
+        period: this.period
       }))
     },
     logout() {
@@ -101,6 +115,8 @@ export const useContextStore = defineStore('context', {
       this.mustChangePassword = false
       this.roles = []
       this.accountSets = []
+      this.period = currentMonthPeriod()
+      this.year = periodYear(this.period)
       localStorage.removeItem(STORAGE_KEY)
     },
     markPasswordChanged() {

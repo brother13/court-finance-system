@@ -32,5 +32,8 @@ export const voucherApi = {
   },
   unaudit(period: string, voucherId: string) {
     return apiAction('/voucher/unaudit', { period, voucher_id: voucherId }) as Promise<void>
+  },
+  import(payload: { vouchers: any[] }) {
+    return apiAction('/voucher/import', payload) as Promise<{ success: number; failed: number; errors: string[] }>
   }
 }

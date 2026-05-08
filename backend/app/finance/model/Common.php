@@ -10,6 +10,7 @@ class Common
     const CODE_ERROR = 0;
 
     protected $accountSetId = '';
+    protected $year = '';
     protected $userid = 'system';
     protected $username = 'system';
     protected $permissionCache = null;
@@ -19,6 +20,7 @@ class Common
     public function __construct()
     {
         $this->accountSetId = input('param.account_set_id', config('default_account_set_id'));
+        $this->year = input('param.year', config('default_year'));
         $this->userid = input('server.HTTP_X_USER_ID', 'system');
         $this->username = input('server.HTTP_X_USER_NAME', $this->userid);
     }
@@ -91,12 +93,22 @@ class Common
         $data['updated_time'] = $this->now();
     }
 
+    protected function currentYear()
+    {
+        return (int)$this->year;
+    }
+
     protected function periodYear($period)
     {
         if (empty($period) || strlen($period) < 4) {
-            return config('default_year');
+            return $this->year ?: config('default_year');
         }
         return substr($period, 0, 4);
+    }
+
+    protected function fiscalYear($period)
+    {
+        return (int)$this->periodYear($period);
     }
 
     protected function yearTable($baseTable, $period)

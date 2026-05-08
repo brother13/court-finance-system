@@ -162,96 +162,116 @@ create table if not exists fin_aux_opening_balance (
     key idx_aux_opening_desc (account_set_id, period, aux_desc(255))
 );
 
-set @voucher_table = concat('fin_voucher_', year(curdate()));
-set @voucher_detail_table = concat('fin_voucher_detail_', year(curdate()));
+create table if not exists fin_voucher (
+    voucher_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    voucher_date date not null,
+    voucher_word varchar(10) not null default '记',
+    voucher_no int not null,
+    summary varchar(500),
+    debit_amount decimal(18,2) not null default 0,
+    credit_amount decimal(18,2) not null default 0,
+    attachment_count int not null default 0,
+    status varchar(20) not null,
+    source_type varchar(50),
+    printed_flag varchar(1) not null default '0',
+    prepared_by varchar(36),
+    prepared_time datetime,
+    audit_by varchar(36),
+    audit_time datetime,
+    posted_by varchar(36),
+    posted_time datetime,
+    void_flag varchar(1) not null default '0',
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    key idx_voucher_period (account_set_id, fiscal_year, period),
+    unique key uk_voucher_no (account_set_id, fiscal_year, period, voucher_no),
+    key idx_voucher_date (account_set_id, voucher_date),
+    key idx_voucher_del (account_set_id, del_flag)
+);
+
+create table if not exists fin_voucher_detail (
+    detail_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    voucher_id varchar(36) not null,
+    line_no int not null,
+    subject_code varchar(50) not null,
+    summary varchar(500),
+    debit_amount decimal(18,2) not null default 0,
+    credit_amount decimal(18,2) not null default 0,
+    verification_status varchar(30) not null,
+    aux_desc varchar(1000),
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    key idx_voucher_detail_period (account_set_id, fiscal_year, period),
+    key idx_voucher_detail_voucher (account_set_id, voucher_id),
+    key idx_voucher_detail_id (voucher_id, detail_id),
+    key idx_voucher_detail_subject (account_set_id, subject_code),
+    key idx_voucher_detail_del (account_set_id, del_flag)
+);
+
+create table if not exists fin_voucher_aux_value (
+    id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    voucher_id varchar(36) not null,
+    detail_id varchar(36) not null,
+    aux_type_code varchar(50) not null,
+    aux_value varchar(200) not null,
+    aux_label varchar(200),
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    key idx_voucher_aux_period (account_set_id, fiscal_year, period),
+    key idx_voucher_aux_voucher (account_set_id, voucher_id),
+    key idx_voucher_aux_detail (account_set_id, detail_id),
+    key idx_voucher_aux_detail_id (voucher_id, detail_id),
+    key idx_voucher_aux_value (account_set_id, aux_type_code, aux_value),
+    key idx_voucher_aux_del (account_set_id, del_flag)
+);
+
 set @sql = (
     select if(
         count(*) = 0,
-        concat('alter table ', @voucher_table, ' add column voucher_word varchar(10) not null default ''记'' after voucher_date'),
+        'alter table fin_voucher_no_sequence add column fiscal_year int not null default 0 after account_set_id',
         'select 1'
     )
     from information_schema.columns
     where table_schema = database()
-      and table_name = @voucher_table
-      and column_name = 'voucher_word'
+      and table_name = 'fin_voucher_no_sequence'
+      and column_name = 'fiscal_year'
 );
 prepare stmt from @sql;
 execute stmt;
 deallocate prepare stmt;
 
-set @sql = (
-    select if(
-        count(*) = 0,
-        concat('alter table ', @voucher_table, ' add column debit_amount decimal(18,2) not null default 0 after summary'),
-        'select 1'
-    )
-    from information_schema.columns
-    where table_schema = database()
-      and table_name = @voucher_table
-      and column_name = 'debit_amount'
-);
-prepare stmt from @sql;
-execute stmt;
-deallocate prepare stmt;
+update fin_voucher_no_sequence
+set fiscal_year = cast(substr(period, 1, 4) as unsigned)
+where fiscal_year = 0
+  and period is not null
+  and length(period) >= 4;
 
-set @sql = concat(
-    'update ', @voucher_table, ' v ',
-    'set debit_amount = (',
-        'select coalesce(sum(d.debit_amount), 0) from ', @voucher_detail_table, ' d ',
-        'where d.account_set_id = v.account_set_id and d.voucher_id = v.voucher_id and d.del_flag = 0',
-    '), credit_amount = (',
-        'select coalesce(sum(d.credit_amount), 0) from ', @voucher_detail_table, ' d ',
-        'where d.account_set_id = v.account_set_id and d.voucher_id = v.voucher_id and d.del_flag = 0',
-    ') where v.del_flag = 0'
-);
-prepare stmt from @sql;
-execute stmt;
-deallocate prepare stmt;
-
-set @sql = (
-    select if(
-        count(*) = 0,
-        concat('alter table ', @voucher_table, ' add column credit_amount decimal(18,2) not null default 0 after debit_amount'),
-        'select 1'
-    )
-    from information_schema.columns
-    where table_schema = database()
-      and table_name = @voucher_table
-      and column_name = 'credit_amount'
-);
-prepare stmt from @sql;
-execute stmt;
-deallocate prepare stmt;
-
-set @sql = (
-    select if(
-        count(*) = 0,
-        concat('alter table ', @voucher_table, ' add column attachment_count int not null default 0 after summary'),
-        'select 1'
-    )
-    from information_schema.columns
-    where table_schema = database()
-      and table_name = @voucher_table
-      and column_name = 'attachment_count'
-);
-prepare stmt from @sql;
-execute stmt;
-deallocate prepare stmt;
-
-set @sql = (
-    select if(
-        count(*) = 0,
-        concat('alter table ', @voucher_table, ' add column prepared_by varchar(36) after printed_flag, add column prepared_time datetime after prepared_by, add column posted_by varchar(36) after audit_time, add column posted_time datetime after posted_by, add column void_flag varchar(1) not null default ''0'' after posted_time'),
-        'select 1'
-    )
-    from information_schema.columns
-    where table_schema = database()
-      and table_name = @voucher_table
-      and column_name = 'prepared_by'
-);
-prepare stmt from @sql;
-execute stmt;
-deallocate prepare stmt;
+-- Historical yearly tables such as fin_voucher_2026, fin_voucher_detail_2026
+-- and fin_voucher_aux_value_2026 are migrated by backend/database/migrate_voucher_year_tables.php.
 
 create table if not exists fin_case_fund_payment (
     payment_id varchar(36) primary key,

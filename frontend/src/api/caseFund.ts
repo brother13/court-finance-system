@@ -36,5 +36,12 @@ export const caseFundApi = {
       generate_voucher_by_day_flag: generateVoucherByDayFlag,
       items
     }) as Promise<{ saved: number }>
+  },
+  paymentGenerateVoucher(paymentIds: string[]) {
+    return apiAction('/caseFund/paymentGenerateVoucher', { payment_ids: paymentIds }) as Promise<{
+      generated_count: number
+      payment_count: number
+      vouchers: { voucher_id: string; voucher_no: number; period: string }[]
+    }>
   }
 }

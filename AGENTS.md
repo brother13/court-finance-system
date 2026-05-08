@@ -88,6 +88,44 @@
 5. 业务模型目录：`backend/app/finance/model/`。
 6. 数据库：开发环境 MySQL 8.0，连接配置在 `backend/app/database.php`，默认库名 `court-finance`，用户 `root/root`，端口 `3306`。
 7. 返回格式：成功 `code=20000`，失败 `code=0`，外层返回包含 `action`、`time`、`page`、`pagesize`、`total`、`data`。
+8. **ThinkPHP 5 查询限制**：`where()` 不支持 `regexp`、`cast()`、`match()` 等原生 SQL 表达式；`order()` 不支持函数表达式。遇到复杂查询条件应在 PHP 中过滤排序，或通过 `whereRaw()` / `orderRaw()` / `exp` 方式传递原生 SQL，严禁在 `where()` 中直接使用数据库原生函数或操作符。
+
+### ThinkPHP 5 已踩坑清单（持续更新）
+
+> 以下坑点均为本项目实际踩过并修复的问题。后续任何新写或审查的后端查询逻辑，必须逐条对照自查。
+
+1. **查询对象复用导致 `where` 条件丢失（严重）**
+   - 错误写法：
+     ```php
+     $query = $this->getdb('fin_aux_archive')->where($where)->order('...');
+     $total = $query->count();          // count() 会修改查询对象内部状态
+     $rows  = $query->page(1, 50)->select(); // 复用同一对象，where 可能被污染
+     ```
+   - 后果：`count()` 之后复用 `$query`，会导致后续 `select()` 返回全量数据，`total` 与 `items` 严重不一致。
+   - 正确写法：
+     ```php
+     $db = $this->getdb('fin_aux_archive');
+     $total = $db->where($where)->count();
+     $rows  = $db->where($where)->order('...')->page(1, 50)->select();
+     ```
+   - 受影响文件：`backend/app/finance/model/Aux.php::archiveList()`（2026-05-06 修复）。
+
+2. **`where()` 中不能使用数据库原生函数或操作符**
+   - 错误写法：`->where('archive_code', 'regexp', '^[0-9]+$')`、`->order('cast(archive_code as unsigned) desc')`
+   - 后果：ThinkPHP 5 的 `where()` 不支持 `regexp`、`cast()`、`match()` 等原生 SQL 表达式；`order()` 不支持函数表达式。运行时可能静默忽略条件或报错。
+   - 正确写法：使用 `whereRaw()`、`orderRaw()` 或直接在 PHP 中过滤排序。
+
+3. **模型关联薄弱，无真正 ORM 关系映射**
+   - TP5 没有 Laravel Eloquent 那样的 `hasMany`、`belongsTo` 关系定义。连表查询必须手写 `join` 或拆成多次单表查询在 PHP 中组装。
+   - 注意：不要试图在 TP5 中模拟高级 ORM 关联，会增加不可预知的查询副作用。
+
+4. **返回类型弱，字段全靠约定**
+   - `select()` 返回的是原始数组，不是强类型对象。字段名拼写错误不会在编译期暴露，运行时可能返回 `null` 导致后续逻辑异常。
+   - 建议：涉及金额、状态等关键字段的读取，务必做空值和类型校验。
+
+5. **PHP 浮点精度问题**
+   - 不要直接用浮点数做金额加减乘除和平衡判断。必须先将金额转为整数"分"再运算，运算完再转回元展示。
+   - 典型场景：凭证借贷平衡校验、余额汇总、报表合计。
 
 后端启动命令：
 
@@ -186,21 +224,21 @@ create database `court-finance` default character set utf8 collate utf8_general_
 10. `fin_opening_balance`：科目期初余额。
 11. `fin_aux_opening_balance`：辅助核算期初余额。
 12. `fin_voucher_no_sequence`：凭证号序列表。
-13. `fin_voucher_YYYY`：年度凭证主表。
-14. `fin_voucher_detail_YYYY`：年度凭证明细表。
-15. `fin_voucher_aux_value_YYYY`：年度凭证辅助核算值表。
+13. `fin_voucher`：统一凭证主表，按 `account_set_id + fiscal_year + period` 隔离。
+14. `fin_voucher_detail`：统一凭证明细表，按 `account_set_id + fiscal_year + period` 隔离。
+15. `fin_voucher_aux_value`：统一凭证辅助核算值表，按 `account_set_id + fiscal_year + period` 隔离。
 16. `fin_case_fund_payment`：案款缴费登记导入表。
 17. `fin_permission`、`fin_role`、`fin_role_permission`、`fin_user_role`、`fin_user_account_set`：RBAC 权限体系。
 
-### 3. 年度分表规则
+### 3. 统一凭证表规则
 
-凭证主表、凭证明细、凭证辅助值按年度分表：
+凭证主表、凭证明细、凭证辅助值不再按年度创建物理分表，统一使用：
 
-1. `fin_voucher_2026`
-2. `fin_voucher_detail_2026`
-3. `fin_voucher_aux_value_2026`
+1. `fin_voucher`
+2. `fin_voucher_detail`
+3. `fin_voucher_aux_value`
 
-后端统一使用 `Common::yearTable($baseTable, $period)` 根据期间生成年度表名。新增跨年度能力或新账套年度初始化时必须同步创建三张年度表。
+年度通过 `fiscal_year` 字段体现，会计期间通过 `period` 字段体现。所有凭证、账簿、辅助核算查询必须显式带 `account_set_id`、`fiscal_year`、`period` 和 `del_flag=0`。新增账套或新增年度期间时只创建会计期间、授权和基础信息，不再创建年度凭证分表。历史年度分表迁移到统一表后先保留为备份，不在升级脚本中删除。
 
 ### 4. 当前默认账套
 
@@ -249,7 +287,7 @@ create database `court-finance` default character set utf8 collate utf8_general_
 9. 辅助维度或档案已被科目、期初、凭证使用时，不允许删除或修改关键编码。
 10. 科目辅助配置一旦对应科目已有期初或凭证，不允许修改。
 11. `customer`、`supplier`、`employee` 属于往来类辅助核算，同一科目只能选择其一。
-12. 凭证分录上的辅助核算值统一进入 `fin_voucher_aux_value_YYYY`，不能把案号、收据号、当事人等业务字段硬塞进凭证明细表。
+12. 凭证分录上的辅助核算值统一进入 `fin_voucher_aux_value`，不能把案号、收据号、当事人等业务字段硬塞进凭证明细表。
 13. 凭证明细会冗余 `aux_desc`，用于列表和账簿快速展示。
 
 ## 八、期初余额实现现状
@@ -267,9 +305,9 @@ create database `court-finance` default character set utf8 collate utf8_general_
 ## 九、凭证核心实现现状
 
 1. 凭证模型：`backend/app/finance/model/Voucher.php`。
-2. 凭证主表：`fin_voucher_YYYY`。
-3. 凭证明细表：`fin_voucher_detail_YYYY`。
-4. 凭证辅助值表：`fin_voucher_aux_value_YYYY`。
+2. 凭证主表：`fin_voucher`。
+3. 凭证明细表：`fin_voucher_detail`。
+4. 凭证辅助值表：`fin_voucher_aux_value`。
 5. 支持动作：`nextNo`、`list`、`info`、`draft`、`submit`、`save`、`audit`、`unaudit`、`delete`、`batchDelete`、`void`、`printMark`。
 6. 新建凭证时通过 `fin_voucher_no_sequence` 加锁生成下一号，避免并发重号。
 7. 凭证日期必须落在当前会计期间内。
@@ -299,7 +337,7 @@ create database `court-finance` default character set utf8 collate utf8_general_
 2. 当前实现：明细账 `/book/detailLedger`、科目余额表 `/book/subjectBalance`。
 3. 明细账只取状态为 `AUDITED`、`PRINTED` 的凭证。
 4. 明细账支持按期间、日期范围、科目过滤，返回日期、凭证号、摘要、科目、借方、贷方、辅助摘要。
-5. 科目余额表当前从科目表左关联年度凭证明细和凭证头汇总借贷与净额。
+5. 科目余额表当前从科目表左关联统一凭证明细和凭证头，按 `account_set_id + fiscal_year + period` 汇总借贷与净额。
 6. 当前还没有完整总账、试算平衡表、辅助核算专项账、多维组合汇总、Excel 导出闭环，后续实现必须补足这些标准财务报表能力。
 
 ## 十一、案款业务实现现状
@@ -321,7 +359,6 @@ create database `court-finance` default character set utf8 collate utf8_general_
 3. 新增账套会：
    - 生成账套编码。
    - 创建启用期间所在年度从启用月到 12 月的会计期间。
-   - 创建对应年度凭证三张分表。
    - 将当前用户授予该账套访问权。
    - 写审计日志。
 4. 账套参数包括业务类型、启用年度/期间、财务负责人、纸张尺寸、凭证导入是否自动编号、凭证打印分录行数、科目编码规则。
@@ -472,7 +509,7 @@ npm run build
 7. 银行流水导入、自动对账、银行存款余额调节表仍需补齐。
 8. 案款缴费登记页面文件已存在，但菜单/路由挂载需要核对当前实现是否完整。
 9. 前端 `CaseFundMenuTest.mjs` 对案款菜单和路由有断言，后续涉及案款菜单时必须运行。
-10. 前端 store 当前默认期间写死为 `2026-05`，后续应与账套当前期间或期间选择联动。
+10. 前端 store 默认期间已改为优先读取登录/账套当前期间；后续仍应补齐统一期间选择器，让凭证、账簿、期初余额页面共享同一期间上下文。
 
 ## 二十、推荐开发工作流
 

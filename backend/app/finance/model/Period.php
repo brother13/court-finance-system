@@ -20,6 +20,7 @@ class Period extends Common
     public function getList()
     {
         $where = $this->accountWhere();
+        $where['period'] = ['like', $this->year . '-%'];
         $rows = $this->getdb(self::TABLE)->where($where)->order('period asc')->select();
         return $this->ok($rows, 'OK', count($rows));
     }

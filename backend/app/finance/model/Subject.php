@@ -985,10 +985,8 @@ class Subject extends Common
             }
         }
 
-        $year = config('default_year');
-        $detailTable = 'fin_voucher_detail_' . $year;
         try {
-            $voucherCount = $this->getdb($detailTable)->where([
+            $voucherCount = $this->getdb('fin_voucher_detail')->where([
                 'account_set_id' => $this->accountSetId,
                 'subject_code' => $subjectCode,
                 'del_flag' => 0,

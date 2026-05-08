@@ -79,7 +79,6 @@ class AccountSet extends Common
         try {
             $this->getdb(self::TABLE)->insert($row);
             $this->createFiscalPeriods($accountSetId, $enabledPeriod);
-            $this->ensureYearTables($enabledYear);
             $this->grantCurrentUser($accountSetId);
             $this->logAudit('ACCOUNT_SET', $accountSetId, 'CREATE', null, $row);
             Db::commit();
@@ -186,34 +185,14 @@ class AccountSet extends Common
 
     protected function latestVoucherDate($accountSetId)
     {
-        $latest = '';
-        foreach ($this->voucherHeaderTables() as $table) {
-            try {
-                $date = $this->getdb($table)->where([
-                    'account_set_id' => $accountSetId,
-                    'del_flag' => 0,
-                ])->max('voucher_date');
-                if (!empty($date) && ($latest === '' || $date > $latest)) {
-                    $latest = $date;
-                }
-            } catch (\Exception $e) {
-                continue;
-            }
+        try {
+            return $this->getdb('fin_voucher')->where([
+                'account_set_id' => $accountSetId,
+                'del_flag' => 0,
+            ])->max('voucher_date') ?: '';
+        } catch (\Exception $e) {
+            return '';
         }
-        return $latest;
-    }
-
-    protected function voucherHeaderTables()
-    {
-        $rows = Db::query("show tables like 'fin_voucher\\_%'");
-        $tables = [];
-        foreach ($rows as $row) {
-            $table = array_values($row)[0] ?? '';
-            if (preg_match('/^fin_voucher_\d{4}$/', $table)) {
-                $tables[] = $table;
-            }
-        }
-        return $tables;
     }
 
     protected function createFiscalPeriods($accountSetId, $enabledPeriod)
@@ -258,84 +237,4 @@ class AccountSet extends Common
         }
     }
 
-    protected function ensureYearTables($year)
-    {
-        $year = (int)$year;
-        $voucherTable = 'fin_voucher_' . $year;
-        $detailTable = 'fin_voucher_detail_' . $year;
-        $auxTable = 'fin_voucher_aux_value_' . $year;
-
-        Db::execute("create table if not exists {$voucherTable} (
-            voucher_id varchar(36) primary key,
-            account_set_id varchar(36) not null,
-            period varchar(7) not null,
-            voucher_date date not null,
-            voucher_word varchar(10) not null default '记',
-            voucher_no int not null,
-            summary varchar(500),
-            debit_amount decimal(18,2) not null default 0,
-            credit_amount decimal(18,2) not null default 0,
-            attachment_count int not null default 0,
-            status varchar(20) not null,
-            source_type varchar(50),
-            printed_flag varchar(1) not null default '0',
-            prepared_by varchar(36),
-            prepared_time datetime,
-            audit_by varchar(36),
-            audit_time datetime,
-            posted_by varchar(36),
-            posted_time datetime,
-            void_flag varchar(1) not null default '0',
-            created_by varchar(36),
-            created_time datetime,
-            updated_by varchar(36),
-            updated_time datetime,
-            del_flag int not null default 0,
-            version int not null default 0,
-            remark varchar(500),
-            unique key uk_voucher_no (account_set_id, period, voucher_no),
-            key idx_voucher_date (account_set_id, voucher_date)
-        )");
-
-        Db::execute("create table if not exists {$detailTable} (
-            detail_id varchar(36) primary key,
-            account_set_id varchar(36) not null,
-            voucher_id varchar(36) not null,
-            line_no int not null,
-            subject_code varchar(50) not null,
-            summary varchar(500),
-            debit_amount decimal(18,2) not null default 0,
-            credit_amount decimal(18,2) not null default 0,
-            verification_status varchar(30) not null,
-            aux_desc varchar(1000),
-            created_by varchar(36),
-            created_time datetime,
-            updated_by varchar(36),
-            updated_time datetime,
-            del_flag int not null default 0,
-            version int not null default 0,
-            remark varchar(500),
-            key idx_voucher_detail_voucher (account_set_id, voucher_id),
-            key idx_voucher_detail_subject (account_set_id, subject_code)
-        )");
-
-        Db::execute("create table if not exists {$auxTable} (
-            id varchar(36) primary key,
-            account_set_id varchar(36) not null,
-            voucher_id varchar(36) not null,
-            detail_id varchar(36) not null,
-            aux_type_code varchar(50) not null,
-            aux_value varchar(200) not null,
-            aux_label varchar(200),
-            created_by varchar(36),
-            created_time datetime,
-            updated_by varchar(36),
-            updated_time datetime,
-            del_flag int not null default 0,
-            version int not null default 0,
-            remark varchar(500),
-            key idx_voucher_aux_detail (account_set_id, detail_id),
-            key idx_voucher_aux_value (account_set_id, aux_type_code, aux_value)
-        )");
-    }
 }

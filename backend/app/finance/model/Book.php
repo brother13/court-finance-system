@@ -31,12 +31,17 @@ class Book extends Common
         $startDate = $data['start_date'] ?? substr($period, 0, 7) . '-01';
         $endDate = $data['end_date'] ?? date('Y-m-t', strtotime($startDate));
         $subjectCode = $data['subject_code'] ?? '';
-        $voucherTable = $this->yearTable('fin_voucher', $period);
-        $detailTable = $this->yearTable('fin_voucher_detail', $period);
+        $fiscalYear = $this->fiscalYear($period);
+        $voucherTable = 'fin_voucher';
+        $detailTable = 'fin_voucher_detail';
 
         $where = [
             'd.account_set_id' => $this->accountSetId,
+            'd.fiscal_year' => $fiscalYear,
+            'd.period' => $period,
             'd.del_flag' => 0,
+            'v.fiscal_year' => $fiscalYear,
+            'v.period' => $period,
             'v.del_flag' => 0,
             'v.voucher_date' => ['between', [$startDate, $endDate]],
             'v.status' => ['in', ['AUDITED', 'PRINTED']],
@@ -46,7 +51,7 @@ class Book extends Common
         }
 
         $rows = db($detailTable)->alias('d')
-            ->join($voucherTable . ' v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id')
+            ->join($voucherTable . ' v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
             ->where($where)
             ->field('v.voucher_date,v.voucher_no,d.summary,d.subject_code,d.debit_amount,d.credit_amount,d.aux_desc')
             ->order('v.voucher_date asc,v.voucher_no asc,d.line_no asc')
@@ -65,12 +70,13 @@ class Book extends Common
         if ($period === '') {
             return $this->error('会计期间不能为空');
         }
-        $voucherTable = $this->yearTable('fin_voucher', $period);
-        $detailTable = $this->yearTable('fin_voucher_detail', $period);
+        $fiscalYear = $this->fiscalYear($period);
+        $voucherTable = 'fin_voucher';
+        $detailTable = 'fin_voucher_detail';
 
         $rows = db('fin_subject')->alias('s')
-            ->join($detailTable . ' d', "d.subject_code=s.subject_code and d.account_set_id=s.account_set_id and d.del_flag=0", 'LEFT')
-            ->join($voucherTable . ' v', "v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.period='" . addslashes($period) . "' and v.status in ('AUDITED','PRINTED') and v.del_flag=0", 'LEFT')
+            ->join($detailTable . ' d', "d.subject_code=s.subject_code and d.account_set_id=s.account_set_id and d.fiscal_year=" . (int)$fiscalYear . " and d.period='" . addslashes($period) . "' and d.del_flag=0", 'LEFT')
+            ->join($voucherTable . ' v', "v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period and v.status in ('AUDITED','PRINTED') and v.del_flag=0", 'LEFT')
             ->where([
                 's.account_set_id' => $this->accountSetId,
                 's.del_flag' => 0,

@@ -82,7 +82,10 @@ import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 
 const context = useContextStore()
-const dateRange = ref<[string, string]>(['2026-05-01', '2026-05-31'])
+const periodStart = `${context.period}-01`
+const lastDay = new Date(Number(context.period.slice(0, 4)), Number(context.period.slice(5, 7)), 0).getDate()
+const periodEnd = `${context.period}-${String(lastDay).padStart(2, '0')}`
+const dateRange = ref<[string, string]>([periodStart, periodEnd])
 const query = reactive({ subjectCode: '' })
 const rows = ref<any[]>([])
 

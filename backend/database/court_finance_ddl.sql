@@ -257,6 +257,7 @@ create index idx_aux_opening_subject on fin_aux_opening_balance (account_set_id,
 create table fin_voucher_no_sequence (
     sequence_id varchar(36) primary key,
     account_set_id varchar(36) not null,
+    fiscal_year int not null,
     period varchar(7) not null,
     current_no int not null,
     created_by varchar(36),
@@ -268,11 +269,12 @@ create table fin_voucher_no_sequence (
     remark varchar(500)
 );
 
-create unique index uk_voucher_no_sequence on fin_voucher_no_sequence (account_set_id, period);
+create unique index uk_voucher_no_sequence on fin_voucher_no_sequence (account_set_id, fiscal_year, period);
 
-create table fin_voucher_2026 (
+create table fin_voucher (
     voucher_id varchar(36) primary key,
     account_set_id varchar(36) not null,
+    fiscal_year int not null,
     period varchar(7) not null,
     voucher_date date not null,
     voucher_word varchar(10) not null default '记',
@@ -300,12 +302,16 @@ create table fin_voucher_2026 (
     remark varchar(500)
 );
 
-create unique index uk_voucher_2026_no on fin_voucher_2026 (account_set_id, period, voucher_no);
-create index idx_voucher_2026_date on fin_voucher_2026 (account_set_id, voucher_date);
+create index idx_voucher_period on fin_voucher (account_set_id, fiscal_year, period);
+create unique index uk_voucher_no on fin_voucher (account_set_id, fiscal_year, period, voucher_no);
+create index idx_voucher_date on fin_voucher (account_set_id, voucher_date);
+create index idx_voucher_del on fin_voucher (account_set_id, del_flag);
 
-create table fin_voucher_detail_2026 (
+create table fin_voucher_detail (
     detail_id varchar(36) primary key,
     account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
     voucher_id varchar(36) not null,
     line_no int not null,
     subject_code varchar(50) not null,
@@ -323,12 +329,17 @@ create table fin_voucher_detail_2026 (
     remark varchar(500)
 );
 
-create index idx_voucher_detail_2026_voucher on fin_voucher_detail_2026 (account_set_id, voucher_id);
-create index idx_voucher_detail_2026_subject on fin_voucher_detail_2026 (account_set_id, subject_code);
+create index idx_voucher_detail_period on fin_voucher_detail (account_set_id, fiscal_year, period);
+create index idx_voucher_detail_voucher on fin_voucher_detail (account_set_id, voucher_id);
+create index idx_voucher_detail_id on fin_voucher_detail (voucher_id, detail_id);
+create index idx_voucher_detail_subject on fin_voucher_detail (account_set_id, subject_code);
+create index idx_voucher_detail_del on fin_voucher_detail (account_set_id, del_flag);
 
-create table fin_voucher_aux_value_2026 (
+create table fin_voucher_aux_value (
     id varchar(36) primary key,
     account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
     voucher_id varchar(36) not null,
     detail_id varchar(36) not null,
     aux_type_code varchar(50) not null,
@@ -343,8 +354,12 @@ create table fin_voucher_aux_value_2026 (
     remark varchar(500)
 );
 
-create index idx_voucher_aux_2026_detail on fin_voucher_aux_value_2026 (account_set_id, detail_id);
-create index idx_voucher_aux_2026_value on fin_voucher_aux_value_2026 (account_set_id, aux_type_code, aux_value);
+create index idx_voucher_aux_period on fin_voucher_aux_value (account_set_id, fiscal_year, period);
+create index idx_voucher_aux_voucher on fin_voucher_aux_value (account_set_id, voucher_id);
+create index idx_voucher_aux_detail on fin_voucher_aux_value (account_set_id, detail_id);
+create index idx_voucher_aux_detail_id on fin_voucher_aux_value (voucher_id, detail_id);
+create index idx_voucher_aux_value on fin_voucher_aux_value (account_set_id, aux_type_code, aux_value);
+create index idx_voucher_aux_del on fin_voucher_aux_value (account_set_id, del_flag);
 
 create table fin_case_fund_payment (
     payment_id varchar(36) primary key,

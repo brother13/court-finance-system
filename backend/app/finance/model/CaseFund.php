@@ -46,6 +46,8 @@ class CaseFund extends Common
                 return $this->paymentList($data);
             case 'paymentImport':
                 return $this->paymentImport($data);
+            case 'paymentGenerateVoucher':
+                return $this->paymentGenerateVoucher($data);
             case 'refundList':
                 return $this->refundList($data);
             case 'refundImport':
@@ -68,6 +70,7 @@ class CaseFund extends Common
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? input('param.pagesize', 50);
         $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
         if (!empty($data['period'])) {
             $where['period'] = $data['period'];
         }
@@ -203,6 +206,7 @@ class CaseFund extends Common
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
         $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
         if (!empty($data['period'])) {
             $where['period'] = $data['period'];
         }
@@ -501,6 +505,417 @@ class CaseFund extends Common
         }
 
         return $this->ok(['saved' => count($after)], '保存成功', count($after));
+    }
+
+    public function paymentGenerateVoucher($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:generate_voucher');
+        if ($auth) {
+            return $auth;
+        }
+
+        $paymentIds = $data['payment_ids'] ?? [];
+        if (!is_array($paymentIds) || empty($paymentIds)) {
+            return $this->error('请选择要生成凭证的缴费记录');
+        }
+
+        $rows = $this->getdb(self::TABLE_PAYMENT)
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('payment_id', 'in', $paymentIds)
+            ->field(self::PAYMENT_FIELD)
+            ->select();
+
+        if (empty($rows)) {
+            return $this->error('所选缴费记录不存在');
+        }
+
+        foreach ($rows as $row) {
+            if ($row['voucher_status'] !== 'UNGENERATED') {
+                return $this->error('案号【' . $row['case_no'] . '】的缴费记录已生成凭证，不允许重复生成');
+            }
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        $configRows = $this->getdb(self::TABLE_SUBJECT_CONFIG)
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'biz_type' => $bizType,
+                'voucher_biz_type' => 'PAYMENT',
+                'del_flag' => 0,
+            ])
+            ->field(self::SUBJECT_CONFIG_FIELD)
+            ->select();
+
+        $subjectConfigMap = [];
+        foreach ($configRows as $config) {
+            $subjectConfigMap[$config['business_item_type']] = $config;
+            if ($config['business_item_type'] === '执行、调解款') {
+                $subjectConfigMap['执行、调节款'] = $config;
+            }
+            if ($config['business_item_type'] === '诉讼费预收') {
+                $subjectConfigMap['预收诉讼费'] = $config;
+            }
+        }
+
+        foreach ($rows as $row) {
+            $businessType = $row['business_type'];
+            if (!isset($subjectConfigMap[$businessType])) {
+                return $this->error('案号【' . $row['case_no'] . '】的业务类型【' . $businessType . '】未配置借方/贷方科目');
+            }
+            $debitCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$businessType]['debit_subject_code'], '借方科目');
+            if ($debitCheck !== null) {
+                return $this->error('案号【' . $row['case_no'] . '】' . $debitCheck);
+            }
+            $creditCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$businessType]['credit_subject_code'], '贷方科目');
+            if ($creditCheck !== null) {
+                return $this->error('案号【' . $row['case_no'] . '】' . $creditCheck);
+            }
+        }
+
+        $byDayFlag = $this->subjectConfigAccountSetFlag();
+
+        $groups = [];
+        if ($byDayFlag === 1) {
+            foreach ($rows as $row) {
+                $date = $row['payment_date'];
+                if (!isset($groups[$date])) {
+                    $groups[$date] = [];
+                }
+                $groups[$date][] = $row;
+            }
+        } else {
+            foreach ($rows as $row) {
+                $groups[$row['payment_id']] = [$row];
+            }
+        }
+
+        $generatedCount = 0;
+        $voucherInfos = [];
+
+        Db::startTrans();
+        try {
+            foreach ($groups as $groupKey => $groupRows) {
+                $firstRow = $groupRows[0];
+                $period = substr($firstRow['payment_date'], 0, 7);
+                $voucherDate = $firstRow['payment_date'];
+
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
+                    throw new \Exception('缴费日期格式不正确：' . $voucherDate);
+                }
+                if (substr($voucherDate, 0, 7) !== $period) {
+                    throw new \Exception('缴费日期不在会计期间内：' . $voucherDate);
+                }
+
+                $this->ensureAuxArchives($groupRows);
+
+                $fiscalYear = $this->fiscalYear($period);
+                $voucherTable = 'fin_voucher';
+                $detailTable = 'fin_voucher_detail';
+                $auxTable = 'fin_voucher_aux_value';
+
+                $voucherId = uuid();
+                $voucherNo = $this->generateNextVoucherNo($period);
+
+                $totalDebit = 0;
+                $detailsData = [];
+                $lineNo = 1;
+
+                foreach ($groupRows as $row) {
+                    $businessType = $row['business_type'];
+                    $config = $subjectConfigMap[$businessType];
+                    $summary = $row['case_no'] . ' ' . $row['party_name'];
+                    $amountCents = $this->decimalToCents($row['payment_amount']);
+                    $amountDecimal = $this->centsToDecimal($amountCents);
+                    $totalDebit += $amountCents;
+
+                    $auxValues = [
+                        ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
+                        ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'] ?? '', 'aux_label' => $row['receipt_no'] ?? ''],
+                    ];
+
+                    $debitDetailId = uuid();
+                    $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
+                    $detailsData[] = [
+                        'detail_id' => $debitDetailId,
+                        'line_no' => $lineNo++,
+                        'subject_code' => $config['debit_subject_code'],
+                        'summary' => $summary,
+                        'debit_amount' => $amountDecimal,
+                        'credit_amount' => '0.00',
+                        'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                        'aux_desc' => $this->buildAuxDesc($auxValues),
+                        'aux_values' => $auxValues,
+                    ];
+
+                    $creditDetailId = uuid();
+                    $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+                    $detailsData[] = [
+                        'detail_id' => $creditDetailId,
+                        'line_no' => $lineNo++,
+                        'subject_code' => $config['credit_subject_code'],
+                        'summary' => $summary,
+                        'debit_amount' => '0.00',
+                        'credit_amount' => $amountDecimal,
+                        'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                        'aux_desc' => $this->buildAuxDesc($auxValues),
+                        'aux_values' => $auxValues,
+                    ];
+                }
+
+                if ($totalDebit <= 0) {
+                    throw new \Exception('凭证金额必须大于0');
+                }
+
+                $voucher = [
+                    'voucher_id' => $voucherId,
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
+                    'voucher_date' => $voucherDate,
+                    'voucher_word' => '记',
+                    'voucher_no' => $voucherNo,
+                    'summary' => $firstRow['case_no'] . ' ' . $firstRow['party_name'],
+                    'debit_amount' => $this->centsToDecimal($totalDebit),
+                    'credit_amount' => $this->centsToDecimal($totalDebit),
+                    'attachment_count' => 0,
+                    'status' => 'SUBMITTED',
+                    'source_type' => 'BUSINESS',
+                    'printed_flag' => '0',
+                    'prepared_by' => $this->userid,
+                    'prepared_time' => $this->now(),
+                    'audit_by' => null,
+                    'audit_time' => null,
+                    'posted_by' => null,
+                    'posted_time' => null,
+                    'void_flag' => '0',
+                    'remark' => '',
+                ];
+                $this->fillCreate($voucher);
+                $this->getdb($voucherTable)->insert($voucher);
+
+                foreach ($detailsData as $detail) {
+                    $auxValues = $detail['aux_values'];
+                    unset($detail['aux_values']);
+
+                    $detailRow = [
+                        'detail_id' => $detail['detail_id'],
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $fiscalYear,
+                        'period' => $period,
+                        'voucher_id' => $voucherId,
+                        'line_no' => $detail['line_no'],
+                        'subject_code' => $detail['subject_code'],
+                        'summary' => $detail['summary'],
+                        'debit_amount' => $detail['debit_amount'],
+                        'credit_amount' => $detail['credit_amount'],
+                        'verification_status' => $detail['verification_status'],
+                        'aux_desc' => $detail['aux_desc'],
+                        'remark' => '',
+                    ];
+                    $this->fillCreate($detailRow);
+                    $this->getdb($detailTable)->insert($detailRow);
+
+                    foreach ($auxValues as $aux) {
+                        if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
+                            continue;
+                        }
+                        $auxRow = [
+                            'id' => uuid(),
+                            'account_set_id' => $this->accountSetId,
+                            'fiscal_year' => $fiscalYear,
+                            'period' => $period,
+                            'voucher_id' => $voucherId,
+                            'detail_id' => $detail['detail_id'],
+                            'aux_type_code' => $aux['aux_type_code'],
+                            'aux_value' => $aux['aux_value'],
+                            'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
+                            'remark' => '',
+                        ];
+                        $this->fillCreate($auxRow);
+                        $this->getdb($auxTable)->insert($auxRow);
+                    }
+                }
+
+                foreach ($groupRows as $row) {
+                    $this->getdb(self::TABLE_PAYMENT)->where([
+                        'payment_id' => $row['payment_id'],
+                        'account_set_id' => $this->accountSetId,
+                    ])->update([
+                        'voucher_status' => 'GENERATED',
+                        'voucher_id' => $voucherId,
+                        'voucher_no' => $voucherNo,
+                        'voucher_period' => $period,
+                        'voucher_generated_time' => $this->now(),
+                        'updated_by' => $this->userid,
+                        'updated_time' => $this->now(),
+                    ]);
+                }
+
+                $generatedCount++;
+                $voucherInfos[] = [
+                    'voucher_id' => $voucherId,
+                    'voucher_no' => $voucherNo,
+                    'period' => $period,
+                ];
+            }
+
+            $this->logAudit('CASE_FUND_PAYMENT', 'VOUCHER_GENERATE', 'GENERATE', null, [
+                'payment_count' => count($rows),
+                'voucher_count' => $generatedCount,
+                'vouchers' => $voucherInfos,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('生成凭证失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'generated_count' => $generatedCount,
+            'payment_count' => count($rows),
+            'vouchers' => $voucherInfos,
+        ], '成功生成 ' . $generatedCount . ' 张凭证');
+    }
+
+    protected function ensureAuxArchives($rows)
+    {
+        $caseNos = [];
+        $receiptNos = [];
+        foreach ($rows as $row) {
+            if (!empty($row['case_no'])) {
+                $caseNos[] = $row['case_no'];
+            }
+            if (!empty($row['receipt_no'])) {
+                $receiptNos[] = $row['receipt_no'];
+            }
+        }
+        $this->ensureAuxType('case_no', '案号');
+        $this->ensureAuxType('receipt_no', '收据号');
+        $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
+        $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
+    }
+
+    protected function ensureAuxType($typeCode, $typeName)
+    {
+        $exists = $this->getdb('fin_aux_type')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $typeCode,
+            'del_flag' => 0,
+        ])->find();
+        if (!$exists) {
+            $this->getdb('fin_aux_type')->insert([
+                'aux_type_id' => uuid(),
+                'account_set_id' => $this->accountSetId,
+                'aux_type_code' => $typeCode,
+                'aux_type_name' => $typeName,
+                'value_source' => 'MANUAL',
+                'required_flag' => 0,
+                'status' => 1,
+                'del_flag' => 0,
+                'created_by' => $this->userid,
+                'created_time' => $this->now(),
+                'updated_by' => $this->userid,
+                'updated_time' => $this->now(),
+                'version' => 0,
+            ]);
+        }
+    }
+
+    protected function ensureAuxArchivesByType($typeCode, $codes)
+    {
+        foreach ($codes as $code) {
+            if ($code === '') {
+                continue;
+            }
+            $exists = $this->getdb('fin_aux_archive')->where([
+                'account_set_id' => $this->accountSetId,
+                'aux_type_code' => $typeCode,
+                'archive_code' => $code,
+                'del_flag' => 0,
+            ])->find();
+            if (!$exists) {
+                $this->getdb('fin_aux_archive')->insert([
+                    'archive_id' => uuid(),
+                    'account_set_id' => $this->accountSetId,
+                    'aux_type_code' => $typeCode,
+                    'archive_code' => $code,
+                    'archive_name' => $code,
+                    'status' => 1,
+                    'del_flag' => 0,
+                    'created_by' => $this->userid,
+                    'created_time' => $this->now(),
+                    'updated_by' => $this->userid,
+                    'updated_time' => $this->now(),
+                    'version' => 0,
+                ]);
+            }
+        }
+    }
+
+    protected function getSubjectAuxConfigs($subjectCode)
+    {
+        return $this->getdb('fin_subject_aux_config')->where([
+            'account_set_id' => $this->accountSetId,
+            'subject_code' => $subjectCode,
+            'del_flag' => 0,
+        ])->select();
+    }
+
+    protected function needVerification($configs)
+    {
+        foreach ($configs as $config) {
+            if ((int)$config['verification_flag'] === 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function buildAuxDesc($auxValues)
+    {
+        $parts = [];
+        foreach ($auxValues as $aux) {
+            if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
+                continue;
+            }
+            $parts[] = $aux['aux_type_code'] . ':' . ($aux['aux_label'] ?? $aux['aux_value']);
+        }
+        return implode('; ', $parts);
+    }
+
+    protected function generateNextVoucherNo($period)
+    {
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'del_flag' => 0,
+        ];
+        $row = $this->getdb('fin_voucher_no_sequence')->where($where)->lock(true)->find();
+        if (!$row) {
+            $data = [
+                'sequence_id' => uuid(),
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'period' => $period,
+                'current_no' => 1,
+                'created_by' => $this->userid,
+                'created_time' => $this->now(),
+                'updated_by' => $this->userid,
+                'updated_time' => $this->now(),
+                'version' => 0,
+            ];
+            $this->getdb('fin_voucher_no_sequence')->insert($data);
+            return 1;
+        }
+        $nextNo = (int)$row['current_no'] + 1;
+        $this->getdb('fin_voucher_no_sequence')->where($where)->update([
+            'current_no' => $nextNo,
+            'updated_by' => $this->userid,
+            'updated_time' => $this->now(),
+        ]);
+        return $nextNo;
     }
 
     protected function parsePaymentImportRowsFromXls($binary)
@@ -1114,6 +1529,11 @@ class CaseFund extends Common
                 $col = $this->u16($data, 2);
                 $sstIndex = $this->u32($data, 6);
                 $cells[$row . ':' . $col] = $sst[$sstIndex] ?? '';
+            } elseif ($type === 0x0204 && strlen($data) >= 8) {
+                $row = $this->u16($data, 0);
+                $col = $this->u16($data, 2);
+                list($text,) = $this->readBiffString($data, 6);
+                $cells[$row . ':' . $col] = $text;
             } elseif ($type === 0x0203 && strlen($data) >= 14) {
                 $row = $this->u16($data, 0);
                 $col = $this->u16($data, 2);

@@ -88,6 +88,44 @@
 5. 业务模型目录：`backend/app/finance/model/`。
 6. 数据库：开发环境 MySQL 8.0，连接配置在 `backend/app/database.php`，默认库名 `court-finance`，用户 `root/root`，端口 `3306`。
 7. 返回格式：成功 `code=20000`，失败 `code=0`，外层返回包含 `action`、`time`、`page`、`pagesize`、`total`、`data`。
+8. **ThinkPHP 5 查询限制**：`where()` 不支持 `regexp`、`cast()`、`match()` 等原生 SQL 表达式；`order()` 不支持函数表达式。遇到复杂查询条件应在 PHP 中过滤排序，或通过 `whereRaw()` / `orderRaw()` / `exp` 方式传递原生 SQL，严禁在 `where()` 中直接使用数据库原生函数或操作符。
+
+### ThinkPHP 5 已踩坑清单（持续更新）
+
+> 以下坑点均为本项目实际踩过并修复的问题。后续任何新写或审查的后端查询逻辑，必须逐条对照自查。
+
+1. **查询对象复用导致 `where` 条件丢失（严重）**
+   - 错误写法：
+     ```php
+     $query = $this->getdb('fin_aux_archive')->where($where)->order('...');
+     $total = $query->count();          // count() 会修改查询对象内部状态
+     $rows  = $query->page(1, 50)->select(); // 复用同一对象，where 可能被污染
+     ```
+   - 后果：`count()` 之后复用 `$query`，会导致后续 `select()` 返回全量数据，`total` 与 `items` 严重不一致。
+   - 正确写法：
+     ```php
+     $db = $this->getdb('fin_aux_archive');
+     $total = $db->where($where)->count();
+     $rows  = $db->where($where)->order('...')->page(1, 50)->select();
+     ```
+   - 受影响文件：`backend/app/finance/model/Aux.php::archiveList()`（2026-05-06 修复）。
+
+2. **`where()` 中不能使用数据库原生函数或操作符**
+   - 错误写法：`->where('archive_code', 'regexp', '^[0-9]+$')`、`->order('cast(archive_code as unsigned) desc')`
+   - 后果：ThinkPHP 5 的 `where()` 不支持 `regexp`、`cast()`、`match()` 等原生 SQL 表达式；`order()` 不支持函数表达式。运行时可能静默忽略条件或报错。
+   - 正确写法：使用 `whereRaw()`、`orderRaw()` 或直接在 PHP 中过滤排序。
+
+3. **模型关联薄弱，无真正 ORM 关系映射**
+   - TP5 没有 Laravel Eloquent 那样的 `hasMany`、`belongsTo` 关系定义。连表查询必须手写 `join` 或拆成多次单表查询在 PHP 中组装。
+   - 注意：不要试图在 TP5 中模拟高级 ORM 关联，会增加不可预知的查询副作用。
+
+4. **返回类型弱，字段全靠约定**
+   - `select()` 返回的是原始数组，不是强类型对象。字段名拼写错误不会在编译期暴露，运行时可能返回 `null` 导致后续逻辑异常。
+   - 建议：涉及金额、状态等关键字段的读取，务必做空值和类型校验。
+
+5. **PHP 浮点精度问题**
+   - 不要直接用浮点数做金额加减乘除和平衡判断。必须先将金额转为整数"分"再运算，运算完再转回元展示。
+   - 典型场景：凭证借贷平衡校验、余额汇总、报表合计。
 
 后端启动命令：
 

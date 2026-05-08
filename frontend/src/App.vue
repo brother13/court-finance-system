@@ -82,7 +82,7 @@
               <span class="dot" />
               {{ context.accountSetName || '未选账套' }}
             </span>
-            <small>{{ bizTypeLabel }} · {{ context.period }}</small>
+            <small>{{ bizTypeLabel }} · {{ context.year }}年 · {{ context.period }}</small>
           </div>
           <span class="topbar-divider" />
           <el-button type="primary" plain @click="switchAccountSet">切换账套</el-button>
@@ -232,6 +232,8 @@ const switchAccountSet = () => {
   context.accountSetCode = ''
   context.accountSetName = ''
   context.bizType = ''
+  context.year = 0
+  context.period = ''
   router.push('/select-account-set')
 }
 

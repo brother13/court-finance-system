@@ -57,10 +57,10 @@ router.beforeEach((to) => {
       }
     }
   }
-  if (!to.meta.public && !to.meta.accountSelect && !context.hasAccountSet) {
+  if (!to.meta.public && !to.meta.accountSelect && (!context.hasAccountSet || context.year <= 0)) {
     return '/select-account-set'
   }
-  if (to.meta.accountSelect && context.hasAccountSet) {
+  if (to.meta.accountSelect && context.hasAccountSet && context.year > 0) {
     return '/dashboard'
   }
   if (!to.meta.public && to.meta.permission && !context.hasPermission(String(to.meta.permission))) {

@@ -1495,6 +1495,36 @@ body {
   }
 }
 
+/* 紧凑查询模式 */
+.voucher-query-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(80px, auto));
+  gap: 8px;
+  align-items: end;
+}
+
+.voucher-query-grid.compact .query-field {
+  gap: 2px;
+}
+
+.voucher-query-grid.compact .query-field > span {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.voucher-query-grid.compact .voucher-no-range,
+.voucher-query-grid.compact .voucher-date-range {
+  grid-column: auto;
+}
+
+.voucher-query-grid.compact .range-inputs {
+  gap: 4px;
+}
+
+.voucher-query-grid.compact .voucher-query-actions {
+  grid-column: auto;
+  gap: 6px;
+}
+
 /* ============================================================
  * 卡片 / 面板
  * ============================================================ */

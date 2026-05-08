@@ -175,7 +175,7 @@ import { useContextStore } from '../../stores/context'
 
 const context = useContextStore()
 const period = ref(context.period)
-const periodOptions = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06']
+const periodOptions = Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
 const rows = ref<any[]>([])
 const saving = ref(false)
 const auxDrawerVisible = ref(false)

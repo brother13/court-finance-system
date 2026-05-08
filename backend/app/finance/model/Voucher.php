@@ -7,6 +7,9 @@ use think\Db;
 class Voucher extends Common
 {
     const ACTION = 'voucher';
+    const TABLE = 'fin_voucher';
+    const TABLE_DETAIL = 'fin_voucher_detail';
+    const TABLE_AUX = 'fin_voucher_aux_value';
     const TABLE_NO = 'fin_voucher_no_sequence';
     const TABLE_CONFIG = 'fin_subject_aux_config';
 
@@ -39,6 +42,8 @@ class Voucher extends Common
                 return $this->voidVoucher($data);
             case 'printMark':
                 return $this->printMark($data);
+            case 'import':
+                return $this->importVouchers($data);
             default:
                 return $this->error('操作【/' . self::ACTION . '/' . $action . '】并不存在！');
         }
@@ -56,7 +61,7 @@ class Voucher extends Common
         }
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? input('param.pagesize', 50);
-        $table = $this->yearTable('fin_voucher', $period);
+        $table = self::TABLE;
 
         $voucherIds = $this->voucherIdsByDetailFilters($period, $data);
         if (is_array($voucherIds)) {
@@ -86,6 +91,7 @@ class Voucher extends Common
     protected function buildVoucherHeaderWhere($period, $data)
     {
         $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->fiscalYear($period);
         $where['period'] = $period;
 
         $summaryKeyword = trim($data['summary_keyword'] ?? ($data['keyword'] ?? ''));
@@ -179,9 +185,11 @@ class Voucher extends Common
         if ($min === '' && $max === '') {
             return null;
         }
-        $table = $this->yearTable('fin_voucher_detail', $period);
+        $table = self::TABLE_DETAIL;
         $query = $this->getdb($table)->where([
             'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
             'del_flag' => 0,
         ]);
         if ($min !== '') {
@@ -199,9 +207,11 @@ class Voucher extends Common
         if ($keyword === '') {
             return null;
         }
-        $table = $this->yearTable('fin_voucher_aux_value', $period);
+        $table = self::TABLE_AUX;
         $query = $this->getdb($table)->where([
             'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
             'aux_type_code' => $auxTypeCode,
             'del_flag' => 0,
         ]);
@@ -230,16 +240,20 @@ class Voucher extends Common
         $voucherRows = [$voucher];
         $this->fillUserDisplayNames($voucherRows);
         $voucher = $voucherRows[0];
-        $detailTable = $this->yearTable('fin_voucher_detail', $period);
-        $auxTable = $this->yearTable('fin_voucher_aux_value', $period);
+        $detailTable = self::TABLE_DETAIL;
+        $auxTable = self::TABLE_AUX;
         $details = $this->getdb($detailTable)->where([
             'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
             'voucher_id' => $voucherId,
             'del_flag' => 0,
         ])->order('line_no asc')->select();
         foreach ($details as &$detail) {
             $detail['aux_values'] = $this->getdb($auxTable)->where([
                 'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'period' => $period,
                 'detail_id' => $detail['detail_id'],
                 'del_flag' => 0,
             ])->order('aux_type_code asc')->select();
@@ -308,9 +322,10 @@ class Voucher extends Common
         }
         $amountTotals = $this->sumVoucherAmounts($details);
 
-        $voucherTable = $this->yearTable('fin_voucher', $period);
-        $detailTable = $this->yearTable('fin_voucher_detail', $period);
-        $auxTable = $this->yearTable('fin_voucher_aux_value', $period);
+        $fiscalYear = $this->fiscalYear($period);
+        $voucherTable = self::TABLE;
+        $detailTable = self::TABLE_DETAIL;
+        $auxTable = self::TABLE_AUX;
         $voucherId = $data['voucher_id'] ?? '';
         $isNew = empty($voucherId);
 
@@ -319,10 +334,27 @@ class Voucher extends Common
             $before = null;
             if ($isNew) {
                 $voucherId = uuid();
-                $voucherNo = $this->nextVoucherNo($period);
+                $customVoucherNo = isset($data['voucher_no']) ? (int)$data['voucher_no'] : null;
+                if ($customVoucherNo !== null) {
+                    $existing = $this->getdb($voucherTable)->where([
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $fiscalYear,
+                        'period' => $period,
+                        'voucher_no' => $customVoucherNo,
+                        'del_flag' => 0,
+                    ])->find();
+                    if ($existing) {
+                        Db::rollback();
+                        return $this->error('凭证号 ' . $customVoucherNo . ' 已存在');
+                    }
+                    $voucherNo = $customVoucherNo;
+                } else {
+                    $voucherNo = $this->nextVoucherNo($period);
+                }
                 $voucher = [
                     'voucher_id' => $voucherId,
                     'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
                     'period' => $period,
                     'voucher_date' => $voucherDate,
                     'voucher_word' => $data['voucher_word'] ?? '记',
@@ -334,7 +366,7 @@ class Voucher extends Common
                     'status' => $status,
                     'source_type' => $data['source_type'] ?? 'MANUAL',
                     'printed_flag' => '0',
-                    'prepared_by' => $this->userid,
+                    'prepared_by' => $data['prepared_by'] ?? $this->userid,
                     'prepared_time' => $this->now(),
                     'audit_by' => null,
                     'audit_time' => null,
@@ -343,6 +375,10 @@ class Voucher extends Common
                     'void_flag' => '0',
                     'remark' => $data['remark'] ?? '',
                 ];
+                if ($status === 'AUDITED') {
+                    $voucher['audit_by'] = $data['audit_by'] ?? $this->userid;
+                    $voucher['audit_time'] = $this->now();
+                }
                 $this->fillCreate($voucher);
                 $this->getdb($voucherTable)->insert($voucher);
             } else {
@@ -369,8 +405,18 @@ class Voucher extends Common
                 ];
                 $this->fillUpdate($voucher);
                 $this->getdb($voucherTable)->where($where)->update($voucher);
-                $this->getdb($auxTable)->where(['account_set_id' => $this->accountSetId, 'voucher_id' => $voucherId])->delete();
-                $this->getdb($detailTable)->where(['account_set_id' => $this->accountSetId, 'voucher_id' => $voucherId])->delete();
+                $this->getdb($auxTable)->where([
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
+                    'voucher_id' => $voucherId,
+                ])->delete();
+                $this->getdb($detailTable)->where([
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
+                    'voucher_id' => $voucherId,
+                ])->delete();
             }
 
             $lineNo = 1;
@@ -392,6 +438,8 @@ class Voucher extends Common
                 $detail = [
                     'detail_id' => $detailId,
                     'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
                     'voucher_id' => $voucherId,
                     'line_no' => $lineNo++,
                     'subject_code' => $line['subject_code'],
@@ -412,6 +460,8 @@ class Voucher extends Common
                     $row = [
                         'id' => uuid(),
                         'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $fiscalYear,
+                        'period' => $period,
                         'voucher_id' => $voucherId,
                         'detail_id' => $detailId,
                         'aux_type_code' => $aux['aux_type_code'],
@@ -446,7 +496,7 @@ class Voucher extends Common
         if ($period === '' || $voucherId === '') {
             return $this->error('会计期间和凭证ID不能为空');
         }
-        $table = $this->yearTable('fin_voucher', $period);
+        $table = self::TABLE;
         $where = $this->voucherWhere($voucherId, $period);
         $before = $this->getdb($table)->where($where)->find();
         if (!$before) {
@@ -483,7 +533,7 @@ class Voucher extends Common
         if ($period === '' || $voucherId === '') {
             return $this->error('会计期间和凭证ID不能为空');
         }
-        $table = $this->yearTable('fin_voucher', $period);
+        $table = self::TABLE;
         $where = $this->voucherWhere($voucherId, $period);
         $before = $this->getdb($table)->where($where)->find();
         if (!$before) {
@@ -531,9 +581,9 @@ class Voucher extends Common
             return $this->error('会计期间不能为空');
         }
 
-        $voucherTable = $this->yearTable('fin_voucher', $period);
-        $detailTable = $this->yearTable('fin_voucher_detail', $period);
-        $auxTable = $this->yearTable('fin_voucher_aux_value', $period);
+        $voucherTable = self::TABLE;
+        $detailTable = self::TABLE_DETAIL;
+        $auxTable = self::TABLE_AUX;
         $periodStatus = $this->fiscalPeriodStatus($period);
 
         $beforeRows = [];
@@ -561,11 +611,15 @@ class Voucher extends Common
                 $this->getdb($voucherTable)->where($this->voucherWhere($voucherId, $period))->update($update);
                 $this->getdb($detailTable)->where([
                     'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $this->fiscalYear($period),
+                    'period' => $period,
                     'voucher_id' => $voucherId,
                     'del_flag' => 0,
                 ])->update($update);
                 $this->getdb($auxTable)->where([
                     'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $this->fiscalYear($period),
+                    'period' => $period,
                     'voucher_id' => $voucherId,
                     'del_flag' => 0,
                 ])->update($update);
@@ -615,7 +669,7 @@ class Voucher extends Common
         if ($period === '' || $voucherId === '') {
             return $this->error('会计期间和凭证ID不能为空');
         }
-        $table = $this->yearTable('fin_voucher', $period);
+        $table = self::TABLE;
         $where = $this->voucherWhere($voucherId, $period);
         $before = $this->getdb($table)->where($where)->find();
         if (!$before) {
@@ -630,13 +684,14 @@ class Voucher extends Common
 
     protected function loadVoucher($period, $voucherId)
     {
-        return $this->getdb($this->yearTable('fin_voucher', $period))->where($this->voucherWhere($voucherId, $period))->find();
+        return $this->getdb(self::TABLE)->where($this->voucherWhere($voucherId, $period))->find();
     }
 
     protected function voucherWhere($voucherId, $period)
     {
         return [
             'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
             'period' => $period,
             'voucher_id' => $voucherId,
             'del_flag' => 0,
@@ -653,9 +708,6 @@ class Voucher extends Common
         }
         if ($debit !== $credit) {
             return $this->error('借贷不平衡');
-        }
-        if ($debit <= 0) {
-            return $this->error('凭证金额必须大于0');
         }
         return $this->ok();
     }
@@ -694,14 +746,8 @@ class Voucher extends Common
         if ((int)$subject['leaf_flag'] !== 1) {
             return $this->error('非末级科目不允许录入凭证：' . $line['subject_code']);
         }
-        if (isset($subject['voucher_entry_flag']) && (int)$subject['voucher_entry_flag'] !== 1) {
-            return $this->error('科目不允许录入凭证：' . $line['subject_code']);
-        }
         $debit = $this->decimalToCents($line['debit_amount'] ?? '0');
         $credit = $this->decimalToCents($line['credit_amount'] ?? '0');
-        if ($debit < 0 || $credit < 0) {
-            return $this->error('明细金额不能为负数');
-        }
         if ($debit > 0 && $credit > 0) {
             return $this->error('同一明细不能同时填写借方和贷方');
         }
@@ -730,6 +776,7 @@ class Voucher extends Common
         }
         $row = $this->getdb(self::TABLE_NO)->where([
             'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
             'period' => $period,
             'del_flag' => 0,
         ])->find();
@@ -789,6 +836,7 @@ class Voucher extends Common
     {
         $where = [
             'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
             'period' => $period,
             'del_flag' => 0,
         ];
@@ -797,6 +845,7 @@ class Voucher extends Common
             $data = [
                 'sequence_id' => uuid(),
                 'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
                 'period' => $period,
                 'current_no' => 1,
             ];
@@ -809,5 +858,126 @@ class Voucher extends Common
         $this->fillUpdate($update);
         $this->getdb(self::TABLE_NO)->where(['sequence_id' => $row['sequence_id']])->update($update);
         return $next;
+    }
+
+    public function importVouchers($data = [])
+    {
+        $auth = $this->requirePermission('voucher:import');
+        if ($auth) {
+            return $auth;
+        }
+
+        $vouchers = $data['vouchers'] ?? [];
+        if (!is_array($vouchers) || empty($vouchers)) {
+            return $this->error('导入数据不能为空');
+        }
+
+        $success = 0;
+        $failed = 0;
+        $errors = [];
+        $maxNoByPeriod = [];
+
+        foreach ($vouchers as $index => $voucherData) {
+            $period = $voucherData['period'] ?? '';
+            $voucherNo = isset($voucherData['voucher_no']) ? (int)$voucherData['voucher_no'] : null;
+            $voucherWord = $voucherData['voucher_word'] ?? '记';
+
+            if ($period === '') {
+                $failed++;
+                $errors[] = '第' . ($index + 1) . '张凭证：会计期间不能为空';
+                continue;
+            }
+
+            $voucherTable = self::TABLE;
+
+            if ($voucherNo !== null) {
+                $existing = $this->getdb($voucherTable)->where([
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $this->fiscalYear($period),
+                    'period' => $period,
+                    'voucher_no' => $voucherNo,
+                    'del_flag' => 0,
+                ])->find();
+                if ($existing) {
+                    $failed++;
+                    $errors[] = '第' . ($index + 1) . '张凭证（' . $period . ' ' . $voucherWord . '-' . $voucherNo . '）：凭证号已存在';
+                    continue;
+                }
+            }
+
+            $preparedBy = $this->findUserIdByName($voucherData['prepared_by_name'] ?? '');
+            $auditBy = $this->findUserIdByName($voucherData['audit_by_name'] ?? '');
+
+            $voucherData['source_type'] = 'IMPORT';
+            $voucherData['prepared_by'] = $preparedBy;
+            $voucherData['audit_by'] = $auditBy;
+
+            $result = $this->saveVoucher($voucherData, 'AUDITED');
+            if ($result['code'] !== self::CODE_SUCCESS) {
+                $failed++;
+                $errors[] = '第' . ($index + 1) . '张凭证（' . $period . ' ' . $voucherWord . '-' . ($voucherNo ?? '?') . '）：' . $result['message'];
+                continue;
+            }
+
+            $success++;
+
+            if ($voucherNo !== null) {
+                if (!isset($maxNoByPeriod[$period]) || $voucherNo > $maxNoByPeriod[$period]) {
+                    $maxNoByPeriod[$period] = $voucherNo;
+                }
+            }
+        }
+
+        foreach ($maxNoByPeriod as $period => $maxNo) {
+            $this->updateVoucherNoSequence($period, $maxNo);
+        }
+
+        return $this->ok([
+            'success' => $success,
+            'failed' => $failed,
+            'errors' => $errors,
+        ], '导入完成：成功' . $success . '张，失败' . $failed . '张');
+    }
+
+    protected function findUserIdByName($name)
+    {
+        $name = trim((string)$name);
+        if ($name === '') {
+            return $this->userid;
+        }
+        $user = $this->getdb('sys_user')
+            ->where('del_flag', 0)
+            ->where(function ($query) use ($name) {
+                $query->where('real_name', $name)->whereOr('username', $name);
+            })
+            ->field('user_id')
+            ->find();
+        return $user ? $user['user_id'] : $this->userid;
+    }
+
+    protected function updateVoucherNoSequence($period, $maxNo)
+    {
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'del_flag' => 0,
+        ];
+        $row = $this->getdb(self::TABLE_NO)->where($where)->find();
+        if (!$row) {
+            $data = [
+                'sequence_id' => uuid(),
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'period' => $period,
+                'current_no' => $maxNo,
+            ];
+            $this->fillCreate($data);
+            $this->getdb(self::TABLE_NO)->insert($data);
+        } elseif ((int)$row['current_no'] < $maxNo) {
+            $update = ['current_no' => $maxNo];
+            $this->fillUpdate($update);
+            $this->getdb(self::TABLE_NO)->where(['sequence_id' => $row['sequence_id']])->update($update);
+        }
     }
 }

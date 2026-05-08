@@ -85,6 +85,7 @@
           <strong>{{ selectedTypeName }}档案</strong>
           <div class="page-actions">
             <el-button v-if="selectedType" v-permission="'base:edit'" @click="openTypeEdit">编辑维度</el-button>
+            <el-button v-permission="'base:add'" type="success" :icon="Upload" :loading="archiveImporting" @click="chooseArchiveImportFile">批量导入</el-button>
             <el-button v-permission="'base:add'" type="primary" :icon="Plus" @click="openArchiveCreate">新增档案</el-button>
           </div>
         </div>
@@ -97,9 +98,15 @@
             </el-select>
             <el-button type="primary" @click="loadArchives">查询</el-button>
             <el-button @click="resetArchiveFilter">重置</el-button>
+            <el-dropdown split-button type="success" @click="exportCurrentPage">
+              <el-icon><Download /></el-icon>导出当前页
+              <template #dropdown>
+                <el-dropdown-item @click="exportAll">导出全部</el-dropdown-item>
+              </template>
+            </el-dropdown>
           </div>
 
-          <el-table :data="filteredArchives" border height="calc(100vh - 420px)">
+          <el-table :data="filteredArchives" border height="calc(100vh - 460px)">
             <el-table-column prop="archive_code" :label="`${selectedTypeName}编码`" width="180" />
             <el-table-column prop="archive_name" :label="`${selectedTypeName}名称`" min-width="220" />
             <el-table-column prop="status" label="状态" width="90">
@@ -117,6 +124,18 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div class="pagination-bar">
+            <el-pagination
+              v-model:current-page="archivePage"
+              v-model:page-size="archivePageSize"
+              :page-sizes="[20, 50, 100, 200]"
+              :total="archiveTotal"
+              layout="total, sizes, prev, pager, next"
+              @size-change="loadArchives"
+              @current-change="loadArchives"
+            />
+          </div>
         </div>
       </div>
     </section>
@@ -167,8 +186,8 @@
         <el-form-item label="状态">
           <el-switch v-model="archiveEnabled" active-text="启用" inactive-text="停用" />
         </el-form-item>
-        <el-form-item :label="`${selectedTypeName}编码`" required>
-          <el-input v-model.trim="archiveForm.archive_code" placeholder="请输入档案编码" />
+        <el-form-item :label="`${selectedTypeName}编码`"">
+          <el-input v-model.trim="archiveForm.archive_code" placeholder="留空则自动生成序号（从1开始）" />
         </el-form-item>
         <el-form-item :label="`${selectedTypeName}名称`" required>
           <el-input v-model.trim="archiveForm.archive_name" placeholder="请输入档案名称" />
@@ -183,13 +202,17 @@
       <el-button v-permission="['base:add', 'base:edit']" type="primary" :loading="archiveSaving" @click="saveArchive">保存</el-button>
     </template>
   </el-dialog>
+
+  <!-- 档案导入文件输入（放在组件根层级，避免 v-permission 干扰 ref 绑定） -->
+  <input ref="archiveImportInputRef" type="file" accept=".xlsx" style="display: none" @change="handleArchiveImportFile" />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete as DeleteIcon, Plus, Refresh } from '@element-plus/icons-vue'
+import { Delete as DeleteIcon, Download, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
+import * as XLSX from 'xlsx'
 
 const standardTypes = [
   { code: 'customer', name: '客户', intercourse: true, category: '标准往来维度', rule: '与供应商/职员互斥', purpose: '用于应收、预收、收入等科目的客户往来核算。' },
@@ -202,6 +225,9 @@ const standardCodes = standardTypes.map((item) => item.code)
 
 const types = ref<any[]>([])
 const archives = ref<any[]>([])
+const archiveTotal = ref(0)
+const archivePage = ref(1)
+const archivePageSize = ref(50)
 const selectedTypeCode = ref('customer')
 const keyword = ref('')
 const statusFilter = ref('')
@@ -209,6 +235,8 @@ const typeDialogVisible = ref(false)
 const archiveDialogVisible = ref(false)
 const typeSaving = ref(false)
 const archiveSaving = ref(false)
+const archiveImporting = ref(false)
+const archiveImportInputRef = ref<HTMLInputElement | null>(null)
 
 const typeForm = reactive<any>({
   aux_type_id: '',
@@ -269,8 +297,21 @@ const loadTypes = async () => {
   ensureStandardTypes()
 }
 
+let lastArchiveRequestId = 0
+
 const loadArchives = async () => {
-  archives.value = await baseApi.auxArchives(selectedTypeCode.value, keyword.value.trim())
+  if (!selectedTypeCode.value) {
+    archives.value = []
+    archiveTotal.value = 0
+    return
+  }
+  const requestId = ++lastArchiveRequestId
+  const result = await baseApi.auxArchives(selectedTypeCode.value, keyword.value.trim(), archivePage.value, archivePageSize.value)
+  if (requestId !== lastArchiveRequestId) {
+    return
+  }
+  archives.value = result.items || []
+  archiveTotal.value = result.total || 0
 }
 
 const loadAll = async () => {
@@ -282,13 +323,45 @@ const selectType = async (code: string) => {
   selectedTypeCode.value = code
   keyword.value = ''
   statusFilter.value = ''
+  archivePage.value = 1
   await loadArchives()
 }
 
 const resetArchiveFilter = async () => {
   keyword.value = ''
   statusFilter.value = ''
+  archivePage.value = 1
   await loadArchives()
+}
+
+const exportCurrentPage = () => {
+  exportToExcel(filteredArchives.value, `${selectedTypeName.value}档案_第${archivePage.value}页`)
+}
+
+const exportAll = async () => {
+  archiveImporting.value = true
+  try {
+    const result = await baseApi.auxArchives(selectedTypeCode.value, keyword.value.trim(), 1, 99999)
+    exportToExcel(result.items || [], `${selectedTypeName.value}档案_全部`)
+  } catch (err: any) {
+    ElMessage.error('导出失败：' + (err.message || '未知错误'))
+  } finally {
+    archiveImporting.value = false
+  }
+}
+
+const exportToExcel = (data: any[], filename: string) => {
+  const headers = ['编码', '名称', '状态', '备注']
+  const rows = data.map((row) => [
+    row.archive_code,
+    row.archive_name,
+    Number(row.status) === 1 ? '启用' : '停用',
+    row.remark || '',
+  ])
+  const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, sheet, '档案')
+  XLSX.writeFile(wb, `${filename}.xlsx`)
 }
 
 const resetTypeForm = () => {
@@ -372,8 +445,8 @@ const confirmTypeDelete = async (row: any) => {
 
 const saveArchive = async () => {
   archiveForm.aux_type_code = selectedTypeCode.value
-  if (!archiveForm.archive_code || !archiveForm.archive_name) {
-    ElMessage.warning('请填写档案编码和名称')
+  if (!archiveForm.archive_name) {
+    ElMessage.warning('请填写档案名称')
     return
   }
   archiveSaving.value = true
@@ -396,6 +469,71 @@ const confirmArchiveDelete = async (row: any) => {
   await baseApi.deleteAuxArchive(row.archive_id)
   ElMessage.success('辅助档案已删除')
   await loadArchives()
+}
+
+const chooseArchiveImportFile = () => {
+  if (!archiveImportInputRef.value) return
+  archiveImportInputRef.value.value = ''
+  archiveImportInputRef.value.click()
+}
+
+const handleArchiveImportFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    ElMessage.warning('请选择 .xlsx 格式的文件')
+    return
+  }
+
+  archiveImporting.value = true
+  try {
+    const data = await file.arrayBuffer()
+    const workbook = XLSX.read(data, { type: 'array' })
+    const sheet = workbook.Sheets[workbook.SheetNames[0]]
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as any[][]
+
+    if (rows.length < 2) {
+      ElMessage.warning('Excel 数据为空')
+      return
+    }
+
+    const headers = rows[0] as string[]
+    // 查找名称列索引（支持 "案号名称"、"收据号名称"、"名称" 等）
+    let nameColIdx = headers.findIndex((h) => h && String(h).includes('名称'))
+    if (nameColIdx === -1) {
+      // 如果没有找到包含"名称"的列，尝试第二列
+      nameColIdx = 1
+    }
+
+    const names: string[] = []
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
+      if (!row || row.length === 0) continue
+      const name = String(row[nameColIdx] || '').trim()
+      if (name) {
+        names.push(name)
+      }
+    }
+
+    if (names.length === 0) {
+      ElMessage.warning('未解析到有效的档案名称')
+      return
+    }
+
+    const result = await baseApi.importAuxArchives(selectedTypeCode.value, names)
+    const msg = `导入完成：成功 ${result.success} 条，跳过 ${result.skipped} 条（已存在）`
+    if (result.success > 0) {
+      ElMessage.success(msg)
+      await loadArchives()
+    } else {
+      ElMessage.info(msg)
+    }
+  } catch (err: any) {
+    ElMessage.error('导入失败：' + (err.message || '未知错误'))
+  } finally {
+    archiveImporting.value = false
+  }
 }
 
 onMounted(loadAll)

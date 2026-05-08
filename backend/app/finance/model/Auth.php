@@ -24,6 +24,7 @@ class Auth extends Common
     {
         if (!empty($this->userid) && !in_array($this->userid, ['system', 'anonymous'])) {
             $allowed = $this->userAccountSets($this->userid);
+            $allowed = $this->fillAvailableYears($allowed);
             return $this->ok($allowed);
         }
 
@@ -33,7 +34,34 @@ class Auth extends Common
             ->order('biz_type asc,set_code asc')
             ->select();
 
+        $rows = $this->fillAvailableYears($rows);
         return $this->ok($rows);
+    }
+
+    protected function fillAvailableYears($accountSets)
+    {
+        foreach ($accountSets as &$accountSet) {
+            $years = [];
+            try {
+                $periods = Db::name('fin_fiscal_period')
+                    ->where(['account_set_id' => $accountSet['account_set_id']])
+                    ->column('period');
+                foreach ($periods as $period) {
+                    $year = (int) substr($period, 0, 4);
+                    if ($year > 0 && !in_array($year, $years, true)) {
+                        $years[] = $year;
+                    }
+                }
+            } catch (\Exception $e) {
+                $years = [];
+            }
+            if (empty($years) && !empty($accountSet['enabled_year'])) {
+                $years[] = (int) $accountSet['enabled_year'];
+            }
+            rsort($years);
+            $accountSet['available_years'] = $years;
+        }
+        return $accountSets;
     }
 
     protected function unitList($data)

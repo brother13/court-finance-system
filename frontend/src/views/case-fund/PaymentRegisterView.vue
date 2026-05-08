@@ -22,6 +22,7 @@
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handlePaymentImportFile" />
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
         <el-button v-permission="'case_fund:subject_config'" :icon="Setting" @click="openSubjectConfig">科目配置</el-button>
         <el-button v-permission="'case_fund:import'" type="primary" :icon="Upload" :loading="importing" @click="choosePaymentImportFile">导入缴费</el-button>
       </div>
@@ -43,7 +44,14 @@
     </div>
 
     <div class="case-fund-table-shell">
-      <el-table :data="rows" border height="calc(100vh - 292px)" v-loading="loading">
+      <el-table
+        :data="rows"
+        border
+        height="calc(100vh - 292px)"
+        v-loading="loading"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="55" :selectable="isRowSelectable" fixed="left" />
         <el-table-column prop="payment_date" label="缴费日期" width="112" fixed="left" />
         <el-table-column prop="case_no" label="案号" min-width="190" fixed="left" show-overflow-tooltip />
         <el-table-column prop="business_type" label="业务类型" width="130" show-overflow-tooltip />
@@ -128,8 +136,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Setting, Upload } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Setting, Upload, DocumentChecked } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
@@ -143,7 +151,9 @@ const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 const importing = ref(false)
+const generating = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
+const selectedPaymentIds = ref<string[]>([])
 const subjectConfigVisible = ref(false)
 const subjectConfigLoading = ref(false)
 const subjectConfigSaving = ref(false)
@@ -348,6 +358,41 @@ const voucherStatusType = (status: string) => {
 const subjectCode = (subject: Subject) => subject.subject_code || subject.subjectCode
 
 const subjectLabel = (subject: Subject) => `${subjectCode(subject)} ${subject.subject_name || subject.subjectName}`
+
+const isRowSelectable = (row: CaseFundPayment) => {
+  return row.voucher_status === 'UNGENERATED'
+}
+
+const handleSelectionChange = (selection: CaseFundPayment[]) => {
+  selectedPaymentIds.value = selection.map((row) => row.payment_id)
+}
+
+const handleGenerateVoucher = async () => {
+  if (selectedPaymentIds.value.length === 0) {
+    ElMessage.warning('请选择要生成凭证的缴费记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要为选中的 ${selectedPaymentIds.value.length} 条记录生成凭证吗？`,
+      '确认生成凭证',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  generating.value = true
+  try {
+    const result = await caseFundApi.paymentGenerateVoucher(selectedPaymentIds.value)
+    ElMessage.success(`成功生成 ${result.generated_count} 张凭证`)
+    selectedPaymentIds.value = []
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成凭证失败')
+  } finally {
+    generating.value = false
+  }
+}
 
 onMounted(load)
 </script>

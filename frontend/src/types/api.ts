@@ -23,6 +23,8 @@ export interface LoginUser {
   must_change_password?: number | boolean
   roles?: RoleBrief[]
   account_sets?: AccountSet[]
+  year?: number
+  period?: string
 }
 
 export interface RoleBrief {
@@ -53,6 +55,7 @@ export interface AccountSet {
   id?: string
   code?: string
   name?: string
+  available_years?: number[]
 }
 
 export interface Permission {

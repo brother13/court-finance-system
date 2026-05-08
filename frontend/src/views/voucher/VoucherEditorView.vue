@@ -120,7 +120,7 @@
               <el-input
                 v-model="row.creditText"
                 class="paper-cell-control paper-money-input"
-                placeholder="= 找平"
+                placeholder="0.00"
                 :disabled="isReadonly"
                 @input="handleCreditInput(row)"
                 @blur="normalizeAmount(row, 'CREDIT')"
@@ -300,7 +300,7 @@ const terminalVoucherSubjects = computed(() => subjects.value.filter((subject: a
 const totalDebit = computed(() => form.details.reduce((sum, line) => sum + parseAmount(line.debitText), 0))
 const totalCredit = computed(() => form.details.reduce((sum, line) => sum + parseAmount(line.creditText), 0))
 const difference = computed(() => Number((totalDebit.value - totalCredit.value).toFixed(2)))
-const isBalanced = computed(() => difference.value === 0 && totalDebit.value > 0)
+const isBalanced = computed(() => difference.value === 0)
 const validLineCount = computed(() => form.details.filter((line) => line.subjectCode || line.summary || parseAmount(line.debitText) || parseAmount(line.creditText)).length)
 const uppercaseAmount = computed(() => toChineseAmount(Math.max(totalDebit.value, totalCredit.value)))
 
@@ -327,7 +327,8 @@ const loadSubjectConfig = async (subjectCode: string) => {
 
 const loadAuxArchives = async (code: string) => {
   if (auxArchives[code]) return
-  auxArchives[code] = await baseApi.auxArchives(code)
+  const result = await baseApi.auxArchives(code)
+  auxArchives[code] = result.items || []
 }
 
 const lineAuxConfigs = (line: VoucherLine | null) => {
@@ -421,7 +422,7 @@ const normalizeAmount = (row: VoucherLine, side: 'DEBIT' | 'CREDIT') => {
     return
   }
   const value = parseAmount(row[key])
-  row[key] = value > 0 ? value.toFixed(2) : ''
+  row[key] = value !== 0 ? value.toFixed(2) : ''
 }
 
 const handleDebitInput = (row: VoucherLine) => {
@@ -443,7 +444,7 @@ const handleDebitBlur = (row: VoucherLine, index: number) => {
 
 const fillNextCreditLine = (row: VoucherLine, index: number) => {
   const debit = parseAmount(row.debitText)
-  if (debit <= 0) return
+  if (debit === 0) return
   if (!form.details[index + 1]) {
     form.details.push(createLine())
   }
@@ -635,8 +636,8 @@ async function loadVoucherDetail(period: string, voucherId: string) {
       uid: `${item.detail_id || item.detailId || Date.now()}-${Math.random()}`,
       summary: item.summary || '',
       subjectCode,
-      debitText: debit > 0 ? debit.toFixed(2) : '',
-      creditText: credit > 0 ? credit.toFixed(2) : '',
+      debitText: debit !== 0 ? debit.toFixed(2) : '',
+      creditText: credit !== 0 ? credit.toFixed(2) : '',
       auxValues,
       auxLabels
     })

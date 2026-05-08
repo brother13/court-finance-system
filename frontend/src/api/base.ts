@@ -34,8 +34,8 @@ export const baseApi = {
       leaf_flag: payload.leafFlag
     }) as Promise<string>
   },
-  auxArchives(auxTypeCode?: string, keyword?: string) {
-    return apiAction('/aux/archiveList', { aux_type_code: auxTypeCode, keyword }) as Promise<any[]>
+  auxArchives(auxTypeCode?: string, keyword?: string, page?: number, pagesize?: number) {
+    return apiAction('/aux/archiveList', { aux_type_code: auxTypeCode, keyword, page, pagesize }) as Promise<{ items: any[]; total: number }>
   },
   auxTypes() {
     return apiAction('/aux/typeList') as Promise<any[]>
@@ -51,6 +51,9 @@ export const baseApi = {
   },
   deleteAuxArchive(archiveId: string) {
     return apiAction('/aux/archiveDel', { archive_id: archiveId }) as Promise<string>
+  },
+  importAuxArchives(auxTypeCode: string, names: string[]) {
+    return apiAction('/aux/archiveImport', { aux_type_code: auxTypeCode, names }) as Promise<{ success: number; skipped: number; errors: string[] }>
   },
   subjectConfig(subjectCode: string) {
     return apiAction('/aux/subjectConfig', { subject_code: subjectCode }) as Promise<any[]>

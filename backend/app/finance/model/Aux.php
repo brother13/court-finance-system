@@ -30,6 +30,8 @@ class Aux extends Common
                 return $this->archiveSave($data['archive_id'] ?? '', $data);
             case 'archiveDel':
                 return $this->archiveDelete($data);
+            case 'archiveImport':
+                return $this->archiveImport($data);
             case 'subjectConfig':
                 return $this->subjectConfig($data);
             case 'subjectConfigSave':
@@ -167,8 +169,12 @@ class Aux extends Common
         if ($key !== '') {
             $where['archive_code|archive_name'] = ['like', "%{$key}%"];
         }
-        $rows = $this->getdb(self::TABLE_ARCHIVE)->where($where)->order('aux_type_code asc, archive_code asc')->select();
-        return $this->ok($rows, 'OK', count($rows));
+        $page = $data['page'] ?? 1;
+        $pagesize = $data['pagesize'] ?? 50;
+        $db = $this->getdb(self::TABLE_ARCHIVE);
+        $total = $db->where($where)->count();
+        $rows = $db->where($where)->order('aux_type_code asc, archive_code asc')->page($page, $pagesize)->select();
+        return $this->ok(['items' => $rows, 'total' => $total], 'OK', $total);
     }
 
     public function archiveSave($id, $data)
@@ -180,8 +186,25 @@ class Aux extends Common
         $typeCode = trim($data['aux_type_code'] ?? '');
         $archiveCode = trim($data['archive_code'] ?? '');
         $archiveName = trim($data['archive_name'] ?? '');
-        if ($typeCode === '' || $archiveCode === '' || $archiveName === '') {
-            return $this->error('辅助类型、档案编码、档案名称不能为空');
+        if ($typeCode === '' || $archiveName === '') {
+            return $this->error('辅助类型、档案名称不能为空');
+        }
+
+        // 新增时档案编码为空则自动生成自增序号
+        if (empty($id) && $archiveCode === '') {
+            $maxCode = $this->getdb(self::TABLE_ARCHIVE)
+                ->where($this->accountWhere())
+                ->where('aux_type_code', $typeCode)
+                ->where('del_flag', 0)
+                ->where('archive_code', 'regexp', '^[0-9]+$')
+                ->order('cast(archive_code as unsigned) desc')
+                ->value('archive_code');
+            $nextNo = $maxCode ? ((int)$maxCode + 1) : 1;
+            $archiveCode = (string)$nextNo;
+        }
+
+        if ($archiveCode === '') {
+            return $this->error('档案编码不能为空');
         }
         $d = [
             'account_set_id' => $this->accountSetId,
@@ -234,6 +257,81 @@ class Aux extends Common
         $this->getdb(self::TABLE_ARCHIVE)->where($where)->update($d);
         $this->logAudit('AUX_ARCHIVE', $id, 'DELETE', $before, $d);
         return $this->ok($id, '删除成功');
+    }
+
+    public function archiveImport($data = [])
+    {
+        $auth = $this->requirePermission('base:add');
+        if ($auth) {
+            return $auth;
+        }
+
+        $typeCode = trim($data['aux_type_code'] ?? '');
+        $names = $data['names'] ?? [];
+        if ($typeCode === '') {
+            return $this->error('辅助维度编码不能为空');
+        }
+        if (!is_array($names) || empty($names)) {
+            return $this->error('导入数据不能为空');
+        }
+
+        // 获取当前维度下已存在的档案名称（用于去重判断）
+        $existingNames = $this->getdb(self::TABLE_ARCHIVE)
+            ->where($this->accountWhere())
+            ->where('aux_type_code', $typeCode)
+            ->column('archive_name');
+        $existingNameSet = array_flip($existingNames);
+
+        // 获取当前维度下最大的数字编码（在 PHP 中处理，避免 ThinkPHP 表达式限制）
+        $allCodes = $this->getdb(self::TABLE_ARCHIVE)
+            ->where($this->accountWhere())
+            ->where('aux_type_code', $typeCode)
+            ->column('archive_code');
+        $numericCodes = array_filter($allCodes, function ($code) {
+            return preg_match('/^[0-9]+$/', (string)$code);
+        });
+        $maxCode = empty($numericCodes) ? 0 : max(array_map('intval', $numericCodes));
+        $nextNo = $maxCode + 1;
+
+        $success = 0;
+        $skipped = 0;
+        $errors = [];
+
+        foreach ($names as $index => $name) {
+            $name = trim((string)$name);
+            if ($name === '') {
+                continue;
+            }
+            if (isset($existingNameSet[$name])) {
+                $skipped++;
+                continue;
+            }
+
+            $archiveCode = (string)$nextNo;
+            $row = [
+                'archive_id' => uuid(),
+                'account_set_id' => $this->accountSetId,
+                'aux_type_code' => $typeCode,
+                'archive_code' => $archiveCode,
+                'archive_name' => $name,
+                'extra_json' => '',
+                'status' => 1,
+                'remark' => '',
+            ];
+            $this->fillCreate($row);
+            $this->getdb(self::TABLE_ARCHIVE)->insert($row);
+            $this->logAudit('AUX_ARCHIVE', $row['archive_id'], 'IMPORT', null, $row);
+
+            $existingNameSet[$name] = true;
+            $nextNo++;
+            $success++;
+        }
+
+        return $this->ok([
+            'success' => $success,
+            'skipped' => $skipped,
+            'errors' => $errors,
+        ], '导入完成：成功 ' . $success . ' 条，跳过 ' . $skipped . ' 条');
     }
 
     public function subjectConfig($data = [])
@@ -344,9 +442,8 @@ class Aux extends Common
             }
         }
 
-        $year = config('default_year');
         try {
-            $voucherCount = $this->getdb('fin_voucher_detail_' . $year)->where([
+            $voucherCount = $this->getdb('fin_voucher_detail')->where([
                 'account_set_id' => $this->accountSetId,
                 'subject_code' => $subjectCode,
                 'del_flag' => 0,
@@ -370,9 +467,8 @@ class Aux extends Common
         if ($this->auxTypeHasOpeningBusiness($auxTypeCode)) {
             return true;
         }
-        $year = config('default_year');
         try {
-            return $this->getdb('fin_voucher_aux_value_' . $year)->where([
+            return $this->getdb('fin_voucher_aux_value')->where([
                 'account_set_id' => $this->accountSetId,
                 'aux_type_code' => $auxTypeCode,
                 'del_flag' => 0,
@@ -399,9 +495,8 @@ class Aux extends Common
 
     protected function auxArchiveHasBusiness($auxTypeCode, $archiveCode)
     {
-        $year = config('default_year');
         try {
-            $voucherCount = $this->getdb('fin_voucher_aux_value_' . $year)->where([
+            $voucherCount = $this->getdb('fin_voucher_aux_value')->where([
                 'account_set_id' => $this->accountSetId,
                 'aux_type_code' => $auxTypeCode,
                 'aux_value' => $archiveCode,

@@ -28,6 +28,7 @@ export const apiAction = <T = any>(action: string, data: Record<string, any> = {
   const body = new URLSearchParams()
   body.set('action', action)
   body.set('account_set_id', context.accountSetId)
+  body.set('year', String(context.year))
   body.set('data', JSON.stringify(data))
   Object.entries(extra).forEach(([key, value]) => body.set(key, String(value)))
   return http.post('', body, {
