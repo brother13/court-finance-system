@@ -80,7 +80,7 @@ class Opening extends Common
 
     public function save($data = [])
     {
-        $auth = $this->requirePermission('base:edit');
+        $auth = $this->requireOpeningSavePermission();
         if ($auth) {
             return $auth;
         }
@@ -184,7 +184,7 @@ class Opening extends Common
 
     public function auxSave($data = [])
     {
-        $auth = $this->requirePermission('base:edit');
+        $auth = $this->requireOpeningSavePermission();
         if ($auth) {
             return $auth;
         }
@@ -271,5 +271,13 @@ class Opening extends Common
             }
         }
         return implode(' / ', $parts);
+    }
+
+    protected function requireOpeningSavePermission()
+    {
+        if ($this->hasPermission('opening:save') || $this->hasPermission('base:edit')) {
+            return null;
+        }
+        return $this->error('无权限执行当前操作：opening:save');
     }
 }

@@ -21,13 +21,15 @@
           <el-icon><Tickets /></el-icon>
           <span>凭证中心</span>
         </el-menu-item>
-        <el-sub-menu v-if="context.hasAnyPermission(['menu:book:detail_ledger', 'menu:book:subject_balance'])" index="/books">
+        <el-sub-menu v-if="context.hasAnyPermission(bookMenuPermissions)" index="/books">
           <template #title>
             <el-icon><Notebook /></el-icon>
             <span>账簿报表</span>
           </template>
           <el-menu-item v-if="context.hasPermission('menu:book:detail_ledger')" index="/books/detail-ledger">明细账</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:book:subject_balance')" index="/books/subject-balance">科目余额表</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:book:subject_summary')" index="/books/subject-summary">科目汇总表</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:book:aux_balance')" index="/books/aux-balance">辅助核算余额表</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
           <template #title>
@@ -36,6 +38,7 @@
           </template>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">案款缴费登记</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">案款退付登记</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="context.hasAnyPermission(['menu:base:subject', 'menu:base:opening', 'menu:base:aux'])" index="/base">
           <template #title>
@@ -123,7 +126,8 @@ const route = useRoute()
 const router = useRouter()
 const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
-const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund']
+const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance']
+const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement']
 const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:account_set', 'menu:system:audit_log']
 
 interface PageTab {
@@ -139,8 +143,11 @@ const titleMap: Record<string, string> = {
   '/vouchers/new': '凭证录入',
   '/books/detail-ledger': '明细账',
   '/books/subject-balance': '科目余额表',
+  '/books/subject-summary': '科目汇总表',
+  '/books/aux-balance': '辅助核算余额表',
   '/case-fund/payments': '案款缴费登记',
   '/case-fund/refunds': '案款退付登记',
+  '/case-fund/bank-statements': '银行对账单',
   '/base/subjects': '科目',
   '/base/opening-balances': '期初',
   '/base/aux-items': '辅助核算项',
@@ -228,13 +235,7 @@ const handleLogout = () => {
 const switchAccountSet = () => {
   localStorage.removeItem(tabsStorageKey)
   openedTabs.value = [...defaultTabs]
-  context.accountSetId = ''
-  context.accountSetCode = ''
-  context.accountSetName = ''
-  context.bizType = ''
-  context.year = 0
-  context.period = ''
-  router.push('/select-account-set')
+  router.push({ path: '/select-account-set', query: { switch: '1' } })
 }
 
 watch(

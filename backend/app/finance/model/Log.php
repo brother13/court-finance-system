@@ -37,7 +37,7 @@ class Log extends Common
             $where['biz_type'] = $data['biz_type'];
         }
         $num = $this->getdb(self::TABLE)->where($where)->count();
-        $rows = $this->getdb(self::TABLE)->where($where)->order('created_time desc')->page($page, $pagesize)->select();
+        $rows = $this->getdb(self::TABLE)->where($where)->order('created_time asc')->page($page, $pagesize)->select();
         return $this->ok(['items' => $rows, 'total' => $num], 'OK', $num);
     }
 

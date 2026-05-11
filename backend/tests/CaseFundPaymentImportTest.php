@@ -91,6 +91,40 @@ if ($third['payment_amount'] !== '117.70' || $third['trial_case_no'] !== '(2024)
     exit(1);
 }
 
+$duplicateKeyMethod = new ReflectionMethod(CaseFund::class, 'paymentImportDuplicateKey');
+$duplicateKeyMethod->setAccessible(true);
+$receiptKey = $duplicateKeyMethod->invoke($caseFund, [
+    'receipt_no' => '0000665970',
+    'bank_account_no' => 'A001',
+    'payment_amount' => '100.00',
+]);
+if ($receiptKey !== 'receipt:0000665970') {
+    fwrite(STDERR, 'Payment import duplicate key should prefer receipt no' . PHP_EOL);
+    exit(1);
+}
+$accountAmountKey = $duplicateKeyMethod->invoke($caseFund, [
+    'receipt_no' => '',
+    'bank_account_no' => '0334210102000370000717900',
+    'payment_amount' => '551788.00',
+]);
+if ($accountAmountKey !== 'account_amount:0334210102000370000717900|551788.00') {
+    fwrite(STDERR, 'Payment import duplicate key should use bank account plus amount when receipt no is empty' . PHP_EOL);
+    exit(1);
+}
+
+$source = file_get_contents($modelPath);
+foreach ([
+    'loadExistingPaymentsForImport' => 'Payment import should load existing rows by duplicate key',
+    'updateExistingPaymentFromImport' => 'Payment import should overwrite ungenerated existing rows',
+    "'voucher_status'] !== 'UNGENERATED'" => 'Payment import should skip generated existing rows',
+    "'updated' => \$updated" => 'Payment import result should report updated rows',
+] as $needle => $message) {
+    if (strpos($source, $needle) === false) {
+        fwrite(STDERR, $message . PHP_EOL);
+        exit(1);
+    }
+}
+
 $allowedMethod = new ReflectionMethod(CaseFund::class, 'allowedPaymentBusinessTypes');
 $allowedMethod->setAccessible(true);
 $caseFundTypes = $allowedMethod->invoke($caseFund, 'CASE_FUND');
@@ -108,15 +142,26 @@ $validateMethod = new ReflectionMethod(CaseFund::class, 'validatePaymentRows');
 $validateMethod->setAccessible(true);
 $wrongBizRows = [$rows[0]];
 $wrongBizRows[0]['business_type'] = '预收诉讼费';
-$errors = $validateMethod->invoke($caseFund, $wrongBizRows, 'CASE_FUND');
-if (empty($errors) || strpos(implode("\n", $errors), '当前账套不允许导入业务类型') === false) {
+$wrongBizErrors = $validateMethod->invoke($caseFund, $wrongBizRows, 'CASE_FUND');
+if (empty($wrongBizErrors) || strpos(implode("\n", $wrongBizErrors), '当前账套不允许导入业务类型') === false) {
     fwrite(STDERR, 'CASE_FUND validation should reject prepaid litigation fee rows' . PHP_EOL);
+    exit(1);
+}
+
+$noReceiptRows = [$rows[0]];
+$noReceiptRows[0]['receipt_no'] = '';
+$noReceiptRows[0]['bank_serial_no'] = '';
+$noReceiptRows[0]['payment_order_no'] = '';
+$noReceiptRows[0]['bank_account_no'] = '0334210102000370000717900';
+$errors = $validateMethod->invoke($caseFund, $noReceiptRows, 'CASE_FUND');
+if (!empty($errors)) {
+    fwrite(STDERR, 'Payment import validation should allow bank account plus amount as trace key' . PHP_EOL);
     exit(1);
 }
 
 $messageMethod = new ReflectionMethod(CaseFund::class, 'paymentImportErrorMessage');
 $messageMethod->setAccessible(true);
-if ($messageMethod->invoke($caseFund, $errors, 'CASE_FUND') !== '导入的不是案款数据') {
+if ($messageMethod->invoke($caseFund, $wrongBizErrors, 'CASE_FUND') !== '导入的不是案款数据') {
     fwrite(STDERR, 'CASE_FUND wrong business type should use case fund specific import error message' . PHP_EOL);
     exit(1);
 }
@@ -136,6 +181,30 @@ if (!empty($errors)) {
     exit(1);
 }
 
+$largeCaseFundPath = '/Users/apple/Documents/苏家屯/缴费登记 暂存款1-4.xls';
+if (file_exists($largeCaseFundPath)) {
+    $largeRows = $parseMethod->invoke($caseFund, file_get_contents($largeCaseFundPath));
+    if (count($largeRows) !== 1119) {
+        fwrite(STDERR, 'Expected 1119 rows from large case fund payment xls, got ' . count($largeRows) . PHP_EOL);
+        exit(1);
+    }
+    $largeRowByNo = [];
+    foreach ($largeRows as $row) {
+        $largeRowByNo[$row['source_row_no']] = $row;
+    }
+    if (($largeRowByNo[69]['payment_time'] ?? '') !== '2026-04-24 15:21:30'
+        || ($largeRowByNo[69]['receipt_no'] ?? '') !== '0001776218'
+        || ($largeRowByNo[69]['bank_serial_no'] ?? '') !== '210001500EZ9A1YLXJK') {
+        fwrite(STDERR, 'Large case fund payment xls should parse SST continued strings' . PHP_EOL);
+        exit(1);
+    }
+    $errors = $validateMethod->invoke($caseFund, $largeRows, 'CASE_FUND');
+    if (!empty($errors)) {
+        fwrite(STDERR, 'Large case fund payment xls should pass CASE_FUND validation: ' . $errors[0] . PHP_EOL);
+        exit(1);
+    }
+}
+
 $wrongLitigationRows = [$rows[0]];
 $wrongLitigationRows[0]['business_type'] = '执行、调解款';
 $errors = $validateMethod->invoke($caseFund, $wrongLitigationRows, 'LITIGATION_FEE');
@@ -145,8 +214,8 @@ if (empty($errors) || $messageMethod->invoke($caseFund, $errors, 'LITIGATION_FEE
 }
 
 $litigationImportRows = $parseMethod->invoke($caseFund, file_get_contents($litigationXlsPath));
-if (count($litigationImportRows) !== 34) {
-    fwrite(STDERR, 'Expected 34 valid litigation fee payment rows after skipping non-detail rows, got ' . count($litigationImportRows) . PHP_EOL);
+if (count($litigationImportRows) !== 99) {
+    fwrite(STDERR, 'Expected 99 valid litigation fee payment rows after parsing continued SST strings, got ' . count($litigationImportRows) . PHP_EOL);
     exit(1);
 }
 $errors = $validateMethod->invoke($caseFund, $litigationImportRows, 'LITIGATION_FEE');

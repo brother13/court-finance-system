@@ -72,7 +72,7 @@ class Voucher extends Common
 
         $num = $this->buildVoucherListQuery($table, $period, $data, $voucherIds)->count();
         $rows = $this->buildVoucherListQuery($table, $period, $data, $voucherIds)
-            ->order('voucher_no asc')
+            ->order('voucher_date asc, voucher_no asc')
             ->page($page, $pagesize)
             ->select();
         $this->fillUserDisplayNames($rows);
@@ -321,6 +321,7 @@ class Voucher extends Common
             return $balanceCheck;
         }
         $amountTotals = $this->sumVoucherAmounts($details);
+        $voucherSummary = $this->normalizeVoucherSummary($data);
 
         $fiscalYear = $this->fiscalYear($period);
         $voucherTable = self::TABLE;
@@ -359,7 +360,7 @@ class Voucher extends Common
                     'voucher_date' => $voucherDate,
                     'voucher_word' => $data['voucher_word'] ?? '记',
                     'voucher_no' => $voucherNo,
-                    'summary' => $data['summary'] ?? '',
+                    'summary' => $voucherSummary,
                     'debit_amount' => $amountTotals['debit_amount'],
                     'credit_amount' => $amountTotals['credit_amount'],
                     'attachment_count' => $data['attachment_count'] ?? 0,
@@ -395,7 +396,7 @@ class Voucher extends Common
                 $voucher = [
                     'voucher_date' => $voucherDate,
                     'voucher_word' => $data['voucher_word'] ?? ($before['voucher_word'] ?? '记'),
-                    'summary' => $data['summary'] ?? '',
+                    'summary' => $voucherSummary,
                     'debit_amount' => $amountTotals['debit_amount'],
                     'credit_amount' => $amountTotals['credit_amount'],
                     'attachment_count' => $data['attachment_count'] ?? 0,
@@ -428,6 +429,9 @@ class Voucher extends Common
                 }
                 $configs = $this->subjectAuxConfigs($line['subject_code']);
                 $auxValues = $line['aux_values'] ?? [];
+                if (($data['source_type'] ?? '') === 'IMPORT') {
+                    $this->ensureImportAuxArchives($auxValues);
+                }
                 $auxCheck = $this->checkRequiredAux($line['subject_code'], $configs, $auxValues);
                 if ($auxCheck['code'] !== self::CODE_SUCCESS) {
                     Db::rollback();
@@ -757,6 +761,21 @@ class Voucher extends Common
         return $this->ok();
     }
 
+    protected function normalizeVoucherSummary($data)
+    {
+        $summary = trim((string)($data['summary'] ?? ''));
+        if ($summary !== '') {
+            return $summary;
+        }
+        foreach (($data['details'] ?? []) as $line) {
+            $lineSummary = trim((string)($line['summary'] ?? ''));
+            if ($lineSummary !== '') {
+                return $lineSummary;
+            }
+        }
+        return '';
+    }
+
     protected function checkVoucherDate($period, $voucherDate)
     {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
@@ -807,6 +826,65 @@ class Voucher extends Common
             }
         }
         return $this->ok();
+    }
+
+    protected function ensureImportAuxArchives($auxValues)
+    {
+        foreach ($auxValues as $aux) {
+            $typeCode = trim((string)($aux['aux_type_code'] ?? ''));
+            if (!in_array($typeCode, ['case_no', 'receipt_no'], true)) {
+                continue;
+            }
+            $archiveCode = trim((string)($aux['aux_value'] ?? ''));
+            if ($archiveCode === '') {
+                continue;
+            }
+            $this->ensureImportAuxType($typeCode);
+            $exists = $this->getdb('fin_aux_archive')->where([
+                'account_set_id' => $this->accountSetId,
+                'aux_type_code' => $typeCode,
+                'archive_code' => $archiveCode,
+                'del_flag' => 0,
+            ])->find();
+            if ($exists) {
+                continue;
+            }
+            $row = [
+                'archive_id' => uuid(),
+                'account_set_id' => $this->accountSetId,
+                'aux_type_code' => $typeCode,
+                'archive_code' => $archiveCode,
+                'archive_name' => trim((string)($aux['aux_label'] ?? '')) ?: $archiveCode,
+                'status' => 1,
+                'remark' => '凭证导入自动建档',
+            ];
+            $this->fillCreate($row);
+            $this->getdb('fin_aux_archive')->insert($row);
+        }
+    }
+
+    protected function ensureImportAuxType($typeCode)
+    {
+        $exists = $this->getdb('fin_aux_type')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $typeCode,
+            'del_flag' => 0,
+        ])->find();
+        if ($exists) {
+            return;
+        }
+        $row = [
+            'aux_type_id' => uuid(),
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $typeCode,
+            'aux_type_name' => $typeCode === 'case_no' ? '案号' : '收据号',
+            'value_source' => 'MANUAL',
+            'required_flag' => $typeCode === 'case_no' ? 1 : 0,
+            'status' => 1,
+            'remark' => '凭证导入自动建档',
+        ];
+        $this->fillCreate($row);
+        $this->getdb('fin_aux_type')->insert($row);
     }
 
     protected function needVerification($configs)

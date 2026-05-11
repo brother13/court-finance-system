@@ -4,8 +4,8 @@ create table sys_audit_log (
     biz_type varchar(50) not null,
     biz_id varchar(64) not null,
     operation varchar(50) not null,
-    before_json text,
-    after_json text,
+    before_json longtext,
+    after_json longtext,
     operator_id varchar(36),
     operator_ip varchar(64),
     created_time datetime not null
@@ -472,6 +472,81 @@ create index idx_case_fund_refund_out_type on fin_case_fund_refund (account_set_
 create index idx_case_fund_refund_case on fin_case_fund_refund (account_set_id, case_no);
 create index idx_case_fund_refund_source_receipt on fin_case_fund_refund (account_set_id, source_receipt_no);
 create index idx_case_fund_refund_voucher on fin_case_fund_refund (account_set_id, voucher_status, voucher_period, voucher_id);
+
+create table fin_case_fund_bank_statement (
+    statement_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    bank_code varchar(50) not null,
+    bank_name varchar(100) not null,
+    transaction_date date not null,
+    transaction_time datetime not null,
+    direction varchar(10) not null,
+    debit_amount decimal(18,2) not null default 0,
+    credit_amount decimal(18,2) not null default 0,
+    balance_amount decimal(18,2) not null default 0,
+    counterparty_account_no varchar(100),
+    counterparty_account_name varchar(200),
+    counterparty_bank_name varchar(255),
+    purpose varchar(500),
+    postscript varchar(500),
+    bank_serial_no varchar(100),
+    reconcile_status varchar(30) not null default 'UNMATCHED',
+    source_file_name varchar(255),
+    source_row_no int,
+    source_fingerprint char(32) not null,
+    source_raw_json longtext,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create unique index uk_case_fund_bank_statement_source on fin_case_fund_bank_statement (account_set_id, source_fingerprint);
+create index idx_case_fund_bank_statement_period on fin_case_fund_bank_statement (account_set_id, period, transaction_date);
+create index idx_case_fund_bank_statement_bank on fin_case_fund_bank_statement (account_set_id, bank_code, transaction_date);
+create index idx_case_fund_bank_statement_serial on fin_case_fund_bank_statement (account_set_id, bank_serial_no);
+create index idx_case_fund_bank_statement_reconcile on fin_case_fund_bank_statement (account_set_id, reconcile_status, transaction_date);
+
+create table fin_case_fund_bank_reconcile (
+    reconcile_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    reconcile_date date not null,
+    statement_id varchar(36),
+    biz_type varchar(30),
+    biz_id varchar(36),
+    biz_no varchar(100),
+    bank_serial_no varchar(100),
+    bank_amount decimal(18,2) not null default 0,
+    biz_amount decimal(18,2) not null default 0,
+    diff_amount decimal(18,2) not null default 0,
+    match_status varchar(30) not null,
+    match_rule varchar(50) not null,
+    matched_by varchar(36),
+    matched_time datetime,
+    bank_direction varchar(10),
+    bank_summary varchar(1000),
+    biz_summary varchar(1000),
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create index idx_case_fund_bank_reconcile_date on fin_case_fund_bank_reconcile (account_set_id, fiscal_year, reconcile_date);
+create index idx_case_fund_bank_reconcile_status on fin_case_fund_bank_reconcile (account_set_id, match_status, reconcile_date);
+create index idx_case_fund_bank_reconcile_statement on fin_case_fund_bank_reconcile (account_set_id, statement_id);
+create index idx_case_fund_bank_reconcile_biz on fin_case_fund_bank_reconcile (account_set_id, biz_type, biz_id);
+create index idx_case_fund_bank_reconcile_serial on fin_case_fund_bank_reconcile (account_set_id, bank_serial_no);
 
 create table fin_case_fund_subject_config (
     config_id varchar(36) primary key,

@@ -23,6 +23,7 @@
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handlePaymentImportFile" />
         <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
+        <el-button v-permission="'case_fund:delete'" type="danger" :icon="Delete" :loading="deleting" @click="handleDeletePayments">删除</el-button>
         <el-button v-permission="'case_fund:subject_config'" :icon="Setting" @click="openSubjectConfig">科目配置</el-button>
         <el-button v-permission="'case_fund:import'" type="primary" :icon="Upload" :loading="importing" @click="choosePaymentImportFile">导入缴费</el-button>
       </div>
@@ -137,7 +138,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Setting, Upload, DocumentChecked } from '@element-plus/icons-vue'
+import { Search, Setting, Upload, DocumentChecked, Delete } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
@@ -152,6 +153,7 @@ const pageSize = ref(50)
 const loading = ref(false)
 const importing = ref(false)
 const generating = ref(false)
+const deleting = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedPaymentIds = ref<string[]>([])
 const subjectConfigVisible = ref(false)
@@ -312,7 +314,7 @@ const handlePaymentImportFile = async (event: Event) => {
   try {
     const contentBase64 = await readFileBase64(file)
     const result = await caseFundApi.importPayments(file.name, contentBase64)
-    ElMessage.success(`导入完成：新增${result.created}条，跳过重复${result.skipped}条`)
+    ElMessage.success(`导入完成：新增${result.created}条，覆盖${result.updated || 0}条，跳过重复${result.skipped}条`)
     page.value = 1
     await load()
   } finally {
@@ -391,6 +393,33 @@ const handleGenerateVoucher = async () => {
     ElMessage.error(e?.message || '生成凭证失败')
   } finally {
     generating.value = false
+  }
+}
+
+const handleDeletePayments = async () => {
+  if (selectedPaymentIds.value.length === 0) {
+    ElMessage.warning('请选择要删除的未制证缴费记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${selectedPaymentIds.value.length} 条缴费记录吗？已制证或已对账的数据不能删除。`,
+      '确认删除缴费记录',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    const result = await caseFundApi.deletePayments(selectedPaymentIds.value)
+    ElMessage.success(`已删除 ${result.deleted_count} 条缴费记录`)
+    selectedPaymentIds.value = []
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '删除缴费记录失败')
+  } finally {
+    deleting.value = false
   }
 }
 

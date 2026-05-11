@@ -22,6 +22,8 @@
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handleRefundImportFile" />
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
+        <el-button v-permission="'case_fund:delete'" type="danger" :icon="Delete" :loading="deleting" @click="handleDeleteRefunds">删除</el-button>
         <el-button v-permission="'case_fund:subject_config'" :icon="Setting" @click="openSubjectConfig">科目配置</el-button>
         <el-button v-permission="'case_fund:import'" type="primary" :icon="Upload" :loading="importing" @click="chooseRefundImportFile">导入退付</el-button>
       </div>
@@ -43,7 +45,14 @@
     </div>
 
     <div class="case-fund-table-shell">
-      <el-table :data="rows" border height="calc(100vh - 292px)" v-loading="loading">
+      <el-table
+        :data="rows"
+        border
+        height="calc(100vh - 292px)"
+        v-loading="loading"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="55" :selectable="isRowSelectable" fixed="left" />
         <el-table-column prop="refund_date" label="出账日期" width="112" fixed="left" />
         <el-table-column prop="case_no" label="案号" min-width="190" fixed="left" show-overflow-tooltip />
         <el-table-column prop="out_type" label="出账种类" width="150" show-overflow-tooltip />
@@ -134,8 +143,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Setting, Upload } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Setting, Upload, DocumentChecked, Delete } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
@@ -149,7 +158,10 @@ const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 const importing = ref(false)
+const generating = ref(false)
+const deleting = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
+const selectedRefundIds = ref<string[]>([])
 const subjectConfigVisible = ref(false)
 const subjectConfigLoading = ref(false)
 const subjectConfigSaving = ref(false)
@@ -354,6 +366,68 @@ const voucherStatusType = (status: string) => {
 const subjectCode = (subject: Subject) => subject.subject_code || subject.subjectCode
 
 const subjectLabel = (subject: Subject) => `${subjectCode(subject)} ${subject.subject_name || subject.subjectName}`
+
+const isRowSelectable = (row: CaseFundRefund) => {
+  return row.voucher_status === 'UNGENERATED'
+}
+
+const handleSelectionChange = (selection: CaseFundRefund[]) => {
+  selectedRefundIds.value = selection.map((row) => row.refund_id)
+}
+
+const handleGenerateVoucher = async () => {
+  if (selectedRefundIds.value.length === 0) {
+    ElMessage.warning('请选择要生成凭证的退付记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要为选中的 ${selectedRefundIds.value.length} 条记录生成凭证吗？`,
+      '确认生成凭证',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  generating.value = true
+  try {
+    const result = await caseFundApi.refundGenerateVoucher(selectedRefundIds.value)
+    ElMessage.success(`成功生成 ${result.generated_count} 张凭证`)
+    selectedRefundIds.value = []
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成凭证失败')
+  } finally {
+    generating.value = false
+  }
+}
+
+const handleDeleteRefunds = async () => {
+  if (selectedRefundIds.value.length === 0) {
+    ElMessage.warning('请选择要删除的未制证退付记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${selectedRefundIds.value.length} 条退付记录吗？已制证或已对账的数据不能删除。`,
+      '确认删除退付记录',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    const result = await caseFundApi.deleteRefunds(selectedRefundIds.value)
+    ElMessage.success(`已删除 ${result.deleted_count} 条退付记录`)
+    selectedRefundIds.value = []
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '删除退付记录失败')
+  } finally {
+    deleting.value = false
+  }
+}
 
 onMounted(load)
 </script>

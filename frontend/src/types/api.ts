@@ -161,6 +161,8 @@ export interface Subject {
   voucher_entry_flag?: number
   status?: number
   remark?: string
+  aux_names?: string[]
+  aux_names_text?: string
   children?: Subject[]
 }
 
@@ -179,6 +181,15 @@ export interface SubjectAuxConfig {
 }
 
 export interface LedgerRow {
+  voucher_id?: string
+  period?: string
+  voucher_date?: string
+  voucher_no?: number
+  subject_code?: string
+  subject_name?: string
+  debit_amount?: string | number
+  credit_amount?: string | number
+  aux_desc?: string
   voucherDate: string
   voucherNo: number
   summary: string
@@ -186,6 +197,35 @@ export interface LedgerRow {
   debitAmount: number
   creditAmount: number
   auxDesc: string
+}
+
+export interface SubjectSummaryRow {
+  subject_code: string
+  subject_name: string
+  level_no: number
+  direction: 'DEBIT' | 'CREDIT' | string
+  debit_amount: string | number
+  credit_amount: string | number
+  balance_amount: string | number
+  entry_count: number
+}
+
+export interface AuxBalanceRow {
+  row_key: string
+  row_type: 'CASE' | 'RECEIPT'
+  subject_code: string
+  subject_name: string
+  direction: 'DEBIT' | 'CREDIT' | string
+  case_no: string
+  receipt_no: string
+  opening_balance_amount: string | number
+  debit_amount: string | number
+  credit_amount: string | number
+  ending_balance_amount: string | number
+  entry_count: number
+  monitor_flag: boolean
+  monitor_count: number
+  children?: AuxBalanceRow[]
 }
 
 export interface CaseFundPayment {
@@ -265,6 +305,53 @@ export interface CaseFundRefund {
   voucher_no?: number
   voucher_period?: string
   voucher_generated_time?: string
+}
+
+export interface CaseFundBankStatement {
+  statement_id: string
+  account_set_id?: string
+  fiscal_year?: number
+  period?: string
+  bank_code: string
+  bank_name?: string
+  transaction_date?: string
+  transaction_time: string
+  direction?: 'DEBIT' | 'CREDIT' | string
+  debit_amount: string | number
+  credit_amount: string | number
+  balance_amount: string | number
+  counterparty_account_no?: string
+  counterparty_account_name?: string
+  counterparty_bank_name?: string
+  purpose?: string
+  postscript?: string
+  bank_serial_no: string
+  reconcile_status?: string
+  source_file_name?: string
+  source_row_no?: number
+}
+
+export interface CaseFundBankReconcile {
+  reconcile_id: string
+  account_set_id?: string
+  fiscal_year?: number
+  period?: string
+  reconcile_date: string
+  statement_id?: string
+  biz_type?: 'PAYMENT' | 'REFUND' | string
+  biz_id?: string
+  biz_no?: string
+  bank_serial_no?: string
+  bank_amount: string | number
+  biz_amount: string | number
+  diff_amount: string | number
+  match_status: string
+  match_rule?: string
+  matched_by?: string
+  matched_time?: string
+  bank_direction?: 'DEBIT' | 'CREDIT' | string
+  bank_summary?: string
+  biz_summary?: string
 }
 
 export interface CaseFundSubjectConfig {

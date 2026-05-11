@@ -3,14 +3,17 @@
     <section class="account-select-header">
       <div>
         <span class="login-kicker">账套选择 · 数据隔离</span>
-        <h1>请选择本次进入的专项资金账套</h1>
+        <h1>请选择本次进入的账套</h1>
         <p>每个款项类型对应独立账套。进入后系统只展示当前账套的数据，严禁跨账套汇总、混合展示。</p>
       </div>
-      <div class="account-select-user">
-        <el-avatar :size="40">{{ context.displayName.slice(0, 1) }}</el-avatar>
-        <div>
-          <strong>{{ context.displayName }}</strong>
-          <span>{{ context.unitName }}</span>
+      <div class="account-select-side">
+        <el-button v-if="context.hasAccountSet" :icon="ArrowLeft" @click="returnToPreviousAccountSet">返回</el-button>
+        <div class="account-select-user">
+          <el-avatar :size="40">{{ context.displayName.slice(0, 1) }}</el-avatar>
+          <div>
+            <strong>{{ context.displayName }}</strong>
+            <span>{{ context.unitName }}</span>
+          </div>
         </div>
       </div>
     </section>
@@ -30,7 +33,6 @@
           <span class="account-set-type">{{ bizTypeMeta(item.biz_type).label }}</span>
           <h2>{{ item.set_name }}</h2>
           <p>{{ bizTypeMeta(item.biz_type).desc }}</p>
-          <small>{{ item.set_code }} · {{ item.enabled_year }}</small>
         </button>
         <div
           v-if="selectedAccountSet?.account_set_id === item.account_set_id"
@@ -62,6 +64,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import { authApi } from '../../api/auth'
 import { useContextStore } from '../../stores/context'
 import type { AccountSet } from '../../types/api'
@@ -90,6 +93,10 @@ const selectCard = (item: AccountSet) => {
 const cancelSelect = () => {
   selectedAccountSet.value = null
   selectedYear.value = 0
+}
+
+const returnToPreviousAccountSet = () => {
+  router.replace('/dashboard')
 }
 
 const confirmEnter = async () => {
@@ -155,6 +162,12 @@ onMounted(async () => {
   display: block;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.account-select-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .account-set-grid {

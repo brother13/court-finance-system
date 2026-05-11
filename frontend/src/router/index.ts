@@ -1,25 +1,29 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import DashboardView from '../views/dashboard/DashboardView.vue'
-import VoucherListView from '../views/voucher/VoucherListView.vue'
-import VoucherEditorView from '../views/voucher/VoucherEditorView.vue'
-import DetailLedgerView from '../views/books/DetailLedgerView.vue'
-import SubjectBalanceView from '../views/books/SubjectBalanceView.vue'
-import PaymentRegisterView from '../views/case-fund/PaymentRegisterView.vue'
-import RefundRegisterView from '../views/case-fund/RefundRegisterView.vue'
-import SubjectManageView from '../views/base/SubjectManageView.vue'
-import OpeningBalanceView from '../views/base/OpeningBalanceView.vue'
-import AuxItemManageView from '../views/base/AuxItemManageView.vue'
-import AuditLogView from '../views/system/AuditLogView.vue'
-import AccountSetManageView from '../views/system/AccountSetManageView.vue'
-import UserManageView from '../views/system/UserManageView.vue'
-import RoleManageView from '../views/system/RoleManageView.vue'
-import RolePermissionView from '../views/system/RolePermissionView.vue'
-import LoginView from '../views/auth/LoginView.vue'
-import AccountSetSelectView from '../views/auth/AccountSetSelectView.vue'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import { useContextStore } from '../stores/context'
 
+const DashboardView = () => import('../views/dashboard/DashboardView.vue')
+const VoucherListView = () => import('../views/voucher/VoucherListView.vue')
+const VoucherEditorView = () => import('../views/voucher/VoucherEditorView.vue')
+const DetailLedgerView = () => import('../views/books/DetailLedgerView.vue')
+const SubjectBalanceView = () => import('../views/books/SubjectBalanceView.vue')
+const SubjectSummaryView = () => import('../views/books/SubjectSummaryView.vue')
+const AuxBalanceView = () => import('../views/books/AuxBalanceView.vue')
+const PaymentRegisterView = () => import('../views/case-fund/PaymentRegisterView.vue')
+const RefundRegisterView = () => import('../views/case-fund/RefundRegisterView.vue')
+const BankStatementView = () => import('../views/case-fund/BankStatementView.vue')
+const SubjectManageView = () => import('../views/base/SubjectManageView.vue')
+const OpeningBalanceView = () => import('../views/base/OpeningBalanceView.vue')
+const AuxItemManageView = () => import('../views/base/AuxItemManageView.vue')
+const AuditLogView = () => import('../views/system/AuditLogView.vue')
+const AccountSetManageView = () => import('../views/system/AccountSetManageView.vue')
+const UserManageView = () => import('../views/system/UserManageView.vue')
+const RoleManageView = () => import('../views/system/RoleManageView.vue')
+const RolePermissionView = () => import('../views/system/RolePermissionView.vue')
+const LoginView = () => import('../views/auth/LoginView.vue')
+const AccountSetSelectView = () => import('../views/auth/AccountSetSelectView.vue')
+
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     { path: '/', redirect: '/dashboard' },
     { path: '/login', component: LoginView, meta: { public: true } },
@@ -31,8 +35,11 @@ const router = createRouter({
     { path: '/vouchers/detail/:period/:voucherId', component: VoucherEditorView, meta: { permission: 'voucher:view', mode: 'view' } },
     { path: '/books/detail-ledger', component: DetailLedgerView, meta: { permission: 'menu:book:detail_ledger' } },
     { path: '/books/subject-balance', component: SubjectBalanceView, meta: { permission: 'menu:book:subject_balance' } },
+    { path: '/books/subject-summary', component: SubjectSummaryView, meta: { permission: 'menu:book:subject_summary' } },
+    { path: '/books/aux-balance', component: AuxBalanceView, meta: { permission: 'menu:book:aux_balance' } },
     { path: '/case-fund/payments', component: PaymentRegisterView, meta: { permission: 'menu:case_fund:payment' } },
     { path: '/case-fund/refunds', component: RefundRegisterView, meta: { permission: 'menu:case_fund:refund' } },
+    { path: '/case-fund/bank-statements', component: BankStatementView, meta: { permission: 'menu:case_fund:bank_statement' } },
     { path: '/base/subjects', component: SubjectManageView, meta: { permission: 'menu:base:subject' } },
     { path: '/base/opening-balances', component: OpeningBalanceView, meta: { permission: 'menu:base:opening' } },
     { path: '/base/aux-items', component: AuxItemManageView, meta: { permission: 'menu:base:aux' } },
@@ -60,7 +67,7 @@ router.beforeEach((to) => {
   if (!to.meta.public && !to.meta.accountSelect && (!context.hasAccountSet || context.year <= 0)) {
     return '/select-account-set'
   }
-  if (to.meta.accountSelect && context.hasAccountSet && context.year > 0) {
+  if (to.meta.accountSelect && context.hasAccountSet && context.year > 0 && to.query.switch !== '1') {
     return '/dashboard'
   }
   if (!to.meta.public && to.meta.permission && !context.hasPermission(String(to.meta.permission))) {

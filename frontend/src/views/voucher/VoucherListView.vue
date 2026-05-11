@@ -681,6 +681,8 @@ const buildVouchersFromExcel = (rows: any[][]): { vouchers: any[]; errors: strin
         { col: '职员编码', labelCol: '职员名称', type: 'employee' },
         { col: '部门编码', labelCol: '部门名称', type: 'department' },
         { col: '项目编码', labelCol: '项目名称', type: 'project' },
+        { col: '案号', labelCol: '案号', type: 'case_no' },
+        { col: '收据号', labelCol: '收据号', type: 'receipt_no' },
       ]
 
       auxMappings.forEach(({ col, labelCol, type }) => {
@@ -710,13 +712,14 @@ const buildVouchersFromExcel = (rows: any[][]): { vouchers: any[]; errors: strin
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
       errors.push(`凭证 ${vn}（${dateStr}）借贷不平衡：借方 ${totalDebit.toFixed(2)} ≠ 贷方 ${totalCredit.toFixed(2)}`)
     }
+    const voucherSummary = details.find((detail) => String(detail.summary || '').trim() !== '')?.summary || ''
 
     vouchers.push({
       period,
       voucher_date: dateStr,
       voucher_word: '记',
       voucher_no: voucherNo,
-      summary: '',
+      summary: voucherSummary,
       attachment_count: parseInt(firstLine[colMap['附件数']] || '0') || 0,
       prepared_by_name: String(firstLine[colMap['制单人']] || '').trim(),
       audit_by_name: String(firstLine[colMap['审核人']] || '').trim(),

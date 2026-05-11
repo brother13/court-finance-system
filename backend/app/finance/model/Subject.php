@@ -53,7 +53,33 @@ class Subject extends Common
             $where['subject_code|subject_name'] = ['like', "%{$key}%"];
         }
         $rows = $this->getdb(self::TABLE)->where($where)->field(self::FIELD)->order('subject_code asc')->select();
+        $this->appendSubjectAuxNames($rows);
         return $this->ok($rows, 'OK', count($rows));
+    }
+
+    protected function appendSubjectAuxNames(&$rows)
+    {
+        if (empty($rows)) {
+            return;
+        }
+        $auxTypes = $this->getdb('fin_aux_type')->where($this->accountWhere())->select();
+        $auxNameByCode = [];
+        foreach ($auxTypes as $type) {
+            $auxNameByCode[$type['aux_type_code']] = $type['aux_type_name'];
+        }
+        $configRows = $this->getdb('fin_subject_aux_config')
+            ->where($this->accountWhere())
+            ->order('aux_type_code asc')
+            ->select();
+        $auxBySubject = [];
+        foreach ($configRows as $config) {
+            $name = $auxNameByCode[$config['aux_type_code']] ?? $config['aux_type_code'];
+            $auxBySubject[$config['subject_code']][] = $name;
+        }
+        foreach ($rows as &$row) {
+            $row['aux_names'] = $auxBySubject[$row['subject_code']] ?? [];
+            $row['aux_names_text'] = empty($row['aux_names']) ? '' : implode('、', $row['aux_names']);
+        }
     }
 
     public function getInfo($data = [])

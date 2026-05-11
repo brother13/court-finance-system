@@ -193,7 +193,7 @@
             <el-option
               v-for="archive in auxArchives[config.aux_type_code]"
               :key="archive.archive_code"
-              :label="`${archive.archive_code} ${archive.archive_name}`"
+              :label="archive.archive_name || archive.archive_code"
               :value="archive.archive_code"
             />
           </el-select>
@@ -329,6 +329,22 @@ const loadAuxArchives = async (code: string) => {
   if (auxArchives[code]) return
   const result = await baseApi.auxArchives(code)
   auxArchives[code] = result.items || []
+}
+
+const ensureSelectedAuxArchive = (code: string, value: string, label: string) => {
+  if (!code || !value) return
+  if (!auxArchives[code]) auxArchives[code] = []
+  const existing = auxArchives[code].find((item) => item.archive_code === value)
+  if (existing) {
+    if (label && (!existing.archive_name || existing.archive_name === existing.archive_code)) {
+      existing.archive_name = label
+    }
+    return
+  }
+  auxArchives[code].unshift({
+    archive_code: value,
+    archive_name: label || value
+  })
 }
 
 const lineAuxConfigs = (line: VoucherLine | null) => {
@@ -622,16 +638,19 @@ async function loadVoucherDetail(period: string, voucherId: string) {
     const auxArr = (item.aux_values || item.auxValues || []) as any[]
     const auxValues: Record<string, string> = {}
     const auxLabels: Record<string, string> = {}
+    const selectedAuxEntries: Array<{ code: string; value: string; label: string }> = []
     auxArr.forEach((aux: any) => {
       const code = aux.aux_type_code || aux.auxTypeCode
       const value = aux.aux_value || aux.auxValue
       const label = aux.aux_label || aux.auxLabel
       if (code) auxValues[code] = value || ''
       if (code) auxLabels[code] = label || ''
+      if (code && value) selectedAuxEntries.push({ code, value, label: label || value })
     })
     if (subjectCode) {
       await loadSubjectConfig(subjectCode)
     }
+    selectedAuxEntries.forEach(({ code, value, label }) => ensureSelectedAuxArchive(code, value, label))
     lines.push({
       uid: `${item.detail_id || item.detailId || Date.now()}-${Math.random()}`,
       summary: item.summary || '',

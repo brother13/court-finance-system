@@ -30,12 +30,12 @@
     <div class="panel-header">
       <strong>
         <el-icon><Tickets /></el-icon>
-        明细账记录 · {{ context.period }}
+        明细账记录
       </strong>
       <span class="muted">共 {{ rows.length }} 条记录 · 借方合计 ¥ {{ totalDebit.toFixed(2) }} · 贷方合计 ¥ {{ totalCredit.toFixed(2) }}</span>
     </div>
     <div class="panel-body compact">
-      <el-table :data="rows" height="calc(100vh - 320px)">
+      <el-table :data="rows" height="calc(100vh - 320px)" @row-dblclick="openVoucherDetail">
         <el-table-column prop="voucher_date" label="日期" width="120" align="center" />
         <el-table-column prop="voucher_no" label="凭证号" width="100" align="center">
           <template #default="{ row }">
@@ -65,7 +65,7 @@
         </el-table-column>
         <el-table-column prop="aux_desc" label="辅助核算" min-width="200">
           <template #default="{ row }">
-            <span v-if="row.aux_desc">{{ row.aux_desc }}</span>
+            <span v-if="formatAuxDesc(row.aux_desc)">{{ formatAuxDesc(row.aux_desc) }}</span>
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
@@ -75,33 +75,83 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download, Refresh, Search, Tickets } from '@element-plus/icons-vue'
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 
 const context = useContextStore()
-const periodStart = `${context.period}-01`
-const lastDay = new Date(Number(context.period.slice(0, 4)), Number(context.period.slice(5, 7)), 0).getDate()
-const periodEnd = `${context.period}-${String(lastDay).padStart(2, '0')}`
-const dateRange = ref<[string, string]>([periodStart, periodEnd])
+const route = useRoute()
+const router = useRouter()
+const selectedPeriod = ref(String(route.query.period || context.period))
+const periodMonthRange = (period: string): [string, string] => {
+  const now = new Date()
+  const matched = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period)
+  const year = matched ? Number(matched[1]) : now.getFullYear()
+  const month = matched ? Number(matched[2]) : 1
+  const targetPeriod = `${year}-${String(month).padStart(2, '0')}`
+  const lastDay = new Date(year, month, 0).getDate()
+  return [`${targetPeriod}-01`, `${targetPeriod}-${String(lastDay).padStart(2, '0')}`]
+}
+const dateRange = ref<[string, string]>(periodMonthRange(selectedPeriod.value))
 const query = reactive({ subjectCode: '' })
 const rows = ref<any[]>([])
 
 const totalDebit = computed(() => rows.value.reduce((sum, row) => sum + (Number(row.debit_amount) || 0), 0))
 const totalCredit = computed(() => rows.value.reduce((sum, row) => sum + (Number(row.credit_amount) || 0), 0))
 
+const formatAuxDesc = (auxDesc?: string) => {
+  return String(auxDesc || '')
+    .split(/[;；/]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const index = part.indexOf(':')
+      return (index >= 0 ? part.slice(index + 1) : part).trim()
+    })
+    .filter(Boolean)
+    .join('；')
+}
+
 const load = async () => {
   rows.value = await booksApi.detailLedger({
-    period: context.period,
+    period: selectedPeriod.value,
     subjectCode: query.subjectCode,
     startDate: dateRange.value[0],
     endDate: dateRange.value[1]
   }) as any[]
 }
 
+const applyRouteQuery = () => {
+  selectedPeriod.value = String(route.query.period || context.period)
+  query.subjectCode = String(route.query.subject_code || '')
+  const range = periodMonthRange(selectedPeriod.value)
+  dateRange.value = [
+    String(route.query.start_date || range[0]),
+    String(route.query.end_date || range[1])
+  ]
+}
+
+const openVoucherDetail = (row: any) => {
+  if (!row.voucher_id || !row.period) {
+    ElMessage.warning('当前明细缺少凭证信息,无法打开凭证')
+    return
+  }
+  router.push({ path: `/vouchers/detail/${row.period}/${row.voucher_id}` })
+}
+
 const exportData = () => {
   ElMessage.info('导出功能开发中,可对接 Excel 导出接口')
 }
+
+watch(
+  () => route.query,
+  async () => {
+    applyRouteQuery()
+    await load()
+  },
+  { immediate: true }
+)
 </script>

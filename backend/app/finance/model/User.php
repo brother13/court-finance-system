@@ -50,7 +50,7 @@ class User extends Common
         $total = $this->buildListQuery($data)->count();
         $rows = $this->buildListQuery($data)
             ->field('u.user_id,u.unit_id,u.username,u.real_name,u.mobile,u.email,u.status,u.must_change_password,u.last_login_time,u.created_time,unit.unit_name')
-            ->order('u.created_time desc,u.username asc')
+            ->order('u.created_time asc,u.username asc')
             ->page($page, $pagesize)
             ->select();
         foreach ($rows as &$row) {

@@ -25,17 +25,58 @@ class Auth extends Common
         if (!empty($this->userid) && !in_array($this->userid, ['system', 'anonymous'])) {
             $allowed = $this->userAccountSets($this->userid);
             $allowed = $this->fillAvailableYears($allowed);
+            $allowed = $this->appendAccountSetPeriodFields($allowed);
             return $this->ok($allowed);
         }
 
         $rows = Db::name('fin_account_set')
             ->where(['status' => 1, 'del_flag' => 0])
-            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,remark')
+            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,enabled_period,remark')
             ->order('biz_type asc,set_code asc')
             ->select();
 
         $rows = $this->fillAvailableYears($rows);
+        $rows = $this->appendAccountSetPeriodFields($rows);
         return $this->ok($rows);
+    }
+
+    protected function appendAccountSetPeriodFields($accountSets)
+    {
+        foreach ($accountSets as &$accountSet) {
+            $enabledPeriod = $this->normalizeEnabledPeriod($accountSet['enabled_period'] ?? '', $accountSet['enabled_year'] ?? '');
+            $currentPeriod = $this->currentPeriodValue($enabledPeriod, $this->latestVoucherDate($accountSet['account_set_id']));
+            $accountSet['enabled_period'] = $enabledPeriod;
+            $accountSet['current_period'] = $currentPeriod;
+        }
+        return $accountSets;
+    }
+
+    protected function normalizeEnabledPeriod($enabledPeriod, $enabledYear)
+    {
+        if (preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', (string)$enabledPeriod)) {
+            return $enabledPeriod;
+        }
+        return ((string)$enabledYear) . '-01';
+    }
+
+    protected function currentPeriodValue($enabledPeriod, $latestVoucherDate)
+    {
+        if (!empty($latestVoucherDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $latestVoucherDate)) {
+            return substr($latestVoucherDate, 0, 7);
+        }
+        return $enabledPeriod;
+    }
+
+    protected function latestVoucherDate($accountSetId)
+    {
+        try {
+            return Db::name('fin_voucher')->where([
+                'account_set_id' => $accountSetId,
+                'del_flag' => 0,
+            ])->max('voucher_date') ?: '';
+        } catch (\Exception $e) {
+            return '';
+        }
     }
 
     protected function fillAvailableYears($accountSets)

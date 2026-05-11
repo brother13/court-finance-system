@@ -9,7 +9,7 @@
         <el-option v-for="item in periodOptions" :key="item" :label="item" :value="item" />
       </el-select>
       <el-button :icon="Refresh" @click="load">刷新</el-button>
-      <el-button v-permission="'base:edit'" type="primary" :icon="Check" :loading="saving" @click="save">保存期初</el-button>
+      <el-button v-permission="['opening:save', 'base:edit']" type="primary" :icon="Check" :loading="saving" @click="save">保存期初</el-button>
     </div>
   </div>
 
@@ -113,7 +113,7 @@
       </div>
 
       <div class="filter-row aux-editor-toolbar">
-        <el-button v-permission="'base:edit'" type="primary" :icon="Plus" @click="addAuxRow">新增明细</el-button>
+        <el-button v-permission="['opening:save', 'base:edit']" type="primary" :icon="Plus" @click="addAuxRow">新增明细</el-button>
         <el-button :icon="Refresh" @click="loadAuxOpening">刷新</el-button>
       </div>
 
@@ -154,14 +154,14 @@
         </el-table-column>
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ $index }">
-            <el-button v-permission="'base:edit'" link type="danger" @click="auxRows.splice($index, 1)">删除</el-button>
+            <el-button v-permission="['opening:save', 'base:edit']" link type="danger" @click="auxRows.splice($index, 1)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </template>
     <template #footer>
       <el-button @click="auxDrawerVisible = false">取消</el-button>
-      <el-button v-permission="'base:edit'" type="primary" :loading="auxSaving" @click="saveAuxOpening">保存辅助期初</el-button>
+      <el-button v-permission="['opening:save', 'base:edit']" type="primary" :loading="auxSaving" @click="saveAuxOpening">保存辅助期初</el-button>
     </template>
   </el-drawer>
 </template>

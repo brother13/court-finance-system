@@ -17,11 +17,31 @@ const currentMonthPeriod = () => {
 }
 
 const periodYear = (period: string) => parseInt(period.substring(0, 4), 10)
+const selectedYearMonthPeriod = (year: number) => {
+  const now = new Date()
+  return `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+const validPeriod = (period: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(period)
+
+const periodForSelectedYear = (accountSet: AccountSet, year?: number) => {
+  const selectedYear = year || accountSet.enabled_year || periodYear(currentMonthPeriod())
+  const currentPeriod = accountSet.current_period || ''
+  if (currentPeriod && periodYear(currentPeriod) === selectedYear) {
+    return currentPeriod
+  }
+  const enabledPeriod = accountSet.enabled_period || ''
+  const defaultPeriod = selectedYearMonthPeriod(selectedYear)
+  if (enabledPeriod && periodYear(enabledPeriod) === selectedYear && defaultPeriod < enabledPeriod) {
+    return enabledPeriod
+  }
+  return defaultPeriod
+}
 
 export const useContextStore = defineStore('context', {
   state: () => {
     const auth = loadAuth()
-    const period = auth.period || (auth as any).current_period || (auth as any).enabled_period || currentMonthPeriod()
+    const savedPeriod = auth.period || (auth as any).current_period || (auth as any).enabled_period || currentMonthPeriod()
+    const period = validPeriod(savedPeriod) ? savedPeriod : currentMonthPeriod()
     return {
       accountSetId: auth.account_set_id || '00000000-0000-0000-0000-000000000101',
       accountSetCode: (auth as any).set_code || '',
@@ -76,7 +96,7 @@ export const useContextStore = defineStore('context', {
       this.accountSetCode = accountSet.set_code
       this.accountSetName = accountSet.set_name
       this.bizType = accountSet.biz_type
-      const selectedPeriod = accountSet.current_period || accountSet.enabled_period || `${year || accountSet.enabled_year || periodYear(currentMonthPeriod())}-01`
+      const selectedPeriod = periodForSelectedYear(accountSet, year)
       this.period = selectedPeriod
       this.year = year || periodYear(selectedPeriod)
       localStorage.setItem(STORAGE_KEY, JSON.stringify({

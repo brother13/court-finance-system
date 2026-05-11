@@ -322,7 +322,7 @@ class Common
                     'a.status' => 1,
                     'a.del_flag' => 0,
                 ])
-                ->field('a.account_set_id,a.set_code,a.set_name,a.biz_type,a.enabled_year,a.remark')
+                ->field('a.account_set_id,a.set_code,a.set_name,a.biz_type,a.enabled_year,a.enabled_period,a.remark')
                 ->order('a.biz_type asc,a.set_code asc')
                 ->select();
         } catch (\Exception $e) {

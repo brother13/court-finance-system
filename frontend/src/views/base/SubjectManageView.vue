@@ -46,6 +46,12 @@
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">{{ Number(row.status) === 1 ? '正常' : '停用' }}</template>
         </el-table-column>
+        <el-table-column label="辅助核算项" min-width="180">
+          <template #default="{ row }">
+            <span v-if="formatSubjectAuxNames(row)">{{ formatSubjectAuxNames(row) }}</span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="150" fixed="right" align="center">
           <template #default="{ row }">
             <el-button v-permission="'base:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -247,6 +253,12 @@ const auxTypeOptions = computed(() => {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 })
+
+const formatSubjectAuxNames = (row: Subject) => {
+  const names = Array.isArray(row.aux_names) ? row.aux_names : []
+  if (names.length > 0) return names.join('、')
+  return row.aux_names_text || ''
+}
 
 const codeRuleHint = computed(() => {
   const parentCode = form.parent_code || ''

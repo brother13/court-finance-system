@@ -9,6 +9,8 @@ class CaseFund extends Common
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
     const TABLE_REFUND = 'fin_case_fund_refund';
+    const TABLE_BANK_STATEMENT = 'fin_case_fund_bank_statement';
+    const TABLE_BANK_RECONCILE = 'fin_case_fund_bank_reconcile';
     const TABLE_SUBJECT_CONFIG = 'fin_case_fund_subject_config';
     const PAYMENT_FIELD = [
         'payment_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'confirmed_flag',
@@ -38,6 +40,22 @@ class CaseFund extends Common
         'debit_subject_code', 'credit_subject_code', 'created_by', 'created_time',
         'updated_by', 'updated_time', 'del_flag', 'version', 'remark',
     ];
+    const BANK_STATEMENT_FIELD = [
+        'statement_id', 'account_set_id', 'fiscal_year', 'period', 'bank_code', 'bank_name',
+        'transaction_date', 'transaction_time', 'direction', 'debit_amount', 'credit_amount',
+        'balance_amount', 'counterparty_account_no', 'counterparty_account_name',
+        'counterparty_bank_name', 'purpose', 'postscript', 'bank_serial_no',
+        'reconcile_status', 'source_file_name', 'source_row_no', 'source_fingerprint',
+        'source_raw_json', 'created_by', 'created_time', 'updated_by', 'updated_time',
+        'del_flag', 'version', 'remark',
+    ];
+    const BANK_RECONCILE_FIELD = [
+        'reconcile_id', 'account_set_id', 'fiscal_year', 'period', 'reconcile_date',
+        'statement_id', 'biz_type', 'biz_id', 'biz_no', 'bank_serial_no', 'bank_amount',
+        'biz_amount', 'diff_amount', 'match_status', 'match_rule', 'matched_by',
+        'matched_time', 'bank_direction', 'bank_summary', 'biz_summary',
+        'created_by', 'created_time', 'updated_by', 'updated_time', 'del_flag', 'version', 'remark',
+    ];
 
     public function index($action = '', $data = [])
     {
@@ -48,10 +66,26 @@ class CaseFund extends Common
                 return $this->paymentImport($data);
             case 'paymentGenerateVoucher':
                 return $this->paymentGenerateVoucher($data);
+            case 'paymentDelete':
+                return $this->paymentDelete($data);
             case 'refundList':
                 return $this->refundList($data);
             case 'refundImport':
                 return $this->refundImport($data);
+            case 'refundGenerateVoucher':
+                return $this->refundGenerateVoucher($data);
+            case 'refundDelete':
+                return $this->refundDelete($data);
+            case 'bankStatementList':
+                return $this->bankStatementList($data);
+            case 'bankStatementImport':
+                return $this->bankStatementImport($data);
+            case 'bankStatementDelete':
+                return $this->bankStatementDelete($data);
+            case 'bankReconcileRun':
+                return $this->bankReconcileRun($data);
+            case 'bankReconcileList':
+                return $this->bankReconcileList($data);
             case 'subjectConfigList':
                 return $this->subjectConfigList($data);
             case 'subjectConfigSave':
@@ -100,7 +134,7 @@ class CaseFund extends Common
         }
         $total = $totalQuery->count();
         $rows = $query->field(self::PAYMENT_FIELD)
-            ->order('payment_date desc, source_row_no asc')
+            ->order('payment_date asc, source_row_no asc')
             ->page($page, $pagesize)
             ->select();
         return $this->ok(['items' => $rows, 'total' => $total], 'OK', $total);
@@ -136,34 +170,33 @@ class CaseFund extends Common
             return $this->error($this->paymentImportErrorMessage($errors, $bizType), $errors);
         }
 
-        $fingerprints = [];
-        foreach ($rows as $row) {
-            $fingerprints[] = $row['source_fingerprint'];
-        }
-        $existing = [];
-        if (!empty($fingerprints)) {
-            $existingRows = $this->getdb(self::TABLE_PAYMENT)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->select();
-            foreach ($existingRows as $row) {
-                $existing[$row['source_fingerprint']] = true;
-            }
-        }
+        $existing = $this->loadExistingPaymentsForImport($rows);
 
         $created = 0;
+        $updated = 0;
         $skipped = 0;
         $seen = [];
         Db::startTrans();
         try {
             foreach ($rows as $row) {
-                $fingerprint = $row['source_fingerprint'];
-                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
+                $duplicateKey = $this->paymentImportDuplicateKey($row);
+                if ($duplicateKey !== '' && isset($seen[$duplicateKey])) {
                     $skipped++;
-                    $seen[$fingerprint] = true;
                     continue;
                 }
-                $seen[$fingerprint] = true;
+                if ($duplicateKey !== '') {
+                    $seen[$duplicateKey] = true;
+                }
+                if ($duplicateKey !== '' && isset($existing[$duplicateKey])) {
+                    $existingRow = $existing[$duplicateKey];
+                    if ($existingRow['voucher_status'] !== 'UNGENERATED') {
+                        $skipped++;
+                        continue;
+                    }
+                    $this->updateExistingPaymentFromImport($existingRow, $row, $data);
+                    $updated++;
+                    continue;
+                }
                 $insert = $row;
                 $insert['payment_id'] = uuid();
                 $insert['account_set_id'] = $this->accountSetId;
@@ -182,6 +215,7 @@ class CaseFund extends Common
                 'filename' => $data['filename'] ?? '',
                 'total' => count($rows),
                 'created' => $created,
+                'updated' => $updated,
                 'skipped' => $skipped,
             ]);
             Db::commit();
@@ -193,6 +227,7 @@ class CaseFund extends Common
         return $this->ok([
             'total' => count($rows),
             'created' => $created,
+            'updated' => $updated,
             'skipped' => $skipped,
         ], '导入成功', count($rows));
     }
@@ -252,7 +287,7 @@ class CaseFund extends Common
         $total = $totalQuery->count();
         $totalAmount = $amountQuery->sum('refund_amount');
         $rows = $query->field(self::REFUND_FIELD)
-            ->order('refund_date desc, source_row_no asc')
+            ->order('refund_date asc, source_row_no asc')
             ->page($page, $pagesize)
             ->select();
         return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
@@ -347,6 +382,417 @@ class CaseFund extends Common
             'created' => $created,
             'skipped' => $skipped,
         ], '导入成功', count($rows));
+    }
+
+    public function bankStatementList($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:view');
+        if ($auth) {
+            return $auth;
+        }
+        $page = $data['page'] ?? input('param.page', 1);
+        $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        if (!empty($data['period'])) {
+            $where['period'] = $data['period'];
+        }
+        if (!empty($data['bank_code'])) {
+            $where['bank_code'] = $data['bank_code'];
+        }
+        if (!empty($data['direction'])) {
+            $where['direction'] = $data['direction'];
+        }
+        if (!empty($data['date_start'])) {
+            $where['transaction_date'][] = ['>=', $data['date_start']];
+        }
+        if (!empty($data['date_end'])) {
+            $where['transaction_date'][] = ['<=', $data['date_end']];
+        }
+        $keyword = trim($data['keyword'] ?? '');
+        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
+        $totalQuery = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
+        $debitQuery = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
+        $creditQuery = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
+        foreach ([$query, $totalQuery, $debitQuery, $creditQuery] as $item) {
+            if ($keyword !== '') {
+                $item->where('counterparty_account_no|counterparty_account_name|counterparty_bank_name|purpose|postscript|bank_serial_no', 'like', '%' . $keyword . '%');
+            }
+        }
+
+        $total = $totalQuery->count();
+        $debitTotal = $debitQuery->sum('debit_amount');
+        $creditTotal = $creditQuery->sum('credit_amount');
+        $rows = $query->field(self::BANK_STATEMENT_FIELD)
+            ->order('transaction_time asc, source_row_no asc')
+            ->page($page, $pagesize)
+            ->select();
+        return $this->ok([
+            'items' => $rows,
+            'total' => $total,
+            'debit_amount' => $debitTotal,
+            'credit_amount' => $creditTotal,
+            'banks' => $this->supportedBankStatementBanks(),
+        ], 'OK', $total);
+    }
+
+    public function bankStatementImport($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:import');
+        if ($auth) {
+            return $auth;
+        }
+        $bankCode = trim((string)($data['bank_code'] ?? ''));
+        $banks = $this->supportedBankStatementBanks();
+        if ($bankCode === '' || !isset($banks[$bankCode])) {
+            return $this->error('请选择正确的银行');
+        }
+        $rows = $data['rows'] ?? [];
+        if (!is_array($rows) || empty($rows)) {
+            return $this->error('导入文件没有银行对账单数据');
+        }
+
+        $parsedRows = [];
+        $errors = [];
+        foreach ($rows as $index => $row) {
+            $normalized = $this->normalizeBankStatementRow($row, $bankCode, $banks[$bankCode], $index + 1);
+            if (!empty($normalized['error'])) {
+                $errors[] = $normalized['error'];
+                continue;
+            }
+            $parsedRows[] = $normalized;
+        }
+        if (!empty($errors)) {
+            return $this->error('导入校验失败', $errors);
+        }
+        if (empty($parsedRows)) {
+            return $this->error('导入文件没有可保存的银行对账单数据');
+        }
+
+        $fingerprints = [];
+        foreach ($parsedRows as $row) {
+            $fingerprints[] = $row['source_fingerprint'];
+        }
+        $existing = [];
+        $existingRows = $this->getdb(self::TABLE_BANK_STATEMENT)->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->select();
+        foreach ($existingRows as $row) {
+            $existing[$row['source_fingerprint']] = true;
+        }
+
+        $created = 0;
+        $skipped = 0;
+        $seen = [];
+        Db::startTrans();
+        try {
+            foreach ($parsedRows as $row) {
+                $fingerprint = $row['source_fingerprint'];
+                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
+                    $skipped++;
+                    $seen[$fingerprint] = true;
+                    continue;
+                }
+                $seen[$fingerprint] = true;
+                $insert = $row;
+                $insert['statement_id'] = uuid();
+                $insert['account_set_id'] = $this->accountSetId;
+                $insert['source_file_name'] = $data['filename'] ?? '';
+                $insert['reconcile_status'] = 'UNMATCHED';
+                $insert['remark'] = $data['remark'] ?? '';
+                $this->fillCreate($insert);
+                $this->getdb(self::TABLE_BANK_STATEMENT)->insert($insert);
+                $created++;
+            }
+            $this->logAudit('CASE_FUND_BANK_STATEMENT', 'IMPORT', 'IMPORT', null, [
+                'bank_code' => $bankCode,
+                'bank_name' => $banks[$bankCode],
+                'filename' => $data['filename'] ?? '',
+                'total' => count($parsedRows),
+                'created' => $created,
+                'skipped' => $skipped,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('保存银行对账单失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'total' => count($parsedRows),
+            'created' => $created,
+            'skipped' => $skipped,
+        ], '导入成功', count($parsedRows));
+    }
+
+    public function paymentDelete($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $ids = $this->normalizeIdList($data['payment_ids'] ?? ($data['ids'] ?? []));
+        if (empty($ids)) {
+            return $this->error('请选择要删除的缴费记录');
+        }
+        return $this->deleteCaseFundBusinessRows(
+            self::TABLE_PAYMENT,
+            'payment_id',
+            $ids,
+            'PAYMENT',
+            'CASE_FUND_PAYMENT',
+            '缴费记录'
+        );
+    }
+
+    public function refundDelete($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $ids = $this->normalizeIdList($data['refund_ids'] ?? ($data['ids'] ?? []));
+        if (empty($ids)) {
+            return $this->error('请选择要删除的退付记录');
+        }
+        return $this->deleteCaseFundBusinessRows(
+            self::TABLE_REFUND,
+            'refund_id',
+            $ids,
+            'REFUND',
+            'CASE_FUND_REFUND',
+            '退付记录'
+        );
+    }
+
+    public function bankStatementDelete($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $ids = $this->normalizeIdList($data['statement_ids'] ?? ($data['ids'] ?? []));
+        if (empty($ids)) {
+            return $this->error('请选择要删除的银行对账单流水');
+        }
+
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        $where['reconcile_status'] = 'UNMATCHED';
+        $rows = $this->getdb(self::TABLE_BANK_STATEMENT)
+            ->where($where)
+            ->where('statement_id', 'in', $ids)
+            ->field(self::BANK_STATEMENT_FIELD)
+            ->select();
+        if (count($rows) !== count($ids)) {
+            return $this->error('只能删除未对账的银行对账单流水');
+        }
+        $reconcileCount = $this->getdb(self::TABLE_BANK_RECONCILE)->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->where('statement_id', 'in', $ids)->count();
+        if ((int)$reconcileCount > 0) {
+            return $this->error('只能删除未对账的银行对账单流水');
+        }
+
+        $update = ['del_flag' => 1];
+        $this->fillUpdate($update);
+        Db::startTrans();
+        try {
+            $this->getdb(self::TABLE_BANK_STATEMENT)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('statement_id', 'in', $ids)->update($update);
+            $this->logAudit('CASE_FUND_BANK_STATEMENT', 'DELETE', 'DELETE', $rows, [
+                'statement_ids' => $ids,
+                'deleted_count' => count($rows),
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('删除银行对账单流水失败：' . $e->getMessage());
+        }
+
+        return $this->ok(['deleted_count' => count($rows)], '删除成功', count($rows));
+    }
+
+    public function bankReconcileRun($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:reconcile');
+        if ($auth) {
+            return $auth;
+        }
+        $bankCode = trim((string)($data['bank_code'] ?? ''));
+        $dateStart = trim((string)($data['date_start'] ?? ''));
+        $dateEnd = trim((string)($data['date_end'] ?? ''));
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        if ($bankCode !== '') {
+            $where['bank_code'] = $bankCode;
+        }
+        if ($dateStart !== '') {
+            $where['transaction_date'][] = ['>=', $dateStart];
+        }
+        if ($dateEnd !== '') {
+            $where['transaction_date'][] = ['<=', $dateEnd];
+        }
+
+        $statements = $this->getdb(self::TABLE_BANK_STATEMENT)
+            ->where($where)
+            ->field(self::BANK_STATEMENT_FIELD)
+            ->order('transaction_time asc, source_row_no asc')
+            ->select();
+
+        $statementIds = [];
+        foreach ($statements as $statement) {
+            $statementIds[] = $statement['statement_id'];
+        }
+
+        $resultRows = [];
+        $matchedBiz = [];
+        $statementStatuses = [];
+
+        foreach ($statements as $statement) {
+            $direction = $statement['direction'];
+            $bankAmount = $direction === 'CREDIT' ? $statement['credit_amount'] : $statement['debit_amount'];
+            $bankCents = $this->decimalToCents($bankAmount);
+            if ($direction === 'CREDIT') {
+                $candidates = $this->paymentCandidatesByBankSerial($statement['bank_serial_no']);
+                $bizType = 'PAYMENT';
+            } else {
+                $candidates = $this->refundCandidatesByOutOrderNo($statement['bank_serial_no']);
+                $bizType = 'REFUND';
+            }
+
+            if (empty($candidates)) {
+                $status = 'BANK_ONLY';
+                $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, null, $status, $bankCents, 0);
+                $statementStatuses[$statement['statement_id']] = $status;
+                continue;
+            }
+
+            if (count($candidates) > 1) {
+                foreach ($candidates as $candidate) {
+                    $bizCents = $this->bankReconcileBizAmountCents($bizType, $candidate);
+                    $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, 'DUPLICATE', $bankCents, $bizCents);
+                    $matchedBiz[$bizType . ':' . $this->bankReconcileBizId($bizType, $candidate)] = true;
+                }
+                $statementStatuses[$statement['statement_id']] = 'DUPLICATE';
+                continue;
+            }
+
+            $candidate = $candidates[0];
+            $bizCents = $this->bankReconcileBizAmountCents($bizType, $candidate);
+            $status = $bankCents === $bizCents ? 'MATCHED' : 'AMOUNT_DIFF';
+            $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, $status, $bankCents, $bizCents);
+            $statementStatuses[$statement['statement_id']] = $status;
+            $matchedBiz[$bizType . ':' . $this->bankReconcileBizId($bizType, $candidate)] = true;
+        }
+
+        foreach ($this->paymentCandidatesInScope($dateStart, $dateEnd) as $payment) {
+            $key = 'PAYMENT:' . $payment['payment_id'];
+            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsBySerial($payment['bank_serial_no'], $bankCode, $dateStart, $dateEnd)) {
+                $bizCents = $this->decimalToCents($payment['payment_amount']);
+                $resultRows[] = $this->buildBankReconcileRow(null, 'PAYMENT', $payment, 'BIZ_ONLY', 0, $bizCents);
+            }
+        }
+
+        foreach ($this->refundCandidatesInScope($dateStart, $dateEnd) as $refund) {
+            $key = 'REFUND:' . $refund['refund_id'];
+            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsBySerial($refund['out_order_no'], $bankCode, $dateStart, $dateEnd)) {
+                $bizCents = $this->decimalToCents($refund['refund_amount']);
+                $resultRows[] = $this->buildBankReconcileRow(null, 'REFUND', $refund, 'BIZ_ONLY', 0, $bizCents);
+            }
+        }
+
+        $counts = $this->emptyBankReconcileCounts();
+        Db::startTrans();
+        try {
+            $this->softDeleteBankReconcileScope($dateStart, $dateEnd);
+            if (!empty($statementIds)) {
+                $this->getdb(self::TABLE_BANK_STATEMENT)
+                    ->where(['account_set_id' => $this->accountSetId])
+                    ->where('statement_id', 'in', $statementIds)
+                    ->update([
+                        'reconcile_status' => 'UNMATCHED',
+                        'updated_by' => $this->userid,
+                        'updated_time' => $this->now(),
+                    ]);
+            }
+
+            foreach ($resultRows as $row) {
+                $this->fillCreate($row);
+                $this->getdb(self::TABLE_BANK_RECONCILE)->insert($row);
+                $counts[$row['match_status']] = ($counts[$row['match_status']] ?? 0) + 1;
+            }
+            foreach ($statementStatuses as $statementId => $status) {
+                $this->getdb(self::TABLE_BANK_STATEMENT)
+                    ->where(['account_set_id' => $this->accountSetId, 'statement_id' => $statementId])
+                    ->update([
+                        'reconcile_status' => $status,
+                        'updated_by' => $this->userid,
+                        'updated_time' => $this->now(),
+                    ]);
+            }
+            $this->logAudit('CASE_FUND_BANK_RECONCILE', 'RUN', 'RECONCILE', null, [
+                'bank_code' => $bankCode,
+                'date_start' => $dateStart,
+                'date_end' => $dateEnd,
+                'counts' => $counts,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('银行对账失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'total' => count($resultRows),
+            'counts' => $counts,
+        ], '自动对账完成', count($resultRows));
+    }
+
+    public function bankReconcileList($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:view');
+        if ($auth) {
+            return $auth;
+        }
+        $page = $data['page'] ?? input('param.page', 1);
+        $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        if (!empty($data['status'])) {
+            $where['match_status'] = $data['status'];
+        }
+        if (!empty($data['biz_type'])) {
+            $where['biz_type'] = $data['biz_type'];
+        }
+        if (!empty($data['date_start'])) {
+            $where['reconcile_date'][] = ['>=', $data['date_start']];
+        }
+        if (!empty($data['date_end'])) {
+            $where['reconcile_date'][] = ['<=', $data['date_end']];
+        }
+        $keyword = trim($data['keyword'] ?? '');
+        $query = $this->getdb(self::TABLE_BANK_RECONCILE)->where($where);
+        $totalQuery = $this->getdb(self::TABLE_BANK_RECONCILE)->where($where);
+        foreach ([$query, $totalQuery] as $item) {
+            if ($keyword !== '') {
+                $item->where('bank_serial_no|biz_no|bank_summary|biz_summary', 'like', '%' . $keyword . '%');
+            }
+        }
+        $total = $totalQuery->count();
+        $rows = $query->field(self::BANK_RECONCILE_FIELD)
+            ->order('reconcile_date asc, bank_serial_no asc')
+            ->page($page, $pagesize)
+            ->select();
+        return $this->ok([
+            'items' => $rows,
+            'total' => $total,
+            'summary' => $this->bankReconcileSummary($where),
+        ], 'OK', $total);
     }
 
     public function subjectConfigList($data = [])
@@ -778,6 +1224,272 @@ class CaseFund extends Common
         ], '成功生成 ' . $generatedCount . ' 张凭证');
     }
 
+    public function refundGenerateVoucher($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:generate_voucher');
+        if ($auth) {
+            return $auth;
+        }
+
+        $refundIds = $data['refund_ids'] ?? [];
+        if (!is_array($refundIds) || empty($refundIds)) {
+            return $this->error('请选择要生成凭证的退付记录');
+        }
+
+        $rows = $this->getdb(self::TABLE_REFUND)
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('refund_id', 'in', $refundIds)
+            ->field(self::REFUND_FIELD)
+            ->select();
+
+        if (empty($rows)) {
+            return $this->error('所选退付记录不存在');
+        }
+
+        foreach ($rows as $row) {
+            if ($row['voucher_status'] !== 'UNGENERATED') {
+                return $this->error('案号【' . $row['case_no'] . '】的退付记录已生成凭证，不允许重复生成');
+            }
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        $configRows = $this->getdb(self::TABLE_SUBJECT_CONFIG)
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'biz_type' => $bizType,
+                'voucher_biz_type' => 'REFUND',
+                'del_flag' => 0,
+            ])
+            ->field(self::SUBJECT_CONFIG_FIELD)
+            ->select();
+
+        $subjectConfigMap = [];
+        foreach ($configRows as $config) {
+            $subjectConfigMap[$config['business_item_type']] = $config;
+        }
+
+        foreach ($rows as $row) {
+            $outType = $row['out_type'];
+            if (!isset($subjectConfigMap[$outType])) {
+                return $this->error('案号【' . $row['case_no'] . '】的出账种类【' . $outType . '】未配置借方/贷方科目');
+            }
+            $debitCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$outType]['debit_subject_code'], '借方科目');
+            if ($debitCheck !== null) {
+                return $this->error('案号【' . $row['case_no'] . '】' . $debitCheck);
+            }
+            $creditCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$outType]['credit_subject_code'], '贷方科目');
+            if ($creditCheck !== null) {
+                return $this->error('案号【' . $row['case_no'] . '】' . $creditCheck);
+            }
+        }
+
+        $byDayFlag = $this->subjectConfigAccountSetFlag();
+
+        $groups = [];
+        if ($byDayFlag === 1) {
+            foreach ($rows as $row) {
+                $date = $row['refund_date'];
+                if (!isset($groups[$date])) {
+                    $groups[$date] = [];
+                }
+                $groups[$date][] = $row;
+            }
+        } else {
+            foreach ($rows as $row) {
+                $groups[$row['refund_id']] = [$row];
+            }
+        }
+
+        $generatedCount = 0;
+        $voucherInfos = [];
+
+        Db::startTrans();
+        try {
+            foreach ($groups as $groupRows) {
+                $firstRow = $groupRows[0];
+                $period = substr($firstRow['refund_date'], 0, 7);
+                $voucherDate = $firstRow['refund_date'];
+
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
+                    throw new \Exception('出账日期格式不正确：' . $voucherDate);
+                }
+                if (substr($voucherDate, 0, 7) !== $period) {
+                    throw new \Exception('出账日期不在会计期间内：' . $voucherDate);
+                }
+
+                $this->ensureAuxArchives($groupRows);
+
+                $fiscalYear = $this->fiscalYear($period);
+                $voucherTable = 'fin_voucher';
+                $detailTable = 'fin_voucher_detail';
+                $auxTable = 'fin_voucher_aux_value';
+
+                $voucherId = uuid();
+                $voucherNo = $this->generateNextVoucherNo($period);
+
+                $totalDebit = 0;
+                $detailsData = [];
+                $lineNo = 1;
+
+                foreach ($groupRows as $row) {
+                    $outType = $row['out_type'];
+                    $config = $subjectConfigMap[$outType];
+                    $summary = trim($row['case_no'] . ' ' . ($row['party_name'] ?: $row['actual_payee_name']) . ' 退付');
+                    $amountCents = $this->decimalToCents($row['refund_amount']);
+                    $amountDecimal = $this->centsToDecimal($amountCents);
+                    $totalDebit += $amountCents;
+                    $receiptNo = $row['source_receipt_no'] ?: ($row['receipt_no'] ?? '');
+
+                    $auxValues = [
+                        ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
+                        ['aux_type_code' => 'receipt_no', 'aux_value' => $receiptNo, 'aux_label' => $receiptNo],
+                    ];
+
+                    $debitDetailId = uuid();
+                    $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
+                    $detailsData[] = [
+                        'detail_id' => $debitDetailId,
+                        'line_no' => $lineNo++,
+                        'subject_code' => $config['debit_subject_code'],
+                        'summary' => $summary,
+                        'debit_amount' => $amountDecimal,
+                        'credit_amount' => '0.00',
+                        'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                        'aux_desc' => $this->buildAuxDesc($auxValues),
+                        'aux_values' => $auxValues,
+                    ];
+
+                    $creditDetailId = uuid();
+                    $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+                    $detailsData[] = [
+                        'detail_id' => $creditDetailId,
+                        'line_no' => $lineNo++,
+                        'subject_code' => $config['credit_subject_code'],
+                        'summary' => $summary,
+                        'debit_amount' => '0.00',
+                        'credit_amount' => $amountDecimal,
+                        'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                        'aux_desc' => $this->buildAuxDesc($auxValues),
+                        'aux_values' => $auxValues,
+                    ];
+                }
+
+                if ($totalDebit <= 0) {
+                    throw new \Exception('凭证金额必须大于0');
+                }
+
+                $voucher = [
+                    'voucher_id' => $voucherId,
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
+                    'voucher_date' => $voucherDate,
+                    'voucher_word' => '记',
+                    'voucher_no' => $voucherNo,
+                    'summary' => trim($firstRow['case_no'] . ' ' . ($firstRow['party_name'] ?: $firstRow['actual_payee_name']) . ' 退付'),
+                    'debit_amount' => $this->centsToDecimal($totalDebit),
+                    'credit_amount' => $this->centsToDecimal($totalDebit),
+                    'attachment_count' => 0,
+                    'status' => 'SUBMITTED',
+                    'source_type' => 'BUSINESS',
+                    'printed_flag' => '0',
+                    'prepared_by' => $this->userid,
+                    'prepared_time' => $this->now(),
+                    'audit_by' => null,
+                    'audit_time' => null,
+                    'posted_by' => null,
+                    'posted_time' => null,
+                    'void_flag' => '0',
+                    'remark' => '',
+                ];
+                $this->fillCreate($voucher);
+                $this->getdb($voucherTable)->insert($voucher);
+
+                foreach ($detailsData as $detail) {
+                    $auxValues = $detail['aux_values'];
+                    unset($detail['aux_values']);
+
+                    $detailRow = [
+                        'detail_id' => $detail['detail_id'],
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $fiscalYear,
+                        'period' => $period,
+                        'voucher_id' => $voucherId,
+                        'line_no' => $detail['line_no'],
+                        'subject_code' => $detail['subject_code'],
+                        'summary' => $detail['summary'],
+                        'debit_amount' => $detail['debit_amount'],
+                        'credit_amount' => $detail['credit_amount'],
+                        'verification_status' => $detail['verification_status'],
+                        'aux_desc' => $detail['aux_desc'],
+                        'remark' => '',
+                    ];
+                    $this->fillCreate($detailRow);
+                    $this->getdb($detailTable)->insert($detailRow);
+
+                    foreach ($auxValues as $aux) {
+                        if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
+                            continue;
+                        }
+                        $auxRow = [
+                            'id' => uuid(),
+                            'account_set_id' => $this->accountSetId,
+                            'fiscal_year' => $fiscalYear,
+                            'period' => $period,
+                            'voucher_id' => $voucherId,
+                            'detail_id' => $detail['detail_id'],
+                            'aux_type_code' => $aux['aux_type_code'],
+                            'aux_value' => $aux['aux_value'],
+                            'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
+                            'remark' => '',
+                        ];
+                        $this->fillCreate($auxRow);
+                        $this->getdb($auxTable)->insert($auxRow);
+                    }
+                }
+
+                foreach ($groupRows as $row) {
+                    $this->getdb(self::TABLE_REFUND)->where([
+                        'refund_id' => $row['refund_id'],
+                        'account_set_id' => $this->accountSetId,
+                    ])->update([
+                        'voucher_status' => 'GENERATED',
+                        'voucher_id' => $voucherId,
+                        'voucher_no' => $voucherNo,
+                        'voucher_period' => $period,
+                        'voucher_generated_time' => $this->now(),
+                        'updated_by' => $this->userid,
+                        'updated_time' => $this->now(),
+                    ]);
+                }
+
+                $generatedCount++;
+                $voucherInfos[] = [
+                    'voucher_id' => $voucherId,
+                    'voucher_no' => $voucherNo,
+                    'period' => $period,
+                ];
+            }
+
+            $this->logAudit('CASE_FUND_REFUND', 'VOUCHER_GENERATE', 'GENERATE', null, [
+                'refund_count' => count($rows),
+                'voucher_count' => $generatedCount,
+                'vouchers' => $voucherInfos,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('生成凭证失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'generated_count' => $generatedCount,
+            'refund_count' => count($rows),
+            'vouchers' => $voucherInfos,
+        ], '成功生成 ' . $generatedCount . ' 张凭证');
+    }
+
     protected function ensureAuxArchives($rows)
     {
         $caseNos = [];
@@ -788,6 +1500,9 @@ class CaseFund extends Common
             }
             if (!empty($row['receipt_no'])) {
                 $receiptNos[] = $row['receipt_no'];
+            }
+            if (!empty($row['source_receipt_no'])) {
+                $receiptNos[] = $row['source_receipt_no'];
             }
         }
         $this->ensureAuxType('case_no', '案号');
@@ -966,9 +1681,9 @@ class CaseFund extends Common
             if ($this->isNonDetailPaymentRawRow($raw)) {
                 continue;
             }
+            $invoiceDate = $this->nullableDateValue($raw['开票日期']);
             $paymentTime = $this->normalizeDateTimeValue($raw['缴费日期']);
             $paymentDate = $paymentTime === '' ? '' : substr($paymentTime, 0, 10);
-            $invoiceDate = $this->nullableDateValue($raw['开票日期']);
             $amount = $this->centsToDecimal($this->decimalToCents($raw['金额']));
             $period = $paymentDate === '' ? '' : substr($paymentDate, 0, 7);
             $parsed = [
@@ -1106,31 +1821,48 @@ class CaseFund extends Common
         $errors = [];
         $allowedBusinessTypes = $this->allowedPaymentBusinessTypes($bizType);
         foreach ($rows as $row) {
-            $prefix = '第' . $row['source_row_no'] . '行：';
-            if ($row['case_no'] === '') {
-                $errors[] = $prefix . '案号不能为空';
-            }
-            if ($row['business_type'] === '') {
-                $errors[] = $prefix . '业务类型不能为空';
-            } elseif (empty($allowedBusinessTypes)) {
-                $errors[] = $prefix . '当前账套类型不支持案款缴费登记：' . $bizType;
-            } elseif (!in_array($row['business_type'], $allowedBusinessTypes, true)) {
-                $errors[] = $prefix . '当前账套不允许导入业务类型【' . $row['business_type'] . '】，允许类型：' . implode('、', $allowedBusinessTypes);
-            }
-            if ($row['payer_name'] === '' && $row['party_name'] === '') {
-                $errors[] = $prefix . '缴费人和当事人不能同时为空';
-            }
-            if ($this->decimalToCents($row['payment_amount']) <= 0) {
-                $errors[] = $prefix . '金额必须大于0';
-            }
-            if ($row['payment_date'] === '') {
-                $errors[] = $prefix . '缴费日期不能为空或格式不正确';
-            }
-            if ($row['receipt_no'] === '' && $row['bank_serial_no'] === '' && $row['payment_order_no'] === '') {
-                $errors[] = $prefix . '票据号码、银行流水号、缴费单号至少填写一项用于追溯';
-            }
+            $errors = array_merge($errors, $this->paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes));
         }
         return $errors;
+    }
+
+    protected function paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes = null)
+    {
+        $errors = [];
+        $allowedBusinessTypes = $allowedBusinessTypes === null ? $this->allowedPaymentBusinessTypes($bizType) : $allowedBusinessTypes;
+        $prefix = '第' . $row['source_row_no'] . '行：';
+        if ($row['case_no'] === '') {
+            $errors[] = $prefix . '案号不能为空';
+        }
+        if ($row['business_type'] === '') {
+            $errors[] = $prefix . '业务类型不能为空';
+        } elseif (empty($allowedBusinessTypes)) {
+            $errors[] = $prefix . '当前账套类型不支持案款缴费登记：' . $bizType;
+        } elseif (!in_array($row['business_type'], $allowedBusinessTypes, true)) {
+            $errors[] = $prefix . '当前账套不允许导入业务类型【' . $row['business_type'] . '】，允许类型：' . implode('、', $allowedBusinessTypes);
+        }
+        if ($row['payer_name'] === '' && $row['party_name'] === '') {
+            $errors[] = $prefix . '缴费人和当事人不能同时为空';
+        }
+        if ($this->decimalToCents($row['payment_amount']) <= 0) {
+            $errors[] = $prefix . '金额必须大于0';
+        }
+        if ($row['payment_date'] === '') {
+            $errors[] = $prefix . '缴费日期不能为空或格式不正确';
+        }
+        if (!$this->paymentRowHasTraceKey($row)) {
+            $errors[] = $prefix . '票据号码、银行流水号、缴费单号、收款账号+金额至少填写一项用于追溯';
+        }
+        return $errors;
+    }
+
+    protected function paymentRowHasTraceKey($row)
+    {
+        if ($row['receipt_no'] !== '' || $row['bank_serial_no'] !== '' || $row['payment_order_no'] !== '') {
+            return true;
+        }
+        return trim((string)($row['bank_account_no'] ?? '')) !== ''
+            && $this->decimalToCents($row['payment_amount'] ?? '0') > 0;
     }
 
     protected function validateRefundRows($rows, $bizType = '')
@@ -1194,6 +1926,323 @@ class CaseFund extends Common
             'LITIGATION_FEE' => ['诉讼费退费'],
         ];
         return $map[$bizType] ?? [];
+    }
+
+    protected function normalizeIdList($value)
+    {
+        if (is_string($value)) {
+            $value = explode(',', $value);
+        }
+        if (!is_array($value)) {
+            return [];
+        }
+        $ids = [];
+        foreach ($value as $item) {
+            $id = trim((string)$item);
+            if ($id !== '') {
+                $ids[$id] = true;
+            }
+        }
+        return array_keys($ids);
+    }
+
+    protected function deleteCaseFundBusinessRows($table, $idField, $ids, $bizType, $auditBizType, $label)
+    {
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        $where['voucher_status'] = 'UNGENERATED';
+        $fields = $bizType === 'PAYMENT' ? self::PAYMENT_FIELD : self::REFUND_FIELD;
+        $rows = $this->getdb($table)
+            ->where($where)
+            ->where($idField, 'in', $ids)
+            ->field($fields)
+            ->select();
+        if (count($rows) !== count($ids)) {
+            return $this->error('只能删除未制证的' . $label);
+        }
+        $reconcileCount = $this->getdb(self::TABLE_BANK_RECONCILE)->where([
+            'account_set_id' => $this->accountSetId,
+            'biz_type' => $bizType,
+            'del_flag' => 0,
+        ])->where('biz_id', 'in', $ids)->count();
+        if ((int)$reconcileCount > 0) {
+            return $this->error('只能删除未对账的' . $label);
+        }
+
+        $update = ['del_flag' => 1];
+        $this->fillUpdate($update);
+        Db::startTrans();
+        try {
+            $this->getdb($table)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where($idField, 'in', $ids)->update($update);
+            $this->logAudit($auditBizType, 'DELETE', 'DELETE', $rows, [
+                $idField . 's' => $ids,
+                'deleted_count' => count($rows),
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('删除' . $label . '失败：' . $e->getMessage());
+        }
+
+        return $this->ok(['deleted_count' => count($rows)], '删除成功', count($rows));
+    }
+
+    protected function supportedBankStatementBanks()
+    {
+        return [
+            'SHENGJING' => '盛京银行',
+            'CCB' => '建设银行',
+        ];
+    }
+
+    protected function normalizeBankStatementRow($row, $bankCode, $bankName, $defaultRowNo)
+    {
+        $sourceRowNo = (int)($row['source_row_no'] ?? $defaultRowNo);
+        $prefix = '第' . $sourceRowNo . '行：';
+        $transactionTime = $this->normalizeDateTimeValue($row['transaction_time'] ?? '');
+        $transactionDate = $transactionTime === '' ? '' : substr($transactionTime, 0, 10);
+        $debitAmount = $this->centsToDecimal($this->decimalToCents($row['debit_amount'] ?? '0'));
+        $creditAmount = $this->centsToDecimal($this->decimalToCents($row['credit_amount'] ?? '0'));
+        $balanceAmount = $this->centsToDecimal($this->decimalToCents($row['balance_amount'] ?? '0'));
+        $debitCents = $this->decimalToCents($debitAmount);
+        $creditCents = $this->decimalToCents($creditAmount);
+        if ($transactionTime === '') {
+            return ['error' => $prefix . '交易时间不能为空或格式不正确'];
+        }
+        if ($debitCents < 0 || $creditCents < 0) {
+            return ['error' => $prefix . '支出和收入金额不能为负数'];
+        }
+        if (($debitCents > 0 && $creditCents > 0) || ($debitCents === 0 && $creditCents === 0)) {
+            return ['error' => $prefix . '支出和收入必须且只能填写一项'];
+        }
+        $bankSerialNo = trim((string)($row['bank_serial_no'] ?? ''));
+        if ($bankSerialNo === '') {
+            return ['error' => $prefix . '交易流水号不能为空'];
+        }
+        $parsed = [
+            'fiscal_year' => (int)substr($transactionDate, 0, 4),
+            'period' => substr($transactionDate, 0, 7),
+            'bank_code' => $bankCode,
+            'bank_name' => $bankName,
+            'transaction_date' => $transactionDate,
+            'transaction_time' => $transactionTime,
+            'direction' => $debitCents > 0 ? 'DEBIT' : 'CREDIT',
+            'debit_amount' => $debitAmount,
+            'credit_amount' => $creditAmount,
+            'balance_amount' => $balanceAmount,
+            'counterparty_account_no' => trim((string)($row['counterparty_account_no'] ?? '')),
+            'counterparty_account_name' => trim((string)($row['counterparty_account_name'] ?? '')),
+            'counterparty_bank_name' => trim((string)($row['counterparty_bank_name'] ?? '')),
+            'purpose' => trim((string)($row['purpose'] ?? '')),
+            'postscript' => trim((string)($row['postscript'] ?? '')),
+            'bank_serial_no' => $bankSerialNo,
+            'source_row_no' => $sourceRowNo,
+            'source_raw_json' => json_encode($row, JSON_UNESCAPED_UNICODE),
+        ];
+        $parsed['source_fingerprint'] = $this->bankStatementFingerprint($parsed);
+        return $parsed;
+    }
+
+    protected function bankStatementFingerprint($row)
+    {
+        $parts = [
+            $row['bank_code'] ?? '',
+            $row['transaction_time'] ?? '',
+            $row['debit_amount'] ?? '',
+            $row['credit_amount'] ?? '',
+            $row['balance_amount'] ?? '',
+            $row['counterparty_account_no'] ?? '',
+            $row['counterparty_account_name'] ?? '',
+            $row['bank_serial_no'] ?? '',
+        ];
+        return md5(implode('|', $parts));
+    }
+
+    protected function buildBankReconcileRow($statement, $bizType, $biz, $status, $bankCents, $bizCents)
+    {
+        $reconcileDate = $statement ? $statement['transaction_date'] : $this->bankReconcileBizDate($bizType, $biz);
+        $bankSummary = $statement ? trim(($statement['purpose'] ?? '') . ' ' . ($statement['postscript'] ?? '')) : '';
+        return [
+            'reconcile_id' => uuid(),
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => (int)substr($reconcileDate, 0, 4),
+            'period' => substr($reconcileDate, 0, 7),
+            'reconcile_date' => $reconcileDate,
+            'statement_id' => $statement['statement_id'] ?? null,
+            'biz_type' => $bizType,
+            'biz_id' => $biz ? $this->bankReconcileBizId($bizType, $biz) : null,
+            'biz_no' => $biz ? $this->bankReconcileBizNo($bizType, $biz) : '',
+            'bank_serial_no' => $statement['bank_serial_no'] ?? ($bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($biz['out_order_no'] ?? '')),
+            'bank_amount' => $this->centsToDecimal($bankCents),
+            'biz_amount' => $this->centsToDecimal($bizCents),
+            'diff_amount' => $this->centsToDecimal($bankCents - $bizCents),
+            'match_status' => $status,
+            'match_rule' => 'SERIAL_NO',
+            'matched_by' => $this->userid,
+            'matched_time' => $this->now(),
+            'bank_direction' => $statement['direction'] ?? ($bizType === 'PAYMENT' ? 'CREDIT' : 'DEBIT'),
+            'bank_summary' => $bankSummary,
+            'biz_summary' => $biz ? $this->bankReconcileBizSummary($bizType, $biz) : '',
+            'remark' => '',
+        ];
+    }
+
+    protected function paymentCandidatesByBankSerial($bankSerialNo)
+    {
+        $bankSerialNo = trim((string)$bankSerialNo);
+        if ($bankSerialNo === '') {
+            return [];
+        }
+        return $this->getdb(self::TABLE_PAYMENT)
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('bank_serial_no', $bankSerialNo)
+            ->field(self::PAYMENT_FIELD)
+            ->select();
+    }
+
+    protected function refundCandidatesByOutOrderNo($outOrderNo)
+    {
+        $outOrderNo = trim((string)$outOrderNo);
+        if ($outOrderNo === '') {
+            return [];
+        }
+        return $this->getdb(self::TABLE_REFUND)
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('out_order_no', $outOrderNo)
+            ->field(self::REFUND_FIELD)
+            ->select();
+    }
+
+    protected function paymentCandidatesInScope($dateStart, $dateEnd)
+    {
+        $query = $this->getdb(self::TABLE_PAYMENT)
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('bank_serial_no', 'neq', '');
+        if ($dateStart !== '') {
+            $query->where('payment_date', '>=', $dateStart);
+        }
+        if ($dateEnd !== '') {
+            $query->where('payment_date', '<=', $dateEnd);
+        }
+        return $query->field(self::PAYMENT_FIELD)->select();
+    }
+
+    protected function refundCandidatesInScope($dateStart, $dateEnd)
+    {
+        $query = $this->getdb(self::TABLE_REFUND)
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('out_order_no', 'neq', '');
+        if ($dateStart !== '') {
+            $query->where('refund_date', '>=', $dateStart);
+        }
+        if ($dateEnd !== '') {
+            $query->where('refund_date', '<=', $dateEnd);
+        }
+        return $query->field(self::REFUND_FIELD)->select();
+    }
+
+    protected function bankStatementExistsBySerial($bankSerialNo, $bankCode = '', $dateStart = '', $dateEnd = '')
+    {
+        $bankSerialNo = trim((string)$bankSerialNo);
+        if ($bankSerialNo === '') {
+            return false;
+        }
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->currentYear(),
+            'bank_serial_no' => $bankSerialNo,
+            'del_flag' => 0,
+        ];
+        if ($bankCode !== '') {
+            $where['bank_code'] = $bankCode;
+        }
+        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
+        if ($dateStart !== '') {
+            $query->where('transaction_date', '>=', $dateStart);
+        }
+        if ($dateEnd !== '') {
+            $query->where('transaction_date', '<=', $dateEnd);
+        }
+        return $query->count() > 0;
+    }
+
+    protected function bankReconcileBizAmountCents($bizType, $biz)
+    {
+        if ($bizType === 'PAYMENT') {
+            return $this->decimalToCents($biz['payment_amount'] ?? '0');
+        }
+        return $this->decimalToCents($biz['refund_amount'] ?? '0');
+    }
+
+    protected function bankReconcileBizId($bizType, $biz)
+    {
+        return $bizType === 'PAYMENT' ? ($biz['payment_id'] ?? '') : ($biz['refund_id'] ?? '');
+    }
+
+    protected function bankReconcileBizNo($bizType, $biz)
+    {
+        return $bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($biz['out_order_no'] ?? '');
+    }
+
+    protected function bankReconcileBizDate($bizType, $biz)
+    {
+        return $bizType === 'PAYMENT' ? ($biz['payment_date'] ?? '') : ($biz['refund_date'] ?? '');
+    }
+
+    protected function bankReconcileBizSummary($bizType, $biz)
+    {
+        if ($bizType === 'PAYMENT') {
+            return trim(($biz['case_no'] ?? '') . ' ' . ($biz['payer_name'] ?? '') . ' ' . ($biz['party_name'] ?? ''));
+        }
+        return trim(($biz['case_no'] ?? '') . ' ' . ($biz['actual_payee_name'] ?? '') . ' ' . ($biz['party_name'] ?? '') . ' 出账单号:' . ($biz['out_order_no'] ?? ''));
+    }
+
+    protected function softDeleteBankReconcileScope($dateStart, $dateEnd)
+    {
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->currentYear(),
+            'match_rule' => 'SERIAL_NO',
+            'del_flag' => 0,
+        ];
+        $query = $this->getdb(self::TABLE_BANK_RECONCILE)->where($where);
+        if ($dateStart !== '') {
+            $query->where('reconcile_date', '>=', $dateStart);
+        }
+        if ($dateEnd !== '') {
+            $query->where('reconcile_date', '<=', $dateEnd);
+        }
+        $update = ['del_flag' => 1];
+        $this->fillUpdate($update);
+        $query->update($update);
+    }
+
+    protected function emptyBankReconcileCounts()
+    {
+        return [
+            'MATCHED' => 0,
+            'AMOUNT_DIFF' => 0,
+            'BANK_ONLY' => 0,
+            'BIZ_ONLY' => 0,
+            'DUPLICATE' => 0,
+        ];
+    }
+
+    protected function bankReconcileSummary($where)
+    {
+        $rows = $this->getdb(self::TABLE_BANK_RECONCILE)
+            ->where($where)
+            ->field('match_status,count(*) as total')
+            ->group('match_status')
+            ->select();
+        $summary = $this->emptyBankReconcileCounts();
+        foreach ($rows as $row) {
+            $summary[$row['match_status']] = (int)$row['total'];
+        }
+        return $summary;
     }
 
     protected function allowedSubjectConfigItems($bizType, $voucherBizType)
@@ -1367,6 +2416,92 @@ class CaseFund extends Common
         return false;
     }
 
+    protected function loadExistingPaymentsForImport($rows)
+    {
+        $receiptNos = [];
+        $accountNos = [];
+        foreach ($rows as $row) {
+            $receiptNo = trim((string)($row['receipt_no'] ?? ''));
+            if ($receiptNo !== '') {
+                $receiptNos[] = $receiptNo;
+                continue;
+            }
+            $accountNo = trim((string)($row['bank_account_no'] ?? ''));
+            if ($accountNo !== '') {
+                $accountNos[] = $accountNo;
+            }
+        }
+
+        $existing = [];
+        if (!empty($receiptNos)) {
+            $receiptRows = $this->getdb(self::TABLE_PAYMENT)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('receipt_no', 'in', array_values(array_unique($receiptNos)))->field(self::PAYMENT_FIELD)->select();
+            foreach ($receiptRows as $row) {
+                $this->rememberPaymentImportExistingRow($existing, $row);
+            }
+        }
+        if (!empty($accountNos)) {
+            $accountRows = $this->getdb(self::TABLE_PAYMENT)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('bank_account_no', 'in', array_values(array_unique($accountNos)))->field(self::PAYMENT_FIELD)->select();
+            foreach ($accountRows as $row) {
+                $this->rememberPaymentImportExistingRow($existing, $row);
+            }
+        }
+        return $existing;
+    }
+
+    protected function rememberPaymentImportExistingRow(&$existing, $row)
+    {
+        $key = $this->paymentImportDuplicateKey($row);
+        if ($key === '') {
+            return;
+        }
+        if (!isset($existing[$key])) {
+            $existing[$key] = $row;
+            return;
+        }
+        if ($existing[$key]['voucher_status'] === 'UNGENERATED' && $row['voucher_status'] !== 'UNGENERATED') {
+            $existing[$key] = $row;
+        }
+    }
+
+    protected function updateExistingPaymentFromImport($existingRow, $row, $data)
+    {
+        $update = $row;
+        unset($update['payment_id'], $update['account_set_id'], $update['created_by'], $update['created_time']);
+        $update['source_file_name'] = $data['filename'] ?? '';
+        $update['voucher_status'] = 'UNGENERATED';
+        $update['voucher_id'] = null;
+        $update['voucher_no'] = null;
+        $update['voucher_period'] = null;
+        $update['voucher_generated_time'] = null;
+        $update['remark'] = $data['remark'] ?? '';
+        $this->fillUpdate($update);
+        $this->getdb(self::TABLE_PAYMENT)->where([
+            'payment_id' => $existingRow['payment_id'],
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->update($update);
+    }
+
+    protected function paymentImportDuplicateKey($row)
+    {
+        $receiptNo = trim((string)($row['receipt_no'] ?? ''));
+        if ($receiptNo !== '') {
+            return 'receipt:' . $receiptNo;
+        }
+        $bankAccountNo = trim((string)($row['bank_account_no'] ?? ''));
+        if ($bankAccountNo === '') {
+            return '';
+        }
+        $amount = $this->centsToDecimal($this->decimalToCents($row['payment_amount'] ?? '0'));
+        return 'account_amount:' . $bankAccountNo . '|' . $amount;
+    }
+
     protected function paymentFingerprint($row)
     {
         $parts = [
@@ -1503,23 +2638,7 @@ class CaseFund extends Common
             $records[] = [$type, substr($stream, $pos, $length)];
             $pos += $length;
         }
-        $sst = [];
-        for ($i = 0; $i < count($records); $i++) {
-            if ($records[$i][0] !== 0x00FC) {
-                continue;
-            }
-            $blob = $records[$i][1];
-            for ($j = $i + 1; $j < count($records) && $records[$j][0] === 0x003C; $j++) {
-                $blob .= $records[$j][1];
-            }
-            $unique = $this->u32($blob, 4);
-            $offset = 8;
-            for ($k = 0; $k < $unique; $k++) {
-                list($text, $offset) = $this->readBiffString($blob, $offset);
-                $sst[] = $text;
-            }
-            break;
-        }
+        $sst = $this->parseBiffSharedStrings($records);
 
         $cells = [];
         foreach ($records as $record) {
@@ -1555,6 +2674,104 @@ class CaseFund extends Common
             }
         }
         return $cells;
+    }
+
+    protected function parseBiffSharedStrings($records)
+    {
+        for ($i = 0; $i < count($records); $i++) {
+            if ($records[$i][0] !== 0x00FC) {
+                continue;
+            }
+            $chunks = [$records[$i][1]];
+            for ($j = $i + 1; $j < count($records) && $records[$j][0] === 0x003C; $j++) {
+                $chunks[] = $records[$j][1];
+            }
+            $unique = $this->u32($chunks[0], 4);
+            $chunkIndex = 0;
+            $offset = 8;
+            $sst = [];
+            for ($k = 0; $k < $unique; $k++) {
+                $sst[] = $this->readBiffSstString($chunks, $chunkIndex, $offset);
+            }
+            return $sst;
+        }
+        return [];
+    }
+
+    protected function readBiffSstString($chunks, &$chunkIndex, &$offset)
+    {
+        $charCount = $this->u16($this->readBiffChunkBytes($chunks, $chunkIndex, $offset, 2), 0);
+        $flags = ord($this->readBiffChunkBytes($chunks, $chunkIndex, $offset, 1));
+        $hasRichText = ($flags & 0x08) !== 0;
+        $hasExt = ($flags & 0x04) !== 0;
+        $isUtf16 = ($flags & 0x01) !== 0;
+        $richCount = 0;
+        $extLength = 0;
+        if ($hasRichText) {
+            $richCount = $this->u16($this->readBiffChunkBytes($chunks, $chunkIndex, $offset, 2), 0);
+        }
+        if ($hasExt) {
+            $extLength = $this->u32($this->readBiffChunkBytes($chunks, $chunkIndex, $offset, 4), 0);
+        }
+
+        $text = '';
+        $readChars = 0;
+        while ($readChars < $charCount && $chunkIndex < count($chunks)) {
+            if ($offset >= strlen($chunks[$chunkIndex])) {
+                $chunkIndex++;
+                $offset = 0;
+                if ($chunkIndex >= count($chunks)) {
+                    break;
+                }
+                $isUtf16 = (ord($this->readBiffChunkBytes($chunks, $chunkIndex, $offset, 1)) & 0x01) !== 0;
+            }
+            $bytesPerChar = $isUtf16 ? 2 : 1;
+            $availableChars = intdiv(strlen($chunks[$chunkIndex]) - $offset, $bytesPerChar);
+            if ($availableChars <= 0) {
+                $chunkIndex++;
+                $offset = 0;
+                continue;
+            }
+            $takeChars = min($charCount - $readChars, $availableChars);
+            $raw = substr($chunks[$chunkIndex], $offset, $takeChars * $bytesPerChar);
+            $offset += $takeChars * $bytesPerChar;
+            $readChars += $takeChars;
+            $text .= $isUtf16 ? iconv('UTF-16LE', 'UTF-8//IGNORE', $raw) : $raw;
+        }
+
+        $this->skipBiffChunkBytes($chunks, $chunkIndex, $offset, $richCount * 4 + $extLength);
+        return $text;
+    }
+
+    protected function readBiffChunkBytes($chunks, &$chunkIndex, &$offset, $length)
+    {
+        $result = '';
+        while ($length > 0 && $chunkIndex < count($chunks)) {
+            if ($offset >= strlen($chunks[$chunkIndex])) {
+                $chunkIndex++;
+                $offset = 0;
+                continue;
+            }
+            $take = min($length, strlen($chunks[$chunkIndex]) - $offset);
+            $result .= substr($chunks[$chunkIndex], $offset, $take);
+            $offset += $take;
+            $length -= $take;
+        }
+        return $result;
+    }
+
+    protected function skipBiffChunkBytes($chunks, &$chunkIndex, &$offset, $length)
+    {
+        while ($length > 0 && $chunkIndex < count($chunks)) {
+            if ($offset >= strlen($chunks[$chunkIndex])) {
+                $chunkIndex++;
+                $offset = 0;
+                continue;
+            }
+            $take = min($length, strlen($chunks[$chunkIndex]) - $offset);
+            $offset += $take;
+            $length -= $take;
+        }
     }
 
     protected function readBiffString($data, $offset)

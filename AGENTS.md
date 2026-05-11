@@ -130,6 +130,7 @@
 后端启动命令：
 
 ```bash
+cd /Applications/srccode/court-finance-system
 /Applications/MAMP/bin/php/php7.4.33/bin/php -S 127.0.0.1:8080 -t backend/public
 ```
 

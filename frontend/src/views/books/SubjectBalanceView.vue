@@ -26,9 +26,11 @@
     <div class="panel-header">
       <strong>
         <el-icon><Notebook /></el-icon>
-        科目余额表 · {{ context.period }}
+        科目余额表
       </strong>
-      <span class="muted">共 {{ filteredRows.length }} 个科目 · 借方合计 ¥ {{ totalDebit.toFixed(2) }} · 贷方合计 ¥ {{ totalCredit.toFixed(2) }}</span>
+      <span class="muted">
+        共 {{ filteredRows.length }} 个科目 · 合计按末级科目 · 本期借方 ¥ {{ totalDebit.toFixed(2) }} · 本期贷方 ¥ {{ totalCredit.toFixed(2) }}
+      </span>
     </div>
     <div class="panel-body compact">
       <el-table :data="filteredRows" height="calc(100vh - 320px)" show-summary :summary-method="summaryMethod">
@@ -38,28 +40,69 @@
           </template>
         </el-table-column>
         <el-table-column prop="subject_name" label="科目名称" min-width="220" />
+        <el-table-column label="期初余额" align="center">
+          <el-table-column prop="opening_debit_amount" label="借方" width="140" align="right">
+            <template #default="{ row }">
+              <span :class="['text-mono', Number(row.opening_debit_amount) > 0 ? 'amount-debit' : 'muted']">
+                {{ amountText(row.opening_debit_amount) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="opening_credit_amount" label="贷方" width="140" align="right">
+            <template #default="{ row }">
+              <span :class="['text-mono', Number(row.opening_credit_amount) > 0 ? 'amount-credit' : 'muted']">
+                {{ amountText(row.opening_credit_amount) }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table-column>
         <el-table-column label="本期发生额" align="center">
           <el-table-column prop="debit_amount" label="借方" width="160" align="right">
             <template #default="{ row }">
               <span :class="['text-mono', Number(row.debit_amount) > 0 ? 'amount-debit' : 'muted']">
-                {{ Number(row.debit_amount) > 0 ? '¥ ' + Number(row.debit_amount).toFixed(2) : '—' }}
+                {{ amountText(row.debit_amount) }}
               </span>
             </template>
           </el-table-column>
           <el-table-column prop="credit_amount" label="贷方" width="160" align="right">
             <template #default="{ row }">
               <span :class="['text-mono', Number(row.credit_amount) > 0 ? 'amount-credit' : 'muted']">
-                {{ Number(row.credit_amount) > 0 ? '¥ ' + Number(row.credit_amount).toFixed(2) : '—' }}
+                {{ amountText(row.credit_amount) }}
               </span>
             </template>
           </el-table-column>
         </el-table-column>
-        <el-table-column prop="balance_amount" label="期末余额" width="180" align="right">
-          <template #default="{ row }">
-            <span :class="['text-mono', balanceClass(row.balance_amount)]">
-              {{ formatBalance(row.balance_amount) }}
-            </span>
-          </template>
+        <el-table-column label="本年累计" align="center">
+          <el-table-column prop="year_debit_amount" label="借方" width="150" align="right">
+            <template #default="{ row }">
+              <span :class="['text-mono', Number(row.year_debit_amount) > 0 ? 'amount-debit' : 'muted']">
+                {{ amountText(row.year_debit_amount) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="year_credit_amount" label="贷方" width="150" align="right">
+            <template #default="{ row }">
+              <span :class="['text-mono', Number(row.year_credit_amount) > 0 ? 'amount-credit' : 'muted']">
+                {{ amountText(row.year_credit_amount) }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table-column>
+        <el-table-column label="期末余额" align="center">
+          <el-table-column prop="ending_debit_amount" label="借方" width="150" align="right">
+            <template #default="{ row }">
+              <span :class="['text-mono', Number(row.ending_debit_amount) > 0 ? 'amount-debit' : 'muted']">
+                {{ amountText(row.ending_debit_amount) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="ending_credit_amount" label="贷方" width="150" align="right">
+            <template #default="{ row }">
+              <span :class="['text-mono', Number(row.ending_credit_amount) > 0 ? 'amount-credit' : 'muted']">
+                {{ amountText(row.ending_credit_amount) }}
+              </span>
+            </template>
+          </el-table-column>
         </el-table-column>
       </el-table>
     </div>
@@ -90,34 +133,42 @@ const filteredRows = computed(() => {
   if (zeroFilter.value === 'active') {
     result = result.filter((row) => Number(row.debit_amount) > 0 || Number(row.credit_amount) > 0)
   } else if (zeroFilter.value === 'balance') {
-    result = result.filter((row) => Math.abs(Number(row.balance_amount) || 0) > 0.001)
+    result = result.filter((row) => Number(row.ending_debit_amount) > 0 || Number(row.ending_credit_amount) > 0)
   }
   return result
 })
 
-const totalDebit = computed(() => filteredRows.value.reduce((sum, row) => sum + (Number(row.debit_amount) || 0), 0))
-const totalCredit = computed(() => filteredRows.value.reduce((sum, row) => sum + (Number(row.credit_amount) || 0), 0))
-const totalBalance = computed(() => filteredRows.value.reduce((sum, row) => sum + (Number(row.balance_amount) || 0), 0))
+const summaryRows = computed(() => {
+  const leafRows = filteredRows.value.filter((row) => Number(row.leaf_flag) === 1)
+  return leafRows.length > 0 ? leafRows : filteredRows.value
+})
 
-const formatBalance = (val: any) => {
+const sumAmount = (field: string) => summaryRows.value.reduce((sum, row) => sum + (Number(row[field]) || 0), 0)
+const totalDebit = computed(() => sumAmount('debit_amount'))
+const totalCredit = computed(() => sumAmount('credit_amount'))
+
+const amountText = (val: any) => {
   const num = Number(val) || 0
   if (Math.abs(num) < 0.001) return '—'
-  return (num >= 0 ? '¥ ' : '-¥ ') + Math.abs(num).toFixed(2)
-}
-
-const balanceClass = (val: any) => {
-  const num = Number(val) || 0
-  if (Math.abs(num) < 0.001) return 'muted'
-  return num >= 0 ? 'amount-debit' : 'amount-credit'
+  return '¥ ' + Math.abs(num).toFixed(2)
 }
 
 const summaryMethod = ({ columns }: { columns: any[] }) => {
-  return columns.map((_, idx) => {
+  return columns.map((column, idx) => {
     if (idx === 0) return '合计'
-    if (idx === 1) return ''
-    if (idx === 2) return '¥ ' + totalDebit.value.toFixed(2)
-    if (idx === 3) return '¥ ' + totalCredit.value.toFixed(2)
-    if (idx === 4) return formatBalance(totalBalance.value)
+    const property = column.property
+    if ([
+      'opening_debit_amount',
+      'opening_credit_amount',
+      'debit_amount',
+      'credit_amount',
+      'year_debit_amount',
+      'year_credit_amount',
+      'ending_debit_amount',
+      'ending_credit_amount'
+    ].includes(property)) {
+      return amountText(sumAmount(property))
+    }
     return ''
   })
 }
