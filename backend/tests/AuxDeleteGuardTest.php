@@ -1,6 +1,6 @@
 <?php
 
-$auxPath = __DIR__ . '/../app/finance/model/Aux.php';
+$auxPath = __DIR__ . '/../app/finance/model/Auxiliary.php';
 $source = file_get_contents($auxPath);
 
 if (strpos($source, "case 'typeDel':") === false) {

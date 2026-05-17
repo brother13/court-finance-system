@@ -2,9 +2,9 @@
 
 namespace app\finance\controller;
 
-use app\finance\model\Aux;
 use app\finance\model\Auth;
 use app\finance\model\AccountSet;
+use app\finance\model\Auxiliary;
 use app\finance\model\Book;
 use app\finance\model\CaseFund;
 use app\finance\model\Log;
@@ -72,7 +72,7 @@ class Index extends Controller
                 $data = $model->index($actionArr[2], $postdata);
                 break;
             case 'aux':
-                $model = new Aux();
+                $model = new Auxiliary();
                 $data = $model->index($actionArr[2], $postdata);
                 break;
             case 'voucher':

@@ -29,7 +29,7 @@ backend/
   app/finance/model/Voucher.php
   app/finance/model/Book.php
   app/finance/model/Subject.php
-  app/finance/model/Aux.php
+  app/finance/model/Auxiliary.php
   app/finance/model/Log.php
 ```
 

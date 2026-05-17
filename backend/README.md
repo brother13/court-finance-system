@@ -75,7 +75,7 @@ curl -X POST "http://127.0.0.1:8080/" \
 ## 一期已实现模型
 
 - `Subject.php`：科目维护
-- `Aux.php`：辅助核算类型、辅助档案、科目辅助配置查询
+- `Auxiliary.php`：辅助核算类型、辅助档案、科目辅助配置查询
 - `Voucher.php`：草稿、提交、审核、反审核、作废、打印标记
 - `Book.php`：明细账、科目余额表
 - `Period.php`：会计期间

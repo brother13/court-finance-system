@@ -44,7 +44,7 @@ $filesWithoutYearTables = [
     '/backend/app/finance/model/Book.php',
     '/backend/app/finance/model/CaseFund.php',
     '/backend/app/finance/model/AccountSet.php',
-    '/backend/app/finance/model/Aux.php',
+    '/backend/app/finance/model/Auxiliary.php',
     '/backend/app/finance/model/Subject.php',
 ];
 

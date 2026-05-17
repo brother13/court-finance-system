@@ -108,7 +108,7 @@
      $total = $db->where($where)->count();
      $rows  = $db->where($where)->order('...')->page(1, 50)->select();
      ```
-   - 受影响文件：`backend/app/finance/model/Aux.php::archiveList()`（2026-05-06 修复）。
+   - 受影响文件：`backend/app/finance/model/Auxiliary.php::archiveList()`（2026-05-06 修复）。
 
 2. **`where()` 中不能使用数据库原生函数或操作符**
    - 错误写法：`->where('archive_code', 'regexp', '^[0-9]+$')`、`->order('cast(archive_code as unsigned) desc')`
@@ -175,7 +175,7 @@ npm run preview
 | `auth` | `Auth.php` | 单位列表、账套列表、登录 |
 | `accountSet` | `AccountSet.php` | 账套列表、新增、编辑 |
 | `subject` | `Subject.php` | 科目列表、详情、编码规则、导入导出、新增、修改、删除 |
-| `aux` | `Aux.php` | 辅助维度、辅助档案、科目辅助配置 |
+| `aux` | `Auxiliary.php` | 辅助维度、辅助档案、科目辅助配置 |
 | `opening` | `Opening.php` | 科目期初、辅助期初 |
 | `voucher` | `Voucher.php` | 凭证号、列表、详情、草稿、提交、编辑、审核、反审核、删除、作废、打印标记 |
 | `book` | `Book.php` | 明细账、科目余额表 |
@@ -277,7 +277,7 @@ create database `court-finance` default character set utf8 collate utf8_general_
 
 ## 七、辅助核算实现现状
 
-1. 辅助模型：`backend/app/finance/model/Aux.php`。
+1. 辅助模型：`backend/app/finance/model/Auxiliary.php`。
 2. 维度类型表：`fin_aux_type`。
 3. 档案表：`fin_aux_archive`。
 4. 科目配置表：`fin_subject_aux_config`。
