@@ -2,7 +2,7 @@
   <div class="page-header">
     <div>
       <h1>凭证中心</h1>
-      <p>按当前账套、年度和会计期间查询凭证；顶部条件常驻，高级条件应用后参与查询。</p>
+      <p>按当前账套、年度和会计期间范围查询凭证；顶部条件常驻，高级条件应用后参与查询。</p>
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新数据</el-button>
@@ -37,18 +37,15 @@
         </el-select>
       </label>
       <label class="query-field">
-        <span>期间</span>
-        <el-select v-model="topFilter.period" placeholder="期间" style="width: 100px">
+        <span>期间起</span>
+        <el-select v-model="topFilter.period_start" placeholder="起始期间" style="width: 110px">
           <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
         </el-select>
       </label>
       <label class="query-field">
-        <span>凭证字</span>
-        <el-select v-model="topFilter.voucher_word" placeholder="全部" clearable style="width: 80px">
-          <el-option label="记" value="记" />
-          <el-option label="收" value="收" />
-          <el-option label="付" value="付" />
-          <el-option label="转" value="转" />
+        <span>期间止</span>
+        <el-select v-model="topFilter.period_end" placeholder="结束期间" style="width: 110px">
+          <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
         </el-select>
       </label>
       <label class="query-field voucher-no-range">
@@ -88,7 +85,7 @@
         <el-input v-model="topFilter.summary_keyword" placeholder="关键字" :prefix-icon="Search" clearable />
       </label>
       <div class="voucher-query-actions">
-        <el-button type="primary" :icon="Search" size="small" @click="load">查询</el-button>
+        <el-button type="primary" :icon="Search" size="small" @click="query">查询</el-button>
         <el-button :icon="RefreshLeft" size="small" @click="resetFilters">重置</el-button>
         <el-button :class="{ 'has-advanced-filter': advancedHasApplied }" :icon="Filter" size="small" @click="openAdvanced">
           高级
@@ -102,7 +99,7 @@
     <div class="panel-header">
       <strong>
         <el-icon><Tickets /></el-icon>
-        凭证列表 · {{ topFilter.period }}
+        凭证列表 · {{ periodRangeLabel }}
       </strong>
       <span class="muted">共 {{ pageTotal }} 条记录</span>
     </div>
@@ -158,6 +155,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="pagination-bar">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[20, 50, 100, 200]"
+          :total="pageTotal"
+          layout="total, sizes, prev, pager, next"
+          @current-change="load"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
     </div>
   </div>
 
@@ -302,8 +310,8 @@ import * as XLSX from 'xlsx'
 
 type TopFilter = {
   year: string
-  period: string
-  voucher_word: string
+  period_start: string
+  period_end: string
   voucher_no_start: string
   voucher_no_end: string
   status: string
@@ -329,6 +337,8 @@ const router = useRouter()
 const rows = ref<any[]>([])
 const selectedRows = ref<any[]>([])
 const pageTotal = ref(0)
+const page = ref(1)
+const pageSize = ref(50)
 const loading = ref(false)
 const advancedVisible = ref(false)
 const dateRange = ref<string[]>([])
@@ -343,8 +353,8 @@ const importVouchers = ref<any[]>([])
 const defaultYear = context.period.slice(0, 4)
 const topFilter = reactive<TopFilter>({
   year: defaultYear,
-  period: context.period,
-  voucher_word: '',
+  period_start: context.period,
+  period_end: context.period,
   voucher_no_start: '',
   voucher_no_end: '',
   status: '',
@@ -376,6 +386,12 @@ const yearOptions = computed(() => {
 const periodOptions = computed(() =>
   Array.from({ length: 12 }, (_, index) => `${topFilter.year}-${String(index + 1).padStart(2, '0')}`)
 )
+const periodRangeLabel = computed(() => {
+  if (topFilter.period_start === topFilter.period_end) {
+    return topFilter.period_start
+  }
+  return `${topFilter.period_start} ~ ${topFilter.period_end}`
+})
 
 const showFundAuxFilters = computed(() => ['CASE_FUND', 'LITIGATION_FEE'].includes(context.bizType))
 
@@ -387,8 +403,19 @@ const advancedHasApplied = computed(() => Object.keys(cleanFilter(advancedApplie
 watch(
   () => topFilter.year,
   (year) => {
-    const month = topFilter.period.slice(5, 7) || context.period.slice(5, 7) || '01'
-    topFilter.period = `${year}-${month}`
+    const startMonth = topFilter.period_start.slice(5, 7) || context.period.slice(5, 7) || '01'
+    const endMonth = topFilter.period_end.slice(5, 7) || startMonth
+    topFilter.period_start = `${year}-${startMonth}`
+    topFilter.period_end = `${year}-${endMonth}`
+  }
+)
+
+watch(
+  () => [topFilter.period_start, topFilter.period_end],
+  ([start, end]) => {
+    if (start && end && start > end) {
+      topFilter.period_end = start
+    }
   }
 )
 
@@ -396,8 +423,10 @@ const buildQueryParams = () => {
   const [dateStart, dateEnd] = dateRange.value || []
   return cleanFilter({
     year: topFilter.year,
-    period: topFilter.period,
-    voucher_word: topFilter.voucher_word,
+    period_start: topFilter.period_start,
+    period_end: topFilter.period_end,
+    page: page.value,
+    pagesize: pageSize.value,
     voucher_no_start: topFilter.voucher_no_start,
     voucher_no_end: topFilter.voucher_no_end,
     date_start: dateStart,
@@ -420,11 +449,21 @@ const load = async () => {
   }
 }
 
+const query = async () => {
+  page.value = 1
+  await load()
+}
+
+const handlePageSizeChange = async () => {
+  page.value = 1
+  await load()
+}
+
 const resetFilters = async () => {
   Object.assign(topFilter, {
     year: defaultYear,
-    period: context.period,
-    voucher_word: '',
+    period_start: context.period,
+    period_end: context.period,
     voucher_no_start: '',
     voucher_no_end: '',
     status: '',
@@ -433,6 +472,7 @@ const resetFilters = async () => {
   dateRange.value = []
   Object.assign(advancedDraft, emptyAdvanced())
   advancedApplied.value = emptyAdvanced()
+  page.value = 1
   await load()
 }
 
@@ -448,7 +488,7 @@ const clearAdvancedDraft = () => {
 const applyAdvanced = async () => {
   advancedApplied.value = { ...advancedDraft }
   advancedVisible.value = false
-  await load()
+  await query()
 }
 
 const openDetail = (row: any) => {
@@ -493,7 +533,15 @@ const batchDelete = async () => {
       confirmButtonText: '批量删除',
       cancelButtonText: '取消'
     })
-    await voucherApi.batchRemove(topFilter.period, selectedRows.value.map((row) => row.voucher_id))
+    const rowsByPeriod = selectedRows.value.reduce((groups: Record<string, string[]>, row: any) => {
+      const period = row.period || topFilter.period_start
+      if (!groups[period]) groups[period] = []
+      groups[period].push(row.voucher_id)
+      return groups
+    }, {})
+    for (const [period, voucherIds] of Object.entries(rowsByPeriod)) {
+      await voucherApi.batchRemove(period, voucherIds)
+    }
     ElMessage.success('凭证已批量删除')
     selectedRows.value = []
     await load()
@@ -503,13 +551,13 @@ const batchDelete = async () => {
 }
 
 const audit = async (row: any) => {
-  await voucherApi.audit(topFilter.period, row.voucher_id)
+  await voucherApi.audit(row.period, row.voucher_id)
   ElMessage.success('审核完成')
   await load()
 }
 
 const unaudit = async (row: any) => {
-  await voucherApi.unaudit(topFilter.period, row.voucher_id)
+  await voucherApi.unaudit(row.period, row.voucher_id)
   ElMessage.success('已取消审核')
   await load()
 }
@@ -757,7 +805,12 @@ const confirmImport = async () => {
       await load()
     }
   } catch (err: any) {
-    ElMessage.error('导入失败：' + (err.message || '未知错误'))
+    const isRequestTimeout = err?.code === 'ECONNABORTED' || String(err?.message || '').toLowerCase().includes('timeout')
+    if (isRequestTimeout) {
+      ElMessage.warning('导入请求等待超时，后台可能仍在处理，请稍后刷新凭证列表确认，避免重复导入')
+    } else {
+      ElMessage.error('导入失败：' + (err.message || '未知错误'))
+    }
   } finally {
     importing.value = false
   }

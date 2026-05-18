@@ -55,23 +55,23 @@ class Voucher extends Common
         if ($auth) {
             return $auth;
         }
-        $period = $data['period'] ?? input('param.period', '');
-        if ($period === '') {
+        $periodRange = $this->resolveVoucherListPeriodRange($data);
+        if (!$periodRange) {
             return $this->error('会计期间不能为空');
         }
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? input('param.pagesize', 50);
         $table = self::TABLE;
 
-        $voucherIds = $this->voucherIdsByDetailFilters($period, $data);
+        $voucherIds = $this->voucherIdsByDetailFilters($periodRange, $data);
         if (is_array($voucherIds)) {
             if (empty($voucherIds)) {
                 return $this->ok(['items' => [], 'total' => 0], 'OK', 0);
             }
         }
 
-        $num = $this->buildVoucherListQuery($table, $period, $data, $voucherIds)->count();
-        $rows = $this->buildVoucherListQuery($table, $period, $data, $voucherIds)
+        $num = $this->buildVoucherListQuery($table, $periodRange, $data, $voucherIds)->count();
+        $rows = $this->buildVoucherListQuery($table, $periodRange, $data, $voucherIds)
             ->order('voucher_date asc, voucher_no asc')
             ->page($page, $pagesize)
             ->select();
@@ -79,27 +79,53 @@ class Voucher extends Common
         return $this->ok(['items' => $rows, 'total' => $num], 'OK', $num);
     }
 
-    protected function buildVoucherListQuery($table, $period, $data, $voucherIds)
+    protected function resolveVoucherListPeriodRange($data)
     {
-        $query = $this->getdb($table)->where($this->buildVoucherHeaderWhere($period, $data));
+        $period = $data['period'] ?? input('param.period', '');
+        $start = $data['period_start'] ?? $period;
+        $end = $data['period_end'] ?? $period;
+        $start = trim((string)$start);
+        $end = trim((string)$end);
+        if ($start === '' && $end !== '') {
+            $start = $end;
+        }
+        if ($end === '' && $start !== '') {
+            $end = $start;
+        }
+        if ($start === '' || $end === '') {
+            return null;
+        }
+        if ($start > $end) {
+            $tmp = $start;
+            $start = $end;
+            $end = $tmp;
+        }
+        return [
+            'start' => $start,
+            'end' => $end,
+            'year' => $this->fiscalYear($start),
+        ];
+    }
+
+    protected function buildVoucherListQuery($table, $periodRange, $data, $voucherIds)
+    {
+        $query = $this->getdb($table)->where($this->buildVoucherHeaderWhere($periodRange, $data));
         if (is_array($voucherIds)) {
             $query->where('voucher_id', 'in', $voucherIds);
         }
         return $query;
     }
 
-    protected function buildVoucherHeaderWhere($period, $data)
+    protected function buildVoucherHeaderWhere($periodRange, $data)
     {
         $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->fiscalYear($period);
-        $where['period'] = $period;
+        $where['fiscal_year'] = $periodRange['year'];
+        $where['period'][] = ['>=', $periodRange['start']];
+        $where['period'][] = ['<=', $periodRange['end']];
 
         $summaryKeyword = trim($data['summary_keyword'] ?? ($data['keyword'] ?? ''));
         if ($summaryKeyword !== '') {
             $where['summary'] = ['like', "%{$summaryKeyword}%"];
-        }
-        if (!empty($data['voucher_word'])) {
-            $where['voucher_word'] = $data['voucher_word'];
         }
         if (!empty($data['status'])) {
             $where['status'] = $data['status'];
@@ -148,23 +174,23 @@ class Voucher extends Common
         return $where;
     }
 
-    protected function voucherIdsByDetailFilters($period, $data)
+    protected function voucherIdsByDetailFilters($periodRange, $data)
     {
         $sets = [];
 
-        $debitIds = $this->voucherIdsByAmount($period, 'debit_amount', $data['debit_min'] ?? '', $data['debit_max'] ?? '');
+        $debitIds = $this->voucherIdsByAmount($periodRange, 'debit_amount', $data['debit_min'] ?? '', $data['debit_max'] ?? '');
         if (is_array($debitIds)) {
             $sets[] = $debitIds;
         }
-        $creditIds = $this->voucherIdsByAmount($period, 'credit_amount', $data['credit_min'] ?? '', $data['credit_max'] ?? '');
+        $creditIds = $this->voucherIdsByAmount($periodRange, 'credit_amount', $data['credit_min'] ?? '', $data['credit_max'] ?? '');
         if (is_array($creditIds)) {
             $sets[] = $creditIds;
         }
-        $caseIds = $this->voucherIdsByAux($period, 'case_no', $data['case_no'] ?? '');
+        $caseIds = $this->voucherIdsByAux($periodRange, 'case_no', $data['case_no'] ?? '');
         if (is_array($caseIds)) {
             $sets[] = $caseIds;
         }
-        $receiptIds = $this->voucherIdsByAux($period, 'receipt_no', $data['receipt_no'] ?? '');
+        $receiptIds = $this->voucherIdsByAux($periodRange, 'receipt_no', $data['receipt_no'] ?? '');
         if (is_array($receiptIds)) {
             $sets[] = $receiptIds;
         }
@@ -180,7 +206,7 @@ class Voucher extends Common
         return array_values(array_unique($result));
     }
 
-    protected function voucherIdsByAmount($period, $field, $min, $max)
+    protected function voucherIdsByAmount($periodRange, $field, $min, $max)
     {
         if ($min === '' && $max === '') {
             return null;
@@ -188,10 +214,11 @@ class Voucher extends Common
         $table = self::TABLE_DETAIL;
         $query = $this->getdb($table)->where([
             'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
-            'period' => $period,
+            'fiscal_year' => $periodRange['year'],
             'del_flag' => 0,
         ]);
+        $query->where('period', '>=', $periodRange['start']);
+        $query->where('period', '<=', $periodRange['end']);
         if ($min !== '') {
             $query->where($field, '>=', $this->centsToDecimal($this->decimalToCents($min)));
         }
@@ -201,7 +228,7 @@ class Voucher extends Common
         return array_values($query->group('voucher_id')->column('voucher_id'));
     }
 
-    protected function voucherIdsByAux($period, $auxTypeCode, $keyword)
+    protected function voucherIdsByAux($periodRange, $auxTypeCode, $keyword)
     {
         $keyword = trim((string)$keyword);
         if ($keyword === '') {
@@ -210,11 +237,12 @@ class Voucher extends Common
         $table = self::TABLE_AUX;
         $query = $this->getdb($table)->where([
             'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
-            'period' => $period,
+            'fiscal_year' => $periodRange['year'],
             'aux_type_code' => $auxTypeCode,
             'del_flag' => 0,
         ]);
+        $query->where('period', '>=', $periodRange['start']);
+        $query->where('period', '<=', $periodRange['end']);
         $query->where('aux_value|aux_label', 'like', '%' . $keyword . '%');
         return array_values($query->group('voucher_id')->column('voucher_id'));
     }

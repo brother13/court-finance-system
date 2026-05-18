@@ -4,6 +4,10 @@ import { useContextStore } from '../stores/context'
 
 const apiBaseURL = import.meta.env.VITE_API_BASE || '../index.php'
 
+type ApiActionOptions = {
+  timeout?: number
+}
+
 export const http = axios.create({
   baseURL: apiBaseURL,
   timeout: 15000
@@ -25,7 +29,12 @@ http.interceptors.response.use((response) => {
   return result.data
 })
 
-export const apiAction = <T = any>(action: string, data: Record<string, any> = {}, extra: Record<string, any> = {}) => {
+export const apiAction = <T = any>(
+  action: string,
+  data: Record<string, any> = {},
+  extra: Record<string, any> = {},
+  options: ApiActionOptions = {}
+) => {
   const context = useContextStore()
   const body = new URLSearchParams()
   body.set('action', action)
@@ -34,6 +43,7 @@ export const apiAction = <T = any>(action: string, data: Record<string, any> = {
   body.set('data', JSON.stringify(data))
   Object.entries(extra).forEach(([key, value]) => body.set(key, String(value)))
   return http.post('', body, {
+    timeout: options.timeout,
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded'
     }

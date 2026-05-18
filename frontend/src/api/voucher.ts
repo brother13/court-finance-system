@@ -34,6 +34,6 @@ export const voucherApi = {
     return apiAction('/voucher/unaudit', { period, voucher_id: voucherId }) as Promise<void>
   },
   import(payload: { vouchers: any[] }) {
-    return apiAction('/voucher/import', payload) as Promise<{ success: number; failed: number; errors: string[] }>
+    return apiAction('/voucher/import', payload, {}, { timeout: 120000 }) as Promise<{ success: number; failed: number; errors: string[] }>
   }
 }
