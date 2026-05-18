@@ -33,6 +33,21 @@ export const voucherApi = {
   unaudit(period: string, voucherId: string) {
     return apiAction('/voucher/unaudit', { period, voucher_id: voucherId }) as Promise<void>
   },
+  printData(vouchers: { period: string; voucher_id: string }[]) {
+    return apiAction('/voucher/printData', { vouchers }) as Promise<{
+      account_set: {
+        account_set_id: string
+        set_code?: string
+        set_name?: string
+        paper_size: 'A4' | 'A5' | string
+        voucher_print_line_count: number
+        finance_manager?: string
+      }
+      paper_size: 'A4' | 'A5' | string
+      voucher_print_line_count: number
+      vouchers: any[]
+    }>
+  },
   import(payload: { vouchers: any[] }) {
     return apiAction('/voucher/import', payload, {}, { timeout: 120000 }) as Promise<{ success: number; failed: number; errors: string[] }>
   }

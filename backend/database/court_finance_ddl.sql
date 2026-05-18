@@ -106,6 +106,7 @@ create table fin_account_set (
     voucher_import_auto_no tinyint not null default 1,
     voucher_print_line_count int not null default 8,
     generate_voucher_by_day_flag tinyint not null default 1,
+    generate_refund_voucher_by_out_order_no_flag tinyint not null default 0,
     subject_code_rule varchar(50) not null default '4-2-2-2',
     status int not null,
     created_by varchar(36),

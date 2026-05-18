@@ -42,6 +42,8 @@ class Voucher extends Common
                 return $this->voidVoucher($data);
             case 'printMark':
                 return $this->printMark($data);
+            case 'printData':
+                return $this->printData($data);
             case 'import':
                 return $this->importVouchers($data);
             default:
@@ -712,6 +714,153 @@ class Voucher extends Common
         $this->getdb($table)->where($where)->update($update);
         $this->logAudit('VOUCHER', $voucherId, 'PRINT', $before, $update);
         return $this->ok($voucherId, '操作成功');
+    }
+
+    public function printData($data = [])
+    {
+        $auth = $this->requirePermission('voucher:print');
+        if ($auth) {
+            return $auth;
+        }
+
+        $items = $data['vouchers'] ?? [];
+        if (!is_array($items) || empty($items)) {
+            $period = $data['period'] ?? '';
+            $voucherIds = $data['voucher_ids'] ?? [];
+            if ($period !== '' && is_array($voucherIds)) {
+                foreach ($voucherIds as $voucherId) {
+                    $items[] = ['period' => $period, 'voucher_id' => $voucherId];
+                }
+            }
+        }
+        if (empty($items)) {
+            return $this->error('请选择要打印的凭证');
+        }
+
+        $vouchers = $this->loadVouchersForPrint($items);
+        if (empty($vouchers)) {
+            return $this->error('所选凭证不存在');
+        }
+        $this->fillVoucherPrintDetails($vouchers);
+        $accountSet = $this->printAccountSetConfig();
+        $this->markVouchersPrinted($vouchers);
+
+        return $this->ok([
+            'account_set' => $accountSet,
+            'paper_size' => $accountSet['paper_size'],
+            'voucher_print_line_count' => (int)$accountSet['voucher_print_line_count'],
+            'vouchers' => $vouchers,
+        ], 'OK', count($vouchers));
+    }
+
+    protected function loadVouchersForPrint($items)
+    {
+        $vouchers = [];
+        $seen = [];
+        foreach ($items as $item) {
+            $period = trim((string)($item['period'] ?? ''));
+            $voucherId = trim((string)($item['voucher_id'] ?? ($item['voucherId'] ?? '')));
+            if ($period === '' || $voucherId === '') {
+                continue;
+            }
+            $key = $period . ':' . $voucherId;
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $voucher = $this->loadVoucher($period, $voucherId);
+            if (!$voucher) {
+                continue;
+            }
+            if ($this->currentViewScope() === 'SELF' && $voucher['prepared_by'] !== $this->userid) {
+                continue;
+            }
+            $vouchers[] = $voucher;
+        }
+        usort($vouchers, function ($a, $b) {
+            $dateCompare = strcmp((string)$a['voucher_date'], (string)$b['voucher_date']);
+            if ($dateCompare !== 0) {
+                return $dateCompare;
+            }
+            return (int)$a['voucher_no'] <=> (int)$b['voucher_no'];
+        });
+        $this->fillUserDisplayNames($vouchers);
+        return $vouchers;
+    }
+
+    protected function fillVoucherPrintDetails(&$vouchers)
+    {
+        $subjectCodes = [];
+        foreach ($vouchers as &$voucher) {
+            $period = $voucher['period'];
+            $details = $this->getdb(self::TABLE_DETAIL)->where([
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'period' => $period,
+                'voucher_id' => $voucher['voucher_id'],
+                'del_flag' => 0,
+            ])->order('line_no asc')->select();
+            foreach ($details as $detail) {
+                if (!empty($detail['subject_code'])) {
+                    $subjectCodes[] = $detail['subject_code'];
+                }
+            }
+            $voucher['details'] = $details;
+        }
+        unset($voucher);
+
+        $subjectMap = [];
+        $subjectCodes = array_values(array_unique($subjectCodes));
+        if (!empty($subjectCodes)) {
+            $subjects = $this->getdb('fin_subject')->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('subject_code', 'in', $subjectCodes)->field('subject_code,subject_name')->select();
+            foreach ($subjects as $subject) {
+                $subjectMap[$subject['subject_code']] = $subject['subject_name'];
+            }
+        }
+
+        foreach ($vouchers as &$voucher) {
+            foreach ($voucher['details'] as &$detail) {
+                $detail['subject_name'] = $subjectMap[$detail['subject_code']] ?? '';
+            }
+            unset($detail);
+        }
+    }
+
+    protected function printAccountSetConfig()
+    {
+        $row = $this->getdb('fin_account_set')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->field('account_set_id,set_code,set_name,paper_size,voucher_print_line_count,finance_manager')->find();
+        if (!$row) {
+            return [
+                'account_set_id' => $this->accountSetId,
+                'set_name' => '',
+                'paper_size' => 'A5',
+                'voucher_print_line_count' => 8,
+                'finance_manager' => '',
+            ];
+        }
+        $row['paper_size'] = in_array($row['paper_size'] ?? '', ['A4', 'A5'], true) ? $row['paper_size'] : 'A5';
+        $row['voucher_print_line_count'] = max(1, (int)($row['voucher_print_line_count'] ?? 8));
+        return $row;
+    }
+
+    protected function markVouchersPrinted($vouchers)
+    {
+        foreach ($vouchers as $voucher) {
+            $before = $this->loadVoucher($voucher['period'], $voucher['voucher_id']);
+            if (!$before) {
+                continue;
+            }
+            $update = ['printed_flag' => '1', 'status' => 'PRINTED'];
+            $this->fillUpdate($update);
+            $this->getdb(self::TABLE)->where($this->voucherWhere($voucher['voucher_id'], $voucher['period']))->update($update);
+            $this->logAudit('VOUCHER', $voucher['voucher_id'], 'PRINT', $before, $update);
+        }
     }
 
     protected function loadVoucher($period, $voucherId)

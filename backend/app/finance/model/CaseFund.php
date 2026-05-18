@@ -811,6 +811,7 @@ class CaseFund extends Common
             return $this->error('当前账套类型不支持该科目配置：' . $bizType);
         }
         $generateVoucherByDayFlag = $this->subjectConfigAccountSetFlag();
+        $generateRefundVoucherByOutOrderNoFlag = $this->generateRefundVoucherByOutOrderNoFlag();
 
         $configs = [];
         $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
@@ -856,6 +857,7 @@ class CaseFund extends Common
             'biz_type' => $bizType,
             'voucher_biz_type' => $voucherBizType,
             'generate_voucher_by_day_flag' => $generateVoucherByDayFlag,
+            'generate_refund_voucher_by_out_order_no_flag' => $generateRefundVoucherByOutOrderNoFlag,
         ], 'OK', count($items));
     }
 
@@ -879,6 +881,10 @@ class CaseFund extends Common
             return $this->error('科目配置明细不能为空');
         }
         $generateVoucherByDayFlag = $this->normalizeDailyVoucherFlag($data['generate_voucher_by_day_flag'] ?? ($data['generateVoucherByDayFlag'] ?? $this->subjectConfigAccountSetFlag()));
+        $generateRefundVoucherByOutOrderNoFlag = $this->normalizeDailyVoucherFlag(
+            $data['generate_refund_voucher_by_out_order_no_flag']
+            ?? ($data['generateRefundVoucherByOutOrderNoFlag'] ?? $this->generateRefundVoucherByOutOrderNoFlag())
+        );
 
         $before = [];
         $after = [];
@@ -887,7 +893,7 @@ class CaseFund extends Common
         $seen = [];
         Db::startTrans();
         try {
-            list($accountSetBefore, $accountSetAfter) = $this->saveSubjectConfigAccountSetFlag($generateVoucherByDayFlag);
+            list($accountSetBefore, $accountSetAfter) = $this->saveSubjectConfigAccountSetFlag($generateVoucherByDayFlag, $generateRefundVoucherByOutOrderNoFlag);
             foreach ($items as $item) {
                 $businessItemType = trim($item['business_item_type'] ?? ($item['businessItemType'] ?? ''));
                 $debitSubjectCode = trim($item['debit_subject_code'] ?? ($item['debitSubjectCode'] ?? ''));
@@ -1284,20 +1290,11 @@ class CaseFund extends Common
         }
 
         $byDayFlag = $this->subjectConfigAccountSetFlag();
-
-        $groups = [];
-        if ($byDayFlag === 1) {
-            foreach ($rows as $row) {
-                $date = $row['refund_date'];
-                if (!isset($groups[$date])) {
-                    $groups[$date] = [];
-                }
-                $groups[$date][] = $row;
-            }
-        } else {
-            foreach ($rows as $row) {
-                $groups[$row['refund_id']] = [$row];
-            }
+        $byOutOrderNoFlag = $this->generateRefundVoucherByOutOrderNoFlag();
+        try {
+            $groups = $this->groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag);
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage());
         }
 
         $generatedCount = 0;
@@ -1309,12 +1306,20 @@ class CaseFund extends Common
                 $firstRow = $groupRows[0];
                 $period = substr($firstRow['refund_date'], 0, 7);
                 $voucherDate = $firstRow['refund_date'];
+                $aggregateByOutOrderNo = $byOutOrderNoFlag === 1 && trim((string)($firstRow['out_order_no'] ?? '')) !== '';
 
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
                     throw new \Exception('出账日期格式不正确：' . $voucherDate);
                 }
                 if (substr($voucherDate, 0, 7) !== $period) {
                     throw new \Exception('出账日期不在会计期间内：' . $voucherDate);
+                }
+                if ($aggregateByOutOrderNo) {
+                    foreach ($groupRows as $row) {
+                        if (substr($row['refund_date'], 0, 7) !== $period) {
+                            throw new \Exception('同一出账单号【' . $firstRow['out_order_no'] . '】跨会计期间，不允许汇总生成一张凭证');
+                        }
+                    }
                 }
 
                 $this->ensureAuxArchives($groupRows);
@@ -1330,6 +1335,8 @@ class CaseFund extends Common
                 $totalDebit = 0;
                 $detailsData = [];
                 $lineNo = 1;
+                $aggregateCreditSubjectCode = '';
+                $aggregateCreditConfigs = [];
 
                 foreach ($groupRows as $row) {
                     $outType = $row['out_type'];
@@ -1359,23 +1366,46 @@ class CaseFund extends Common
                         'aux_values' => $auxValues,
                     ];
 
-                    $creditDetailId = uuid();
                     $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-                    $detailsData[] = [
-                        'detail_id' => $creditDetailId,
-                        'line_no' => $lineNo++,
-                        'subject_code' => $config['credit_subject_code'],
-                        'summary' => $summary,
-                        'debit_amount' => '0.00',
-                        'credit_amount' => $amountDecimal,
-                        'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                        'aux_desc' => $this->buildAuxDesc($auxValues),
-                        'aux_values' => $auxValues,
-                    ];
+                    if ($aggregateByOutOrderNo) {
+                        if ($aggregateCreditSubjectCode === '') {
+                            $aggregateCreditSubjectCode = $config['credit_subject_code'];
+                            $aggregateCreditConfigs = $creditConfigs;
+                        } elseif ($aggregateCreditSubjectCode !== $config['credit_subject_code']) {
+                            throw new \Exception('同一出账单号【' . $row['out_order_no'] . '】存在不同贷方科目配置，不允许汇总生成一张凭证');
+                        }
+                        if ($this->hasRequiredAuxConfigs($creditConfigs)) {
+                            throw new \Exception('贷方科目【' . $config['credit_subject_code'] . '】存在必填辅助核算，不允许按出账单号合并为一条贷方分录');
+                        }
+                    } else {
+                        $creditDetailId = uuid();
+                        $detailsData[] = [
+                            'detail_id' => $creditDetailId,
+                            'line_no' => $lineNo++,
+                            'subject_code' => $config['credit_subject_code'],
+                            'summary' => $summary,
+                            'debit_amount' => '0.00',
+                            'credit_amount' => $amountDecimal,
+                            'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                            'aux_desc' => $this->buildAuxDesc($auxValues),
+                            'aux_values' => $auxValues,
+                        ];
+                    }
                 }
 
                 if ($totalDebit <= 0) {
                     throw new \Exception('凭证金额必须大于0');
+                }
+
+                if ($aggregateByOutOrderNo) {
+                    $detailsData[] = $this->buildRefundAggregateCreditDetail(
+                        uuid(),
+                        $lineNo++,
+                        $aggregateCreditSubjectCode,
+                        '出账单号' . $firstRow['out_order_no'] . ' 退付合计',
+                        $totalDebit,
+                        $aggregateCreditConfigs
+                    );
                 }
 
                 $voucher = [
@@ -1386,7 +1416,9 @@ class CaseFund extends Common
                     'voucher_date' => $voucherDate,
                     'voucher_word' => '记',
                     'voucher_no' => $voucherNo,
-                    'summary' => trim($firstRow['case_no'] . ' ' . ($firstRow['party_name'] ?: $firstRow['actual_payee_name']) . ' 退付'),
+                    'summary' => $aggregateByOutOrderNo
+                        ? '出账单号' . $firstRow['out_order_no'] . ' 退付合计'
+                        : trim($firstRow['case_no'] . ' ' . ($firstRow['party_name'] ?: $firstRow['actual_payee_name']) . ' 退付'),
                     'debit_amount' => $this->centsToDecimal($totalDebit),
                     'credit_amount' => $this->centsToDecimal($totalDebit),
                     'attachment_count' => 0,
@@ -1490,6 +1522,55 @@ class CaseFund extends Common
         ], '成功生成 ' . $generatedCount . ' 张凭证');
     }
 
+    protected function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
+    {
+        $groups = [];
+        if ((int)$byOutOrderNoFlag === 1) {
+            foreach ($rows as $row) {
+                $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
+                if ($outOrderNo === '') {
+                    $outOrderNo = 'SINGLE:' . $row['refund_id'];
+                }
+                if (!isset($groups[$outOrderNo])) {
+                    $groups[$outOrderNo] = [];
+                }
+                $groups[$outOrderNo][] = $row;
+            }
+            return $groups;
+        }
+
+        if ((int)$byDayFlag === 1) {
+            foreach ($rows as $row) {
+                $date = $row['refund_date'];
+                if (!isset($groups[$date])) {
+                    $groups[$date] = [];
+                }
+                $groups[$date][] = $row;
+            }
+            return $groups;
+        }
+
+        foreach ($rows as $row) {
+            $groups[$row['refund_id']] = [$row];
+        }
+        return $groups;
+    }
+
+    protected function buildRefundAggregateCreditDetail($detailId, $lineNo, $subjectCode, $summary, $amountCents, $configs)
+    {
+        return [
+            'detail_id' => $detailId,
+            'line_no' => $lineNo,
+            'subject_code' => $subjectCode,
+            'summary' => $summary,
+            'debit_amount' => '0.00',
+            'credit_amount' => $this->centsToDecimal($amountCents),
+            'verification_status' => $this->needVerification($configs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+            'aux_desc' => '',
+            'aux_values' => [],
+        ];
+    }
+
     protected function ensureAuxArchives($rows)
     {
         $caseNos = [];
@@ -1581,6 +1662,16 @@ class CaseFund extends Common
     {
         foreach ($configs as $config) {
             if ((int)$config['verification_flag'] === 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function hasRequiredAuxConfigs($configs)
+    {
+        foreach ($configs as $config) {
+            if ((int)$config['required_flag'] === 1) {
                 return true;
             }
         }
@@ -2325,16 +2416,31 @@ class CaseFund extends Common
         return (int)$row['generate_voucher_by_day_flag'] === 0 ? 0 : 1;
     }
 
-    protected function saveSubjectConfigAccountSetFlag($flag)
+    protected function generateRefundVoucherByOutOrderNoFlag()
+    {
+        $row = $this->getdb('fin_account_set')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->field('generate_refund_voucher_by_out_order_no_flag')->find();
+        if (!$row || !array_key_exists('generate_refund_voucher_by_out_order_no_flag', $row)) {
+            return 0;
+        }
+        return (int)$row['generate_refund_voucher_by_out_order_no_flag'] === 1 ? 1 : 0;
+    }
+
+    protected function saveSubjectConfigAccountSetFlag($flag, $refundOutOrderFlag = null)
     {
         $before = $this->getdb('fin_account_set')->where([
             'account_set_id' => $this->accountSetId,
             'del_flag' => 0,
-        ])->field('account_set_id,generate_voucher_by_day_flag')->find();
+        ])->field('account_set_id,generate_voucher_by_day_flag,generate_refund_voucher_by_out_order_no_flag')->find();
         if (!$before) {
             throw new \Exception('账套不存在');
         }
         $update = ['generate_voucher_by_day_flag' => $this->normalizeDailyVoucherFlag($flag)];
+        if ($refundOutOrderFlag !== null) {
+            $update['generate_refund_voucher_by_out_order_no_flag'] = $this->normalizeDailyVoucherFlag($refundOutOrderFlag);
+        }
         $this->fillUpdate($update);
         $this->getdb('fin_account_set')->where([
             'account_set_id' => $this->accountSetId,

@@ -12,8 +12,10 @@ const refundView = readFileSync(resolve(__dirname, '../src/views/case-fund/Refun
 assert(api.includes("apiAction('/caseFund/subjectConfigList'"), 'case fund API should expose subject config list')
 assert(api.includes("apiAction('/caseFund/subjectConfigSave'"), 'case fund API should expose subject config save')
 assert(api.includes('generate_voucher_by_day_flag'), 'case fund API should expose daily voucher generation flag')
+assert(api.includes('generate_refund_voucher_by_out_order_no_flag'), 'case fund API should expose refund out-order voucher grouping flag')
 assert(types.includes('CaseFundSubjectConfig'), 'API types should include case fund subject config')
 assert(types.includes('generate_voucher_by_day_flag?: number'), 'API types should include account-set daily voucher flag')
+assert(types.includes('generate_refund_voucher_by_out_order_no_flag?: number'), 'API types should include refund out-order grouping flag')
 
 assert(paymentView.includes('openSubjectConfig'), 'payment register should open subject config dialog')
 assert(paymentView.includes("voucherBizType: 'PAYMENT'"), 'payment subject config should use PAYMENT voucher business type')
@@ -28,7 +30,9 @@ assert(refundView.includes("voucherBizType: 'REFUND'"), 'refund subject config s
 assert(refundView.includes('out_type'), 'refund subject config should bind refund out type')
 assert(refundView.includes('借方科目') && refundView.includes('贷方科目'), 'refund subject config should edit debit and credit subjects')
 assert(refundView.includes('是否按天生成凭证'), 'refund subject config should show daily voucher switch')
+assert(refundView.includes('是否按出账的单号汇总生成'), 'refund subject config should show out-order grouping switch')
 assert(refundView.includes('<el-switch'), 'refund subject config should use a switch for daily voucher generation')
 assert(refundView.includes('generateVoucherByDay'), 'refund subject config should bind daily voucher flag')
+assert(refundView.includes('generateRefundVoucherByOutOrderNo'), 'refund subject config should bind out-order grouping flag')
 
 console.log('Case fund subject config frontend test passed')

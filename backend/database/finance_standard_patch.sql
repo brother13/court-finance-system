@@ -134,6 +134,21 @@ prepare stmt from @sql;
 execute stmt;
 deallocate prepare stmt;
 
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_account_set add column generate_refund_voucher_by_out_order_no_flag tinyint not null default 0 after generate_voucher_by_day_flag',
+        'select 1'
+    )
+    from information_schema.columns
+    where table_schema = database()
+      and table_name = 'fin_account_set'
+      and column_name = 'generate_refund_voucher_by_out_order_no_flag'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
 update fin_account_set
 set enabled_period = concat(enabled_year, '-01')
 where enabled_period is null

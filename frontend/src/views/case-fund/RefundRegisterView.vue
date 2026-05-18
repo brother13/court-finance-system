@@ -67,13 +67,13 @@
         </el-table-column>
         <el-table-column prop="source_receipt_no" label="来源票据号码" min-width="150" show-overflow-tooltip />
         <el-table-column prop="source_receipt_date" label="来源开票日期" width="120" />
+        <el-table-column prop="out_order_no" label="出账单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="payment_method" label="支付方式" width="110" show-overflow-tooltip />
         <el-table-column prop="payee_bank_account_name" label="银行户名" min-width="130" show-overflow-tooltip />
         <el-table-column prop="payee_bank_account_no" label="收款账号" min-width="210" show-overflow-tooltip />
         <el-table-column prop="payee_bank_name" label="开户银行" min-width="220" show-overflow-tooltip />
         <el-table-column prop="unionpay_no" label="银联号" min-width="130" show-overflow-tooltip />
         <el-table-column prop="handler_name" label="经办人" width="100" show-overflow-tooltip />
-        <el-table-column prop="applicant_name" label="申请人" width="100" show-overflow-tooltip />
         <el-table-column label="制证状态" width="120" align="center" fixed="right">
           <template #default="{ row }">
             <el-tag :type="voucherStatusType(row.voucher_status)" effect="light">{{ voucherStatusLabel(row.voucher_status) }}</el-tag>
@@ -105,6 +105,8 @@
       <div class="subject-config-options">
         <span>是否按天生成凭证</span>
         <el-switch v-model="generateVoucherByDay" />
+        <span>是否按出账的单号汇总生成</span>
+        <el-switch v-model="generateRefundVoucherByOutOrderNo" />
       </div>
       <el-table :data="subjectConfigRows" border v-loading="subjectConfigLoading">
         <el-table-column prop="business_item_type" label="出账种类" min-width="160" />
@@ -167,6 +169,7 @@ const subjectConfigLoading = ref(false)
 const subjectConfigSaving = ref(false)
 const subjectConfigRows = ref<CaseFundSubjectConfig[]>([])
 const generateVoucherByDay = ref(true)
+const generateRefundVoucherByOutOrderNo = ref(false)
 const voucherBizType: 'REFUND' = 'REFUND'
 const initialRange = initialRefundDateRange(context.period)
 const filters = reactive({
@@ -221,6 +224,7 @@ const openSubjectConfig = async () => {
       loadSubjects()
     ])
     generateVoucherByDay.value = Number(configResult.generate_voucher_by_day_flag ?? 1) === 1
+    generateRefundVoucherByOutOrderNo.value = Number(configResult.generate_refund_voucher_by_out_order_no_flag ?? 0) === 1
     subjectConfigRows.value = (configResult.items || []).map((item) => ({ ...item }))
   } finally {
     subjectConfigLoading.value = false
@@ -235,7 +239,12 @@ const saveSubjectConfig = async () => {
   }
   subjectConfigSaving.value = true
   try {
-    await caseFundApi.saveSubjectConfigs(voucherBizType, subjectConfigRows.value, generateVoucherByDay.value ? 1 : 0)
+    await caseFundApi.saveSubjectConfigs(
+      voucherBizType,
+      subjectConfigRows.value,
+      generateVoucherByDay.value ? 1 : 0,
+      generateRefundVoucherByOutOrderNo.value ? 1 : 0
+    )
     ElMessage.success('科目配置已保存')
     subjectConfigVisible.value = false
   } finally {
@@ -532,6 +541,7 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 12px;
   color: var(--text-main);

@@ -372,4 +372,5 @@ export interface CaseFundSubjectConfigResult {
   biz_type: string
   voucher_biz_type: 'PAYMENT' | 'REFUND'
   generate_voucher_by_day_flag?: number
+  generate_refund_voucher_by_out_order_no_flag?: number
 }

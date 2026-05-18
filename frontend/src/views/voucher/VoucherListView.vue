@@ -7,6 +7,17 @@
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新数据</el-button>
       <el-button
+        v-if="context.hasPermission('voucher:print')"
+        type="primary"
+        plain
+        :icon="Printer"
+        :loading="printing"
+        :disabled="selectedRows.length === 0"
+        @click="printSelectedVouchers"
+      >
+        打印凭证
+      </el-button>
+      <el-button
         v-if="context.hasPermission('voucher:delete')"
         type="danger"
         :icon="DeleteIcon"
@@ -303,9 +314,10 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete as DeleteIcon, Document, Edit, Filter, Plus, Refresh, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
+import { Check, Delete as DeleteIcon, Document, Edit, Filter, Plus, Printer, Refresh, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
+import { createVoucherPrintPdf } from '../../utils/voucherPrintPdf'
 import * as XLSX from 'xlsx'
 
 type TopFilter = {
@@ -344,6 +356,7 @@ const advancedVisible = ref(false)
 const dateRange = ref<string[]>([])
 const importVisible = ref(false)
 const importing = ref(false)
+const printing = ref(false)
 const importFileName = ref('')
 const importPreview = ref<{ voucherCount: number; detailCount: number; periodRange: string } | null>(null)
 const importErrorList = ref<string[]>([])
@@ -504,7 +517,8 @@ const isUnreviewed = (row: any) => unreviewedStatuses.includes(row.status)
 const isAutoCarry = (row: any) => row.source_type === 'AUTO_CARRY'
 const canEditRow = (row: any) => context.hasPermission('voucher:edit') && isUnreviewed(row)
 const canDeleteRow = (row: any) => context.hasPermission('voucher:delete') && isUnreviewed(row) && !isAutoCarry(row)
-const canSelectRow = (row: any) => canDeleteRow(row)
+const canPrintRow = (row: any) => context.hasPermission('voucher:print') && row.status !== 'VOIDED'
+const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row)
 
 const handleSelectionChange = (selection: any[]) => {
   selectedRows.value = selection
@@ -526,14 +540,18 @@ const deleteOne = async (row: any) => {
 }
 
 const batchDelete = async () => {
-  if (selectedRows.value.length === 0) return
+  const deletableRows = selectedRows.value.filter(canDeleteRow)
+  if (deletableRows.length === 0) {
+    ElMessage.warning('请选择可删除的未审核凭证')
+    return
+  }
   try {
-    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 张凭证？`, '批量删除凭证', {
+    await ElMessageBox.confirm(`确认删除选中的 ${deletableRows.length} 张凭证？`, '批量删除凭证', {
       type: 'warning',
       confirmButtonText: '批量删除',
       cancelButtonText: '取消'
     })
-    const rowsByPeriod = selectedRows.value.reduce((groups: Record<string, string[]>, row: any) => {
+    const rowsByPeriod = deletableRows.reduce((groups: Record<string, string[]>, row: any) => {
       const period = row.period || topFilter.period_start
       if (!groups[period]) groups[period] = []
       groups[period].push(row.voucher_id)
@@ -547,6 +565,30 @@ const batchDelete = async () => {
     await load()
   } catch {
     // 用户取消时不提示。
+  }
+}
+
+const printSelectedVouchers = async () => {
+  const printableRows = selectedRows.value.filter(canPrintRow)
+  if (printableRows.length === 0) {
+    ElMessage.warning('请选择要打印的凭证')
+    return
+  }
+  printing.value = true
+  try {
+    const payload = await voucherApi.printData(printableRows.map((row) => ({
+      period: row.period || topFilter.period_start,
+      voucher_id: row.voucher_id
+    })))
+    const pdf = await createVoucherPrintPdf(payload)
+    const url = URL.createObjectURL(pdf)
+    window.open(url, '_blank')
+    ElMessage.success('凭证PDF已生成')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.message || '生成凭证PDF失败')
+  } finally {
+    printing.value = false
   }
 }
 

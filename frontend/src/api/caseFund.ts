@@ -67,14 +67,24 @@ export const caseFundApi = {
       biz_type: string
       voucher_biz_type: 'PAYMENT' | 'REFUND'
       generate_voucher_by_day_flag: number
+      generate_refund_voucher_by_out_order_no_flag: number
     }>
   },
-  saveSubjectConfigs(voucherBizType: 'PAYMENT' | 'REFUND', items: CaseFundSubjectConfig[], generateVoucherByDayFlag = 1) {
-    return apiAction('/caseFund/subjectConfigSave', {
+  saveSubjectConfigs(
+    voucherBizType: 'PAYMENT' | 'REFUND',
+    items: CaseFundSubjectConfig[],
+    generateVoucherByDayFlag = 1,
+    generateRefundVoucherByOutOrderNoFlag?: number
+  ) {
+    const payload: Record<string, any> = {
       voucher_biz_type: voucherBizType,
       generate_voucher_by_day_flag: generateVoucherByDayFlag,
       items
-    }) as Promise<{ saved: number }>
+    }
+    if (generateRefundVoucherByOutOrderNoFlag !== undefined) {
+      payload.generate_refund_voucher_by_out_order_no_flag = generateRefundVoucherByOutOrderNoFlag
+    }
+    return apiAction('/caseFund/subjectConfigSave', payload) as Promise<{ saved: number }>
   },
   paymentGenerateVoucher(paymentIds: string[]) {
     return apiAction('/caseFund/paymentGenerateVoucher', { payment_ids: paymentIds }) as Promise<{
