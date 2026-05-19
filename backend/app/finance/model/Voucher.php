@@ -130,7 +130,11 @@ class Voucher extends Common
             $where['summary'] = ['like', "%{$summaryKeyword}%"];
         }
         if (!empty($data['status'])) {
-            $where['status'] = $data['status'];
+            if ($data['status'] === 'PRINTED') {
+                $where['printed_flag'] = '1';
+            } else {
+                $where['status'] = $data['status'];
+            }
         }
         if (isset($data['voucher_no_start']) && $data['voucher_no_start'] !== '') {
             $where['voucher_no'][] = ['>=', (int)$data['voucher_no_start']];
@@ -536,7 +540,7 @@ class Voucher extends Common
         if (!$before) {
             return $this->error('凭证不存在');
         }
-        if ($before['status'] !== $expected) {
+        if ($this->workflowStatus($before) !== $expected) {
             return $this->error('凭证状态不允许执行当前操作');
         }
         if ($operation === 'AUDIT' && $before['prepared_by'] === $this->userid) {
@@ -709,7 +713,7 @@ class Voucher extends Common
         if (!$before) {
             return $this->error('凭证不存在');
         }
-        $update = ['printed_flag' => '1', 'status' => 'PRINTED'];
+        $update = ['printed_flag' => '1'];
         $this->fillUpdate($update);
         $this->getdb($table)->where($where)->update($update);
         $this->logAudit('VOUCHER', $voucherId, 'PRINT', $before, $update);
@@ -856,11 +860,20 @@ class Voucher extends Common
             if (!$before) {
                 continue;
             }
-            $update = ['printed_flag' => '1', 'status' => 'PRINTED'];
+            $update = ['printed_flag' => '1'];
             $this->fillUpdate($update);
             $this->getdb(self::TABLE)->where($this->voucherWhere($voucher['voucher_id'], $voucher['period']))->update($update);
             $this->logAudit('VOUCHER', $voucher['voucher_id'], 'PRINT', $before, $update);
         }
+    }
+
+    protected function workflowStatus($voucher)
+    {
+        $status = $voucher['status'] ?? '';
+        if ($status !== 'PRINTED') {
+            return $status;
+        }
+        return !empty($voucher['audit_by']) || !empty($voucher['audit_time']) ? 'AUDITED' : 'SUBMITTED';
     }
 
     protected function loadVoucher($period, $voucherId)

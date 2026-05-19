@@ -30,24 +30,45 @@ class Book extends Common
         if ($auth) {
             return $auth;
         }
-        $period = $data['period'] ?? '';
-        if ($period === '') {
+        $period = trim((string)($data['period'] ?? ''));
+        $startPeriod = trim((string)($data['start_period'] ?? ''));
+        $endPeriod = trim((string)($data['end_period'] ?? ''));
+        if ($startPeriod === '') {
+            $startPeriod = $period;
+        }
+        if ($endPeriod === '') {
+            $endPeriod = $period;
+        }
+        if ($startPeriod === '' || $endPeriod === '') {
             return $this->error('会计期间不能为空');
         }
-        $startDate = $data['start_date'] ?? substr($period, 0, 7) . '-01';
-        $endDate = $data['end_date'] ?? date('Y-m-t', strtotime($startDate));
+        if (!$this->validPeriod($startPeriod) || !$this->validPeriod($endPeriod)) {
+            return $this->error('会计期间格式不正确');
+        }
+        if (substr($startPeriod, 0, 4) !== substr($endPeriod, 0, 4)) {
+            return $this->error('明细账暂不支持跨年度查询');
+        }
+        if ($startPeriod > $endPeriod) {
+            return $this->error('起始期间不能晚于结束期间');
+        }
+        $startDate = trim((string)($data['start_date'] ?? ''));
+        $endDate = trim((string)($data['end_date'] ?? ''));
+        if ($startDate === '') {
+            $startDate = substr($startPeriod, 0, 7) . '-01';
+        }
+        if ($endDate === '') {
+            $endDate = date('Y-m-t', strtotime($endPeriod . '-01'));
+        }
         $subjectCode = $data['subject_code'] ?? '';
-        $fiscalYear = $this->fiscalYear($period);
+        $fiscalYear = $this->fiscalYear($endPeriod);
         $voucherTable = 'fin_voucher';
         $detailTable = 'fin_voucher_detail';
 
         $where = [
             'd.account_set_id' => $this->accountSetId,
             'd.fiscal_year' => $fiscalYear,
-            'd.period' => $period,
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
-            'v.period' => $period,
             'v.del_flag' => 0,
             'v.voucher_date' => ['between', [$startDate, $endDate]],
             'v.status' => ['in', ['AUDITED', 'PRINTED']],
@@ -57,9 +78,12 @@ class Book extends Common
         $maxLength = empty($lengths) ? 10 : max($lengths);
 
         $query = db($detailTable)->alias('d')
+            ->force('idx_voucher_detail_ledger_subject')
             ->join($voucherTable . ' v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
             ->join('fin_subject s', 's.subject_code=d.subject_code and s.account_set_id=d.account_set_id and s.del_flag=0', 'LEFT')
-            ->where($where);
+            ->where($where)
+            ->where('d.period', 'between', [$startPeriod, $endPeriod])
+            ->where('v.period', 'between', [$startPeriod, $endPeriod]);
         if ($subjectCode !== '') {
             $query->where('d.subject_code', '>=', $subjectCode);
             $query->where('d.subject_code', '<=', $this->subjectRangeUpperBound($subjectCode, $maxLength));
@@ -79,11 +103,56 @@ class Book extends Common
         if ($auth) {
             return $auth;
         }
-        $period = $data['period'] ?? '';
-        if ($period === '') {
+        $period = trim((string)($data['period'] ?? ''));
+        $startPeriod = trim((string)($data['start_period'] ?? ''));
+        $endPeriod = trim((string)($data['end_period'] ?? ''));
+        if ($startPeriod === '') {
+            $startPeriod = $period;
+        }
+        if ($endPeriod === '') {
+            $endPeriod = $period;
+        }
+        if ($startPeriod === '' || $endPeriod === '') {
             return $this->error('会计期间不能为空');
         }
+        if (!$this->validPeriod($startPeriod) || !$this->validPeriod($endPeriod)) {
+            return $this->error('会计期间格式不正确');
+        }
+        if (substr($startPeriod, 0, 4) !== substr($endPeriod, 0, 4)) {
+            return $this->error('科目余额表暂不支持跨年度查询');
+        }
+        if ($startPeriod > $endPeriod) {
+            return $this->error('起始期间不能晚于结束期间');
+        }
         $codeRule = $this->subjectCodeRule();
+        $lengths = $this->subjectCodeRuleLengths($codeRule);
+        $maxLevel = empty($lengths) ? 1 : count($lengths);
+        $maxLength = empty($lengths) ? 10 : max($lengths);
+        $subjectStartCode = trim((string)($data['subject_start_code'] ?? ''));
+        $subjectEndCode = trim((string)($data['subject_end_code'] ?? ''));
+        $levelStart = (int)($data['level_start'] ?? 1);
+        $levelEnd = (int)($data['level_end'] ?? $maxLevel);
+        if ($levelStart < 1) {
+            $levelStart = 1;
+        }
+        if ($levelEnd < 1) {
+            $levelEnd = 1;
+        }
+        if ($levelStart > $maxLevel) {
+            $levelStart = $maxLevel;
+        }
+        if ($levelEnd > $maxLevel) {
+            $levelEnd = $maxLevel;
+        }
+        if ($levelStart > $levelEnd) {
+            $tmp = $levelStart;
+            $levelStart = $levelEnd;
+            $levelEnd = $tmp;
+        }
+        $zeroFilter = $data['zero_filter'] ?? 'all';
+        if (!in_array($zeroFilter, ['all', 'nonzero', 'active', 'balance'], true)) {
+            $zeroFilter = 'all';
+        }
         $subjects = db('fin_subject')
             ->where([
                 'account_set_id' => $this->accountSetId,
@@ -115,7 +184,7 @@ class Book extends Common
         $openingRows = db('fin_opening_balance')
             ->where([
                 'account_set_id' => $this->accountSetId,
-                'period' => $this->openingPeriodFor($period, 'fin_opening_balance'),
+                'period' => $this->openingPeriodFor($startPeriod, 'fin_opening_balance'),
                 'del_flag' => 0,
             ])
             ->field('subject_code,debit_amount,credit_amount')
@@ -132,33 +201,36 @@ class Book extends Common
             );
         }
 
-        foreach ($this->loadSubjectBalanceVoucherRows($period, $period) as $row) {
+        foreach ($this->loadSubjectBalanceVoucherRows($startPeriod, $endPeriod) as $row) {
+            $debitCents = $this->decimalToCents($row['debit_amount'] ?? 0);
+            $creditCents = $this->decimalToCents($row['credit_amount'] ?? 0);
             $this->addSubjectBalanceAmount(
                 $balances,
                 $row['subject_code'],
                 $subjectMap,
                 $codeRule,
                 'current',
-                $this->decimalToCents($row['debit_amount'] ?? 0),
-                $this->decimalToCents($row['credit_amount'] ?? 0)
+                $debitCents,
+                $creditCents
             );
-        }
-
-        foreach ($this->loadSubjectBalanceVoucherRows($this->reportYearStartPeriod($period), $period) as $row) {
             $this->addSubjectBalanceAmount(
                 $balances,
                 $row['subject_code'],
                 $subjectMap,
                 $codeRule,
                 'year',
-                $this->decimalToCents($row['debit_amount'] ?? 0),
-                $this->decimalToCents($row['credit_amount'] ?? 0)
+                $debitCents,
+                $creditCents
             );
         }
 
         $rows = [];
         foreach ($balances as $balance) {
-            $rows[] = $this->formatSubjectBalanceRow($balance);
+            $row = $this->formatSubjectBalanceRow($balance);
+            if (!$this->subjectBalanceRowVisible($row, $subjectStartCode, $subjectEndCode, $levelStart, $levelEnd, $maxLength, $zeroFilter)) {
+                continue;
+            }
+            $rows[] = $row;
         }
 
         return $this->ok($rows, 'OK', count($rows));
@@ -170,55 +242,62 @@ class Book extends Common
         if ($auth) {
             return $auth;
         }
-        $period = $data['period'] ?? '';
-        if ($period === '') {
+        $period = trim((string)($data['period'] ?? ''));
+        $startPeriod = trim((string)($data['start_period'] ?? ''));
+        $endPeriod = trim((string)($data['end_period'] ?? ''));
+        if ($startPeriod === '') {
+            $startPeriod = $period;
+        }
+        if ($endPeriod === '') {
+            $endPeriod = $period;
+        }
+        if ($startPeriod === '' || $endPeriod === '') {
             return $this->error('会计期间不能为空');
         }
-        $startDate = $data['start_date'] ?? substr($period, 0, 7) . '-01';
-        $endDate = $data['end_date'] ?? date('Y-m-t', strtotime($startDate));
+        if (!$this->validPeriod($startPeriod) || !$this->validPeriod($endPeriod)) {
+            return $this->error('会计期间格式不正确');
+        }
+        if (substr($startPeriod, 0, 4) !== substr($endPeriod, 0, 4)) {
+            return $this->error('科目汇总表暂不支持跨年度查询');
+        }
+        if ($startPeriod > $endPeriod) {
+            return $this->error('起始期间不能晚于结束期间');
+        }
         $subjectStartCode = trim((string)($data['subject_start_code'] ?? ''));
         $subjectEndCode = trim((string)($data['subject_end_code'] ?? ''));
-        $subjectLevel = (int)($data['subject_level'] ?? 1);
         $codeRule = $this->subjectCodeRule();
         $lengths = $this->subjectCodeRuleLengths($codeRule);
         $maxLength = empty($lengths) ? 10 : max($lengths);
-        if ($subjectLevel < 1) {
-            $subjectLevel = 1;
-        }
-        if ($subjectLevel > count($lengths)) {
-            $subjectLevel = count($lengths);
-        }
 
         $subjects = db('fin_subject')
             ->where([
                 'account_set_id' => $this->accountSetId,
                 'del_flag' => 0,
             ])
-            ->field('subject_code,subject_name,level_no,direction')
+            ->field('subject_code,subject_name,level_no,direction,subject_type,leaf_flag')
             ->select();
         $subjectMap = [];
         foreach ($subjects as $subject) {
             $subjectMap[$subject['subject_code']] = $subject;
         }
 
-        $fiscalYear = $this->fiscalYear($period);
+        $fiscalYear = $this->fiscalYear($endPeriod);
         $voucherTable = 'fin_voucher';
         $detailTable = 'fin_voucher_detail';
         $where = [
             'd.account_set_id' => $this->accountSetId,
             'd.fiscal_year' => $fiscalYear,
-            'd.period' => $period,
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
-            'v.period' => $period,
             'v.del_flag' => 0,
-            'v.voucher_date' => ['between', [$startDate, $endDate]],
             'v.status' => ['in', ['AUDITED', 'PRINTED']],
         ];
 
         $query = db($detailTable)->alias('d')
             ->join($voucherTable . ' v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
-            ->where($where);
+            ->where($where)
+            ->where('d.period', 'between', [$startPeriod, $endPeriod])
+            ->where('v.period', 'between', [$startPeriod, $endPeriod]);
         if ($subjectStartCode !== '') {
             $query->where('d.subject_code', '>=', $subjectStartCode);
         }
@@ -232,27 +311,38 @@ class Book extends Common
 
         $summary = [];
         foreach ($details as $detail) {
-            $summaryCode = $this->subjectSummaryCode($detail['subject_code'], $subjectLevel, $codeRule);
-            if (!isset($summary[$summaryCode])) {
-                $subject = $subjectMap[$summaryCode] ?? [
-                    'subject_code' => $summaryCode,
-                    'subject_name' => '',
-                    'level_no' => $subjectLevel,
-                    'direction' => '',
-                ];
-                $summary[$summaryCode] = [
-                    'subject_code' => $summaryCode,
-                    'subject_name' => $subject['subject_name'] ?? '',
-                    'level_no' => (int)($subject['level_no'] ?? $subjectLevel),
-                    'direction' => $subject['direction'] ?? '',
-                    'debit_cents' => 0,
-                    'credit_cents' => 0,
-                    'entry_count' => 0,
-                ];
+            foreach ($this->ancestorSubjectCodes($detail['subject_code'], $subjectMap, $codeRule) as $summaryCode) {
+                if ($subjectStartCode !== '' && strcmp($summaryCode, $subjectStartCode) < 0) {
+                    continue;
+                }
+                if ($subjectEndCode !== '' && strcmp($summaryCode, $this->subjectRangeUpperBound($subjectEndCode, $maxLength)) > 0) {
+                    continue;
+                }
+                if (!isset($summary[$summaryCode])) {
+                    $subject = $subjectMap[$summaryCode] ?? [
+                        'subject_code' => $summaryCode,
+                        'subject_name' => '',
+                        'level_no' => 1,
+                        'direction' => '',
+                        'subject_type' => '',
+                        'leaf_flag' => 1,
+                    ];
+                    $summary[$summaryCode] = [
+                        'subject_code' => $summaryCode,
+                        'subject_name' => $subject['subject_name'] ?? '',
+                        'level_no' => (int)($subject['level_no'] ?? 1),
+                        'direction' => $subject['direction'] ?? '',
+                        'subject_type' => $subject['subject_type'] ?? '',
+                        'leaf_flag' => (int)($subject['leaf_flag'] ?? 1),
+                        'debit_cents' => 0,
+                        'credit_cents' => 0,
+                        'entry_count' => 0,
+                    ];
+                }
+                $summary[$summaryCode]['debit_cents'] += $this->decimalToCents($detail['debit_amount']);
+                $summary[$summaryCode]['credit_cents'] += $this->decimalToCents($detail['credit_amount']);
+                $summary[$summaryCode]['entry_count']++;
             }
-            $summary[$summaryCode]['debit_cents'] += $this->decimalToCents($detail['debit_amount']);
-            $summary[$summaryCode]['credit_cents'] += $this->decimalToCents($detail['credit_amount']);
-            $summary[$summaryCode]['entry_count']++;
         }
         ksort($summary);
 
@@ -265,6 +355,8 @@ class Book extends Common
                 'subject_name' => $item['subject_name'],
                 'level_no' => $item['level_no'],
                 'direction' => $item['direction'],
+                'subject_type' => $item['subject_type'],
+                'leaf_flag' => $item['leaf_flag'],
                 'debit_amount' => $this->centsToDecimal($debitCents),
                 'credit_amount' => $this->centsToDecimal($creditCents),
                 'balance_amount' => $this->centsToDecimal($debitCents - $creditCents),
@@ -466,9 +558,11 @@ class Book extends Common
     {
         $openingDebitCents = (int)$row['opening_debit_cents'];
         $openingCreditCents = (int)$row['opening_credit_cents'];
-        $yearDebitCents = (int)$row['year_debit_cents'];
-        $yearCreditCents = (int)$row['year_credit_cents'];
-        $endingNetCents = $openingDebitCents - $openingCreditCents + $yearDebitCents - $yearCreditCents;
+        $currentDebitCents = (int)$row['current_debit_cents'];
+        $currentCreditCents = (int)$row['current_credit_cents'];
+        $yearDebitCents = $currentDebitCents;
+        $yearCreditCents = $currentCreditCents;
+        $endingNetCents = $openingDebitCents - $openingCreditCents + $currentDebitCents - $currentCreditCents;
         $endingDebitCents = $endingNetCents > 0 ? $endingNetCents : 0;
         $endingCreditCents = $endingNetCents < 0 ? abs($endingNetCents) : 0;
         $balanceDirection = $endingNetCents > 0 ? 'DEBIT' : ($endingNetCents < 0 ? 'CREDIT' : 'BALANCED');
@@ -482,8 +576,8 @@ class Book extends Common
             'leaf_flag' => (int)$row['leaf_flag'],
             'opening_debit_amount' => $this->centsToDecimal($openingDebitCents),
             'opening_credit_amount' => $this->centsToDecimal($openingCreditCents),
-            'debit_amount' => $this->centsToDecimal($row['current_debit_cents']),
-            'credit_amount' => $this->centsToDecimal($row['current_credit_cents']),
+            'debit_amount' => $this->centsToDecimal($currentDebitCents),
+            'credit_amount' => $this->centsToDecimal($currentCreditCents),
             'year_debit_amount' => $this->centsToDecimal($yearDebitCents),
             'year_credit_amount' => $this->centsToDecimal($yearCreditCents),
             'ending_debit_amount' => $this->centsToDecimal($endingDebitCents),
@@ -491,6 +585,50 @@ class Book extends Common
             'balance_amount' => $this->centsToDecimal($endingNetCents),
             'balance_direction' => $balanceDirection,
         ];
+    }
+
+    protected function subjectBalanceRowVisible($row, $subjectStartCode, $subjectEndCode, $levelStart, $levelEnd, $maxLength, $zeroFilter)
+    {
+        $subjectCode = (string)($row['subject_code'] ?? '');
+        if ($subjectStartCode !== '' && strcmp($subjectCode, $subjectStartCode) < 0) {
+            return false;
+        }
+        if ($subjectEndCode !== '' && strcmp($subjectCode, $this->subjectRangeUpperBound($subjectEndCode, $maxLength)) > 0) {
+            return false;
+        }
+        $levelNo = (int)($row['level_no'] ?? 1);
+        if ($levelNo < $levelStart || $levelNo > $levelEnd) {
+            return false;
+        }
+        if ($zeroFilter === 'active') {
+            return $this->amountTextHasValue($row['debit_amount'] ?? 0) || $this->amountTextHasValue($row['credit_amount'] ?? 0);
+        }
+        if ($zeroFilter === 'balance') {
+            return $this->amountTextHasValue($row['ending_debit_amount'] ?? 0) || $this->amountTextHasValue($row['ending_credit_amount'] ?? 0);
+        }
+        if ($zeroFilter === 'nonzero') {
+            foreach ([
+                'opening_debit_amount',
+                'opening_credit_amount',
+                'debit_amount',
+                'credit_amount',
+                'year_debit_amount',
+                'year_credit_amount',
+                'ending_debit_amount',
+                'ending_credit_amount',
+            ] as $field) {
+                if ($this->amountTextHasValue($row[$field] ?? 0)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return true;
+    }
+
+    protected function amountTextHasValue($amount)
+    {
+        return $this->decimalToCents($amount) !== 0;
     }
 
     protected function reportYearStartPeriod($period)

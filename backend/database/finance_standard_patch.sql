@@ -225,7 +225,8 @@ create table if not exists fin_voucher (
     key idx_voucher_period (account_set_id, fiscal_year, period),
     unique key uk_voucher_no (account_set_id, fiscal_year, period, voucher_no),
     key idx_voucher_date (account_set_id, voucher_date),
-    key idx_voucher_del (account_set_id, del_flag)
+    key idx_voucher_del (account_set_id, del_flag),
+    key idx_voucher_ledger_period (account_set_id, fiscal_year, period, del_flag, status, voucher_date, voucher_no, voucher_id)
 );
 
 create table if not exists fin_voucher_detail (
@@ -252,8 +253,39 @@ create table if not exists fin_voucher_detail (
     key idx_voucher_detail_voucher (account_set_id, voucher_id),
     key idx_voucher_detail_id (voucher_id, detail_id),
     key idx_voucher_detail_subject (account_set_id, subject_code),
-    key idx_voucher_detail_del (account_set_id, del_flag)
+    key idx_voucher_detail_del (account_set_id, del_flag),
+    key idx_voucher_detail_ledger_subject (account_set_id, fiscal_year, del_flag, subject_code, period, voucher_id, line_no)
 );
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_voucher add index idx_voucher_ledger_period (account_set_id, fiscal_year, period, del_flag, status, voucher_date, voucher_no, voucher_id)',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_voucher'
+      and index_name = 'idx_voucher_ledger_period'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_voucher_detail add index idx_voucher_detail_ledger_subject (account_set_id, fiscal_year, del_flag, subject_code, period, voucher_id, line_no)',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_voucher_detail'
+      and index_name = 'idx_voucher_detail_ledger_subject'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
 
 create table if not exists fin_voucher_aux_value (
     id varchar(36) primary key,

@@ -154,14 +154,17 @@
         </el-table-column>
         <el-table-column prop="status" label="状态" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" effect="light" size="small">{{ statusText(row.status) }}</el-tag>
+            <div class="status-tags">
+              <el-tag :type="statusType(statusForRow(row))" effect="light" size="small">{{ statusText(statusForRow(row)) }}</el-tag>
+              <el-tag v-if="isPrintedRow(row)" type="primary" effect="plain" size="small">已打印</el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="240" fixed="right" align="center">
           <template #default="{ row }">
             <el-button v-if="canEditRow(row)" link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="row.status === 'SUBMITTED' && context.hasPermission('voucher:audit')" link type="success" :icon="Check" @click="audit(row)">审核</el-button>
-            <el-button v-if="row.status === 'AUDITED' && context.hasPermission('voucher:unaudit')" link type="warning" :icon="RefreshLeft" @click="unaudit(row)">取消审核</el-button>
+            <el-button v-if="canAuditRow(row)" link type="success" :icon="Check" @click="audit(row)">审核</el-button>
+            <el-button v-if="canUnauditRow(row)" link type="warning" :icon="RefreshLeft" @click="unaudit(row)">取消审核</el-button>
             <el-button v-if="canDeleteRow(row)" link type="danger" :icon="DeleteIcon" @click="deleteOne(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -512,12 +515,21 @@ const openEdit = (row: any) => {
   router.push(`/vouchers/edit/${row.period}/${row.voucher_id}`)
 }
 
+const isPrintedRow = (row: any) => String(row.printed_flag ?? row.printedFlag ?? '') === '1' || row.status === 'PRINTED'
+const statusForRow = (row: any) => {
+  if (row.status !== 'PRINTED') {
+    return row.status
+  }
+  return row.audit_by || row.auditBy || row.audit_time || row.auditTime ? 'AUDITED' : 'SUBMITTED'
+}
 const unreviewedStatuses = ['DRAFT', 'SUBMITTED']
-const isUnreviewed = (row: any) => unreviewedStatuses.includes(row.status)
+const isUnreviewed = (row: any) => unreviewedStatuses.includes(statusForRow(row))
 const isAutoCarry = (row: any) => row.source_type === 'AUTO_CARRY'
 const canEditRow = (row: any) => context.hasPermission('voucher:edit') && isUnreviewed(row)
 const canDeleteRow = (row: any) => context.hasPermission('voucher:delete') && isUnreviewed(row) && !isAutoCarry(row)
-const canPrintRow = (row: any) => context.hasPermission('voucher:print') && row.status !== 'VOIDED'
+const canAuditRow = (row: any) => statusForRow(row) === 'SUBMITTED' && context.hasPermission('voucher:audit')
+const canUnauditRow = (row: any) => statusForRow(row) === 'AUDITED' && context.hasPermission('voucher:unaudit')
+const canPrintRow = (row: any) => context.hasPermission('voucher:print') && statusForRow(row) !== 'VOIDED'
 const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row)
 
 const handleSelectionChange = (selection: any[]) => {
@@ -864,6 +876,14 @@ onMounted(load)
 <style scoped>
 .import-file-input {
   display: none;
+}
+
+.status-tags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
 .import-upload-area {

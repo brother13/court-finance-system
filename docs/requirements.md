@@ -42,7 +42,8 @@
 | account_set_id | UUID (varchar 36) | 账套ID(单院部署,仅做账套隔离) |
 | period | String | 会计期间 (如 2026-05) |
 | voucher_no | Int | 凭证号 (账套+期间内唯一) |
-| status | Enum | DRAFT 草稿 / SUBMITTED 未审核 / AUDITED 已审核 / PRINTED 已打印 / VOIDED 已作废 |
+| status | Enum | DRAFT 草稿 / SUBMITTED 未审核 / AUDITED 已审核 / VOIDED 已作废；打印不改变流程状态 |
+| printed_flag | String | 是否已打印，1 表示已打印 |
 
 #### 3.1.2 凭证明细表 (fin_voucher_detail,按年分表)
 | 字段 | 类型 | 说明 |

@@ -202,7 +202,9 @@ export interface LedgerRow {
 export interface SubjectSummaryRow {
   subject_code: string
   subject_name: string
+  subject_type?: string
   level_no: number
+  leaf_flag?: number
   direction: 'DEBIT' | 'CREDIT' | string
   debit_amount: string | number
   credit_amount: string | number

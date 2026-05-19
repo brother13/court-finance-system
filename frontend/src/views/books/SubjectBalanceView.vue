@@ -1,185 +1,623 @@
 <template>
-  <div class="page-header">
+  <div class="page-header subject-balance-header">
     <div>
       <h1>科目余额表</h1>
-      <p>按当前会计期间汇总各科目本期发生额与期末余额,支持快速核对凭证录入结果。</p>
+      <p>{{ context.accountSetName || '当前账套' }} · {{ filters.startPeriod }} 至 {{ filters.endPeriod }}</p>
     </div>
     <div class="page-actions">
-      <el-button :icon="Refresh" @click="load">刷新数据</el-button>
-      <el-button v-permission="'book:export'" type="primary" :icon="Download" @click="exportData">导出余额表</el-button>
+      <el-button :icon="Refresh" @click="load">刷新</el-button>
+      <el-button :icon="Printer" @click="printReport">打印</el-button>
+      <el-button v-permission="'book:export'" :icon="Download" @click="exportData">导出</el-button>
     </div>
   </div>
 
-  <div class="search-filter-section">
-    <div class="filter-grid">
-      <el-input v-model="keyword" placeholder="科目编码 / 名称" :prefix-icon="Search" clearable />
-      <el-select v-model="zeroFilter" placeholder="发生额过滤">
-        <el-option label="显示全部科目" value="all" />
-        <el-option label="仅显示有发生额" value="active" />
-        <el-option label="仅显示有余额" value="balance" />
-      </el-select>
-      <el-button type="primary" :icon="Search" @click="load">查询记录</el-button>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-header">
-      <strong>
-        <el-icon><Notebook /></el-icon>
-        科目余额表
-      </strong>
-      <span class="muted">
-        共 {{ filteredRows.length }} 个科目 · 合计按末级科目 · 本期借方 ¥ {{ totalDebit.toFixed(2) }} · 本期贷方 ¥ {{ totalCredit.toFixed(2) }}
-      </span>
-    </div>
-    <div class="panel-body compact">
-      <el-table :data="filteredRows" height="calc(100vh - 320px)" show-summary :summary-method="summaryMethod">
-        <el-table-column prop="subject_code" label="科目编码" width="140" align="center">
-          <template #default="{ row }">
-            <span class="text-mono" style="color: var(--brand-blue); font-weight: 600">{{ row.subject_code }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="subject_name" label="科目名称" min-width="220" />
-        <el-table-column label="期初余额" align="center">
-          <el-table-column prop="opening_debit_amount" label="借方" width="140" align="right">
+  <div class="subject-balance-workspace">
+    <section class="panel balance-report-panel">
+      <div class="panel-header balance-report-toolbar">
+        <div class="balance-toolbar-left">
+          <strong>
+            <el-icon><Notebook /></el-icon>
+            科目余额表
+          </strong>
+          <el-popover
+            v-model:visible="filterDropdownVisible"
+            placement="bottom-start"
+            trigger="click"
+            :width="720"
+            popper-class="subject-balance-filter-popper"
+          >
+            <template #reference>
+              <el-button type="primary" class="balance-filter-button">
+                <span>{{ filterSummaryText }}</span>
+                <el-icon class="filter-button-caret"><CaretBottom /></el-icon>
+              </el-button>
+            </template>
+            <div class="balance-filter-popover">
+              <el-form label-position="left" label-width="82px" class="balance-query-form">
+                <div class="filter-form-row">
+                  <el-form-item label="会计期间">
+                    <div class="period-range">
+                      <el-select v-model="filters.startPeriod" placeholder="起始期间" :teleported="false">
+                        <el-option v-for="period in periodOptions" :key="period" :label="periodLabel(period)" :value="period" />
+                      </el-select>
+                      <span>至</span>
+                      <el-select v-model="filters.endPeriod" placeholder="结束期间" :teleported="false">
+                        <el-option v-for="period in periodOptions" :key="period" :label="periodLabel(period)" :value="period" />
+                      </el-select>
+                    </div>
+                  </el-form-item>
+                </div>
+                <div class="filter-form-row two-columns">
+                  <el-form-item label="起始科目">
+                    <el-input v-model.trim="filters.subjectStartCode" placeholder="科目编码" clearable />
+                  </el-form-item>
+                  <el-form-item label="结束科目">
+                    <el-input v-model.trim="filters.subjectEndCode" placeholder="科目编码" clearable />
+                  </el-form-item>
+                </div>
+                <div class="filter-form-row two-columns">
+                  <el-form-item label="科目级别">
+                    <div class="level-range">
+                      <el-select v-model="filters.levelStart" :teleported="false">
+                        <el-option v-for="level in levelOptions" :key="level" :label="String(level)" :value="level" />
+                      </el-select>
+                      <span>至</span>
+                      <el-select v-model="filters.levelEnd" :teleported="false">
+                        <el-option v-for="level in levelOptions" :key="level" :label="String(level)" :value="level" />
+                      </el-select>
+                    </div>
+                  </el-form-item>
+                  <el-form-item label="显示范围">
+                    <el-select v-model="filters.zeroFilter" :teleported="false">
+                      <el-option label="全部科目" value="all" />
+                      <el-option label="有金额科目" value="nonzero" />
+                      <el-option label="有发生额科目" value="active" />
+                      <el-option label="有期末余额科目" value="balance" />
+                    </el-select>
+                  </el-form-item>
+                </div>
+              </el-form>
+              <div class="filter-popover-actions">
+                <el-button type="primary" :icon="Search" @click="applyFilters">确定</el-button>
+                <el-button @click="closeFilterDropdown">取消</el-button>
+                <el-button :icon="Refresh" @click="resetFilters">重置</el-button>
+              </div>
+            </div>
+          </el-popover>
+        </div>
+        <span class="muted">
+          共 {{ rows.length }} 个科目 · 本期借方 {{ amountText(totalDebit, true) }} · 本期贷方 {{ amountText(totalCredit, true) }}
+        </span>
+      </div>
+      <div class="panel-body compact">
+        <el-table
+          :data="balanceDisplayRows"
+          height="calc(100vh - 260px)"
+          show-summary
+          :summary-method="summaryMethod"
+          :row-class-name="tableRowClassName"
+          border
+        >
+          <el-table-column prop="subject_code" label="科目编码" width="150" fixed>
             <template #default="{ row }">
-              <span :class="['text-mono', Number(row.opening_debit_amount) > 0 ? 'amount-debit' : 'muted']">
-                {{ amountText(row.opening_debit_amount) }}
+              <span v-if="row.row_type === 'subtotal'" class="subtotal-label">{{ row.subject_code }}</span>
+              <span v-else class="text-mono subject-code">{{ row.subject_code }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="subject_name" label="科目名称" min-width="230" fixed>
+            <template #default="{ row }">
+              <span v-if="row.row_type === 'subtotal'" class="muted">小计</span>
+              <span
+                v-else
+                :class="['subject-name', hasChildSubject(row) ? 'subject-name-toggle' : '']"
+                :style="{ paddingLeft: `${Math.max(0, Number(row.level_no || 1) - 1) * 18}px` }"
+                @click="toggleSubjectCollapse(row)"
+              >
+                <el-icon v-if="hasChildSubject(row)" class="tree-caret">
+                  <CaretRight v-if="isSubjectCollapsed(row)" />
+                  <CaretBottom v-else />
+                </el-icon>
+                <span v-else class="leaf-spacer" />
+                {{ row.subject_name }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="opening_credit_amount" label="贷方" width="140" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.opening_credit_amount) > 0 ? 'amount-credit' : 'muted']">
-                {{ amountText(row.opening_credit_amount) }}
-              </span>
-            </template>
+          <el-table-column label="期初余额" align="center">
+            <el-table-column prop="opening_debit_amount" label="借方" width="140" align="right">
+              <template #default="{ row }">{{ amountText(row.opening_debit_amount) }}</template>
+            </el-table-column>
+            <el-table-column prop="opening_credit_amount" label="贷方" width="140" align="right">
+              <template #default="{ row }">{{ amountText(row.opening_credit_amount) }}</template>
+            </el-table-column>
           </el-table-column>
-        </el-table-column>
-        <el-table-column label="本期发生额" align="center">
-          <el-table-column prop="debit_amount" label="借方" width="160" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.debit_amount) > 0 ? 'amount-debit' : 'muted']">
-                {{ amountText(row.debit_amount) }}
-              </span>
-            </template>
+          <el-table-column label="本期发生额" align="center">
+            <el-table-column prop="debit_amount" label="借方" width="150" align="right">
+              <template #default="{ row }">{{ amountText(row.debit_amount) }}</template>
+            </el-table-column>
+            <el-table-column prop="credit_amount" label="贷方" width="150" align="right">
+              <template #default="{ row }">{{ amountText(row.credit_amount) }}</template>
+            </el-table-column>
           </el-table-column>
-          <el-table-column prop="credit_amount" label="贷方" width="160" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.credit_amount) > 0 ? 'amount-credit' : 'muted']">
-                {{ amountText(row.credit_amount) }}
-              </span>
-            </template>
+          <el-table-column label="本年累计发生额" align="center">
+            <el-table-column prop="year_debit_amount" label="借方" width="150" align="right">
+              <template #default="{ row }">{{ amountText(row.year_debit_amount) }}</template>
+            </el-table-column>
+            <el-table-column prop="year_credit_amount" label="贷方" width="150" align="right">
+              <template #default="{ row }">{{ amountText(row.year_credit_amount) }}</template>
+            </el-table-column>
           </el-table-column>
-        </el-table-column>
-        <el-table-column label="本年累计" align="center">
-          <el-table-column prop="year_debit_amount" label="借方" width="150" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.year_debit_amount) > 0 ? 'amount-debit' : 'muted']">
-                {{ amountText(row.year_debit_amount) }}
-              </span>
-            </template>
+          <el-table-column label="期末余额" align="center">
+            <el-table-column prop="ending_debit_amount" label="借方" width="150" align="right">
+              <template #default="{ row }">{{ amountText(row.ending_debit_amount) }}</template>
+            </el-table-column>
+            <el-table-column prop="ending_credit_amount" label="贷方" width="150" align="right">
+              <template #default="{ row }">{{ amountText(row.ending_credit_amount) }}</template>
+            </el-table-column>
           </el-table-column>
-          <el-table-column prop="year_credit_amount" label="贷方" width="150" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.year_credit_amount) > 0 ? 'amount-credit' : 'muted']">
-                {{ amountText(row.year_credit_amount) }}
-              </span>
-            </template>
-          </el-table-column>
-        </el-table-column>
-        <el-table-column label="期末余额" align="center">
-          <el-table-column prop="ending_debit_amount" label="借方" width="150" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.ending_debit_amount) > 0 ? 'amount-debit' : 'muted']">
-                {{ amountText(row.ending_debit_amount) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="ending_credit_amount" label="贷方" width="150" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.ending_credit_amount) > 0 ? 'amount-credit' : 'muted']">
-                {{ amountText(row.ending_credit_amount) }}
-              </span>
-            </template>
-          </el-table-column>
-        </el-table-column>
-      </el-table>
-    </div>
+        </el-table>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Download, Notebook, Refresh, Search } from '@element-plus/icons-vue'
+import { CaretBottom, CaretRight, Download, Notebook, Printer, Refresh, Search } from '@element-plus/icons-vue'
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
+import { createReportPrintPdf, type ReportPrintColumn } from '../../utils/reportPrintPdf'
+
+type BalanceRow = {
+  subject_code: string
+  subject_name: string
+  subject_type?: string
+  level_no: number
+  leaf_flag: number
+  row_type?: 'subject' | 'subtotal'
+  opening_debit_amount: string | number
+  opening_credit_amount: string | number
+  debit_amount: string | number
+  credit_amount: string | number
+  year_debit_amount: string | number
+  year_credit_amount: string | number
+  ending_debit_amount: string | number
+  ending_credit_amount: string | number
+}
 
 const context = useContextStore()
-const keyword = ref('')
-const zeroFilter = ref<'all' | 'active' | 'balance'>('all')
-const rows = ref<any[]>([])
+const levelOptions = [1, 2, 3, 4]
+const amountFields = [
+  'opening_debit_amount',
+  'opening_credit_amount',
+  'debit_amount',
+  'credit_amount',
+  'year_debit_amount',
+  'year_credit_amount',
+  'ending_debit_amount',
+  'ending_credit_amount'
+] as const
 
-const filteredRows = computed(() => {
-  let result = rows.value
-  if (keyword.value) {
-    const kw = keyword.value.toLowerCase()
-    result = result.filter((row) =>
-      String(row.subject_code).toLowerCase().includes(kw) ||
-      String(row.subject_name || '').toLowerCase().includes(kw)
-    )
+const rows = ref<BalanceRow[]>([])
+const collapsedSubjectCodes = ref<Set<string>>(new Set())
+const filterDropdownVisible = ref(false)
+const filters = reactive({
+  startPeriod: context.period,
+  endPeriod: context.period,
+  subjectStartCode: '',
+  subjectEndCode: '',
+  levelStart: 1,
+  levelEnd: 4,
+  zeroFilter: 'all' as 'all' | 'nonzero' | 'active' | 'balance'
+})
+
+const periodOptions = computed(() =>
+  Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
+)
+
+const typeLabels: Record<string, string> = {
+  ASSET: '资产',
+  LIABILITY: '负债',
+  COMMON: '共同',
+  EQUITY: '所有者权益',
+  COST: '成本',
+  PROFIT_LOSS: '损益'
+}
+
+const periodLabel = (period: string) => `${period.substring(0, 4)}年第${period.substring(5, 7)}期`
+const numericAmount = (value: string | number | undefined) => Number(value || 0)
+
+const amountText = (value: string | number | undefined, keepZero = false) => {
+  const amount = numericAmount(value)
+  if (!keepZero && Math.abs(amount) < 0.001) return ''
+  return Math.abs(amount).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+}
+
+const makeSubtotalRow = (typeCode: string, groupRows: BalanceRow[]): BalanceRow => {
+  const leafRows = groupRows.filter((row) => Number(row.leaf_flag) === 1)
+  const sourceRows = leafRows.length > 0 ? leafRows : groupRows
+  const subtotal = {
+    row_type: 'subtotal' as const,
+    subject_code: `${typeLabels[typeCode] || '未分类'}小计`,
+    subject_name: '',
+    subject_type: typeCode,
+    level_no: 0,
+    leaf_flag: 0
+  } as BalanceRow
+  for (const field of amountFields) {
+    subtotal[field] = sourceRows.reduce((sum, row) => sum + numericAmount(row[field]), 0).toFixed(2)
   }
-  if (zeroFilter.value === 'active') {
-    result = result.filter((row) => Number(row.debit_amount) > 0 || Number(row.credit_amount) > 0)
-  } else if (zeroFilter.value === 'balance') {
-    result = result.filter((row) => Number(row.ending_debit_amount) > 0 || Number(row.ending_credit_amount) > 0)
+  return subtotal
+}
+
+const isDescendantSubject = (row: BalanceRow, parent: BalanceRow | string) => {
+  const parentCode = typeof parent === 'string' ? parent : parent.subject_code
+  if (!parentCode || row.subject_code === parentCode) return false
+  return row.subject_code.startsWith(parentCode)
+}
+
+const hasChildSubject = (row: BalanceRow) => {
+  if (row.row_type === 'subtotal') return false
+  return rows.value.some((item) =>
+    Number(item.level_no) > Number(row.level_no) &&
+    isDescendantSubject(item, row)
+  )
+}
+
+const isSubjectCollapsed = (row: BalanceRow) => collapsedSubjectCodes.value.has(row.subject_code)
+
+const toggleSubjectCollapse = (row: BalanceRow) => {
+  if (!hasChildSubject(row)) return
+  const next = new Set(collapsedSubjectCodes.value)
+  if (next.has(row.subject_code)) {
+    next.delete(row.subject_code)
+  } else {
+    next.add(row.subject_code)
   }
-  return result
+  collapsedSubjectCodes.value = next
+}
+
+const visibleSubjectRows = computed(() => rows.value.filter((row) =>
+  !Array.from(collapsedSubjectCodes.value).some((subjectCode) => isDescendantSubject(row, subjectCode))
+))
+
+const balanceDisplayRows = computed(() => {
+  const displayRows: BalanceRow[] = []
+  let currentType = ''
+  let groupRows: BalanceRow[] = []
+  const flushGroup = () => {
+    if (groupRows.length === 0) return
+    displayRows.push(makeSubtotalRow(currentType, groupRows))
+    groupRows = []
+  }
+
+  for (const row of visibleSubjectRows.value) {
+    const rowType = row.subject_type || 'OTHER'
+    if (groupRows.length > 0 && rowType !== currentType) {
+      flushGroup()
+    }
+    currentType = rowType
+    displayRows.push({ ...row, row_type: 'subject' })
+    groupRows.push(row)
+  }
+  flushGroup()
+  return displayRows
 })
 
 const summaryRows = computed(() => {
-  const leafRows = filteredRows.value.filter((row) => Number(row.leaf_flag) === 1)
-  return leafRows.length > 0 ? leafRows : filteredRows.value
+  const leafRows = rows.value.filter((row) => Number(row.leaf_flag) === 1)
+  return leafRows.length > 0 ? leafRows : rows.value
 })
 
-const sumAmount = (field: string) => summaryRows.value.reduce((sum, row) => sum + (Number(row[field]) || 0), 0)
+const sumAmount = (field: string) => summaryRows.value.reduce((sum, row) => sum + numericAmount(row[field as keyof BalanceRow] as any), 0)
 const totalDebit = computed(() => sumAmount('debit_amount'))
 const totalCredit = computed(() => sumAmount('credit_amount'))
-
-const amountText = (val: any) => {
-  const num = Number(val) || 0
-  if (Math.abs(num) < 0.001) return '—'
-  return '¥ ' + Math.abs(num).toFixed(2)
+const filterSummaryText = computed(() => `${periodLabel(filters.startPeriod)} 至 ${periodLabel(filters.endPeriod)}`)
+const moneyText = (value: string | number | undefined) => {
+  const amount = numericAmount(value)
+  return Math.abs(amount) < 0.001 ? '' : amount.toFixed(2)
 }
+const balanceReportRows = computed(() => balanceDisplayRows.value.map((row) => ({
+  subject_code: row.subject_code,
+  subject_name: row.row_type === 'subtotal' ? '小计' : `${'  '.repeat(Math.max(0, Number(row.level_no || 1) - 1))}${row.subject_name}`,
+  opening_debit_amount: moneyText(row.opening_debit_amount),
+  opening_credit_amount: moneyText(row.opening_credit_amount),
+  debit_amount: moneyText(row.debit_amount),
+  credit_amount: moneyText(row.credit_amount),
+  year_debit_amount: moneyText(row.year_debit_amount),
+  year_credit_amount: moneyText(row.year_credit_amount),
+  ending_debit_amount: moneyText(row.ending_debit_amount),
+  ending_credit_amount: moneyText(row.ending_credit_amount)
+})))
+const balanceReportColumns: ReportPrintColumn[] = [
+  { key: 'subject_code', label: '科目编码', width: 13, align: 'center' },
+  { key: 'subject_name', label: '科目名称', width: 19 },
+  { key: 'opening_debit_amount', label: '期初借方', width: 10, align: 'right' },
+  { key: 'opening_credit_amount', label: '期初贷方', width: 10, align: 'right' },
+  { key: 'debit_amount', label: '本期借方', width: 10, align: 'right' },
+  { key: 'credit_amount', label: '本期贷方', width: 10, align: 'right' },
+  { key: 'year_debit_amount', label: '累计借方', width: 10, align: 'right' },
+  { key: 'year_credit_amount', label: '累计贷方', width: 10, align: 'right' },
+  { key: 'ending_debit_amount', label: '期末借方', width: 10, align: 'right' },
+  { key: 'ending_credit_amount', label: '期末贷方', width: 10, align: 'right' }
+]
 
 const summaryMethod = ({ columns }: { columns: any[] }) => {
   return columns.map((column, idx) => {
     if (idx === 0) return '合计'
     const property = column.property
-    if ([
-      'opening_debit_amount',
-      'opening_credit_amount',
-      'debit_amount',
-      'credit_amount',
-      'year_debit_amount',
-      'year_credit_amount',
-      'ending_debit_amount',
-      'ending_credit_amount'
-    ].includes(property)) {
-      return amountText(sumAmount(property))
+    if (amountFields.includes(property)) {
+      return amountText(sumAmount(property), true)
     }
     return ''
   })
 }
 
-const load = async () => {
-  rows.value = await booksApi.subjectBalance(context.period) as any[]
+const tableRowClassName = ({ row }: { row: BalanceRow }) => {
+  return row.row_type === 'subtotal' ? 'balance-subtotal-row' : ''
 }
 
-const exportData = () => {
-  ElMessage.info('导出功能开发中,可对接 Excel 导出接口')
+const resetFilters = () => {
+  filters.startPeriod = context.period
+  filters.endPeriod = context.period
+  filters.subjectStartCode = ''
+  filters.subjectEndCode = ''
+  filters.levelStart = 1
+  filters.levelEnd = 4
+  filters.zeroFilter = 'all'
+  collapsedSubjectCodes.value = new Set()
+  load()
+}
+
+const applyFilters = () => {
+  filterDropdownVisible.value = false
+  load()
+}
+
+const closeFilterDropdown = () => {
+  filterDropdownVisible.value = false
+}
+
+const load = async () => {
+  if (filters.startPeriod > filters.endPeriod) {
+    ElMessage.warning('起始期间不能晚于结束期间')
+    return
+  }
+  collapsedSubjectCodes.value = new Set()
+  rows.value = await booksApi.subjectBalance({
+    period: filters.endPeriod,
+    startPeriod: filters.startPeriod,
+    endPeriod: filters.endPeriod,
+    subjectStartCode: filters.subjectStartCode,
+    subjectEndCode: filters.subjectEndCode,
+    levelStart: filters.levelStart,
+    levelEnd: filters.levelEnd,
+    zeroFilter: filters.zeroFilter
+  }) as BalanceRow[]
+}
+
+const exportData = async () => {
+  if (rows.value.length === 0) {
+    ElMessage.warning('当前没有可导出的科目余额数据')
+    return
+  }
+  const XLSX = await import('xlsx')
+  const headers = ['科目编码', '科目名称', '期初借方', '期初贷方', '本期借方', '本期贷方', '本年累计借方', '本年累计贷方', '期末借方', '期末贷方']
+  const body = balanceReportRows.value.map((row) => [
+    row.subject_code,
+    row.subject_name,
+    Number(row.opening_debit_amount || 0),
+    Number(row.opening_credit_amount || 0),
+    Number(row.debit_amount || 0),
+    Number(row.credit_amount || 0),
+    Number(row.year_debit_amount || 0),
+    Number(row.year_credit_amount || 0),
+    Number(row.ending_debit_amount || 0),
+    Number(row.ending_credit_amount || 0)
+  ])
+  const totals = ['合计', '', sumAmount('opening_debit_amount'), sumAmount('opening_credit_amount'), sumAmount('debit_amount'), sumAmount('credit_amount'), sumAmount('year_debit_amount'), sumAmount('year_credit_amount'), sumAmount('ending_debit_amount'), sumAmount('ending_credit_amount')]
+  const sheet = XLSX.utils.aoa_to_sheet([['科目余额表'], [context.accountSetName || '当前账套', filterSummaryText.value], headers, ...body, totals])
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, sheet, '科目余额表')
+  XLSX.writeFile(workbook, `科目余额表_${filters.startPeriod}_${filters.endPeriod}.xlsx`)
+}
+
+const printReport = async () => {
+  if (rows.value.length === 0) {
+    ElMessage.warning('当前没有可打印的科目余额数据')
+    return
+  }
+  try {
+    const pdf = await createReportPrintPdf({
+      title: '科目余额表',
+      subtitle: `${context.accountSetName || '当前账套'} · ${filterSummaryText.value}`,
+      columns: balanceReportColumns,
+      rows: balanceReportRows.value,
+      totals: {
+        subject_code: '合计',
+        subject_name: '',
+        opening_debit_amount: sumAmount('opening_debit_amount').toFixed(2),
+        opening_credit_amount: sumAmount('opening_credit_amount').toFixed(2),
+        debit_amount: sumAmount('debit_amount').toFixed(2),
+        credit_amount: sumAmount('credit_amount').toFixed(2),
+        year_debit_amount: sumAmount('year_debit_amount').toFixed(2),
+        year_credit_amount: sumAmount('year_credit_amount').toFixed(2),
+        ending_debit_amount: sumAmount('ending_debit_amount').toFixed(2),
+        ending_credit_amount: sumAmount('ending_credit_amount').toFixed(2)
+      }
+    })
+    const url = URL.createObjectURL(pdf)
+    window.open(url, '_blank')
+    ElMessage.success('科目余额表PDF已生成')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '生成科目余额表PDF失败')
+  }
 }
 
 onMounted(load)
 </script>
+
+<style scoped>
+.subject-balance-header {
+  align-items: center;
+}
+
+.subject-balance-workspace {
+  min-width: 0;
+}
+
+.balance-query-form :deep(.el-form-item) {
+  margin-bottom: 14px;
+}
+
+.balance-query-form :deep(.el-form-item__label) {
+  color: var(--text-regular);
+  font-weight: 600;
+}
+
+.filter-form-row {
+  width: 100%;
+}
+
+.filter-form-row.two-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.balance-query-form :deep(.el-input),
+.balance-query-form :deep(.el-select) {
+  width: 100%;
+}
+
+.period-range,
+.level-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.period-range :deep(.el-select),
+.level-range :deep(.el-select) {
+  width: 100%;
+}
+
+.period-range span,
+.level-range span {
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.balance-report-panel {
+  border-radius: 8px;
+}
+
+.balance-report-toolbar {
+  align-items: center;
+  gap: 16px;
+}
+
+.balance-toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.balance-filter-button {
+  min-width: 290px;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.filter-button-caret {
+  margin-left: 10px;
+}
+
+.balance-filter-popover {
+  padding: 4px 2px 2px;
+}
+
+.filter-popover-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+:global(.subject-balance-filter-popper) {
+  padding: 18px 20px 16px;
+}
+
+.subject-code {
+  color: var(--brand-blue-active);
+  font-weight: 600;
+}
+
+.subject-name {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.subject-name-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.subject-name-toggle:hover {
+  color: var(--brand-blue-active);
+}
+
+.tree-caret {
+  margin-right: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.leaf-spacer {
+  display: inline-block;
+  width: 17px;
+}
+
+.subtotal-label {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+:deep(.balance-subtotal-row) {
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+:deep(.balance-subtotal-row td) {
+  border-top: 1px solid #d8e0ea;
+}
+
+:deep(.el-table th.el-table__cell) {
+  background: #f4f7fb;
+  color: var(--text-regular);
+  font-weight: 700;
+}
+
+:deep(.el-table .cell) {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .filter-form-row.two-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .balance-filter-button {
+    width: 100%;
+    min-width: 0;
+  }
+}
+</style>

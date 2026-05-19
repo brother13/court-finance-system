@@ -28,7 +28,11 @@ $checks = [
     [$book, "case 'subjectSummary'", 'Book should route subjectSummary'],
     [$book, 'public function subjectSummary', 'Book should expose subjectSummary'],
     [$book, "requirePermission('book:view')", 'Subject summary should require book view permission'],
-    [$book, 'subjectSummaryCode', 'Subject summary should aggregate details by configured subject level'],
+    [$book, 'ancestorSubjectCodes($detail[\'subject_code\']', 'Subject summary should aggregate details to every configured subject level'],
+    [$book, 'subject_type', 'Subject summary rows should expose subject type for financial statement ordering'],
+    [$book, "'start_period'", 'Subject summary should accept a start accounting period'],
+    [$book, "'end_period'", 'Subject summary should accept an end accounting period'],
+    [$book, "where('d.period', 'between'", 'Subject summary should query voucher details by accounting period range'],
     [$book, 'subjectRangeUpperBound', 'Subject summary should include descendants of the ending subject code'],
     [$book, 'subjectRangeUpperBound($subjectCode', 'Detail ledger should include descendants when drilling into a non-leaf subject'],
     [$book, "v.status' => ['in', ['AUDITED', 'PRINTED']]", 'Subject summary should use audited and printed vouchers'],
@@ -50,9 +54,21 @@ require_once __DIR__ . '/../app/finance/model/Book.php';
 $model = new app\finance\model\Book();
 $summaryCode = new ReflectionMethod(app\finance\model\Book::class, 'subjectSummaryCode');
 $summaryCode->setAccessible(true);
+$ancestors = new ReflectionMethod(app\finance\model\Book::class, 'ancestorSubjectCodes');
+$ancestors->setAccessible(true);
 $upperBound = new ReflectionMethod(app\finance\model\Book::class, 'subjectRangeUpperBound');
 $upperBound->setAccessible(true);
 $rule = [4, 2, 2, 2];
+$subjectMap = [
+    '1002' => ['subject_code' => '1002'],
+    '100201' => ['subject_code' => '100201'],
+    '10020101' => ['subject_code' => '10020101'],
+];
+
+if ($ancestors->invoke($model, '10020101', $subjectMap, $rule) !== ['1002', '100201', '10020101']) {
+    fwrite(STDERR, 'Subject summary should expose every configured level for a detail subject' . PHP_EOL);
+    exit(1);
+}
 
 if ($summaryCode->invoke($model, '10020101', 1, $rule) !== '1002') {
     fwrite(STDERR, 'Subject summary should roll detail code 10020101 up to level 1 code 1002' . PHP_EOL);

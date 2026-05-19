@@ -307,6 +307,7 @@ create index idx_voucher_period on fin_voucher (account_set_id, fiscal_year, per
 create unique index uk_voucher_no on fin_voucher (account_set_id, fiscal_year, period, voucher_no);
 create index idx_voucher_date on fin_voucher (account_set_id, voucher_date);
 create index idx_voucher_del on fin_voucher (account_set_id, del_flag);
+create index idx_voucher_ledger_period on fin_voucher (account_set_id, fiscal_year, period, del_flag, status, voucher_date, voucher_no, voucher_id);
 
 create table fin_voucher_detail (
     detail_id varchar(36) primary key,
@@ -335,6 +336,7 @@ create index idx_voucher_detail_voucher on fin_voucher_detail (account_set_id, v
 create index idx_voucher_detail_id on fin_voucher_detail (voucher_id, detail_id);
 create index idx_voucher_detail_subject on fin_voucher_detail (account_set_id, subject_code);
 create index idx_voucher_detail_del on fin_voucher_detail (account_set_id, del_flag);
+create index idx_voucher_detail_ledger_subject on fin_voucher_detail (account_set_id, fiscal_year, del_flag, subject_code, period, voucher_id, line_no);
 
 create table fin_voucher_aux_value (
     id varchar(36) primary key,

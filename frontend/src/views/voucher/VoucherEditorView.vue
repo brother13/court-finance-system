@@ -155,7 +155,7 @@
           <el-icon><component :is="isBalanced ? CircleCheck : WarningFilled" /></el-icon>
           {{ isBalanced ? (isReadonly ? '借贷平衡' : '借贷平衡，可以保存') : `借贷不平衡，差额 ${money(Math.abs(difference))}` }}
         </span>
-        <small>分录 {{ validLineCount }} 行 · 状态：{{ statusText(form.status) }}</small>
+        <small>分录 {{ validLineCount }} 行 · 状态：{{ statusText(statusForForm) }}</small>
       </div>
       <div v-if="!isReadonly" class="paper-actions-buttons">
         <el-button :icon="Plus" @click="addLine">增行</el-button>
@@ -280,7 +280,13 @@ const pageMode = computed(() => String(route.meta.mode || (route.params.voucherI
 const isViewMode = computed(() => pageMode.value === 'view')
 const isEditMode = computed(() => pageMode.value === 'edit')
 const editableStatuses = ['DRAFT', 'SUBMITTED']
-const isEditableStatus = computed(() => !form.status || editableStatuses.includes(form.status))
+const statusForForm = computed(() => {
+  if (form.status !== 'PRINTED') {
+    return form.status
+  }
+  return form.auditBy ? 'AUDITED' : 'SUBMITTED'
+})
+const isEditableStatus = computed(() => !statusForForm.value || editableStatuses.includes(statusForForm.value))
 const isReadonly = computed(() => isViewMode.value || (isEditMode.value && !isEditableStatus.value))
 const pageTitle = computed(() => (isViewMode.value ? '凭证查看' : isEditMode.value ? '凭证编辑' : '凭证录入'))
 
