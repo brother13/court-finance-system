@@ -21,11 +21,16 @@ for (const [name, source, apiCall] of [
   assert(source.includes("v-permission=\"'case_fund:delete'\""), `${name} delete button should require case_fund:delete`)
   assert(source.includes('ElMessageBox.confirm'), `${name} delete should ask for confirmation`)
   assert(source.includes(apiCall), `${name} delete should call API wrapper`)
-  assert(source.includes('type="danger"'), `${name} delete button should be danger style`)
+  if (name === 'bank statement') {
+    assert(source.includes('type="danger"'), `${name} delete button should be danger style`)
+  } else {
+    assert(source.includes('class="danger-dropdown-item"'), `${name} delete dropdown item should use danger style`)
+    assert(source.includes('command="delete"'), `${name} delete action should be available from the more-actions dropdown`)
+  }
 }
 
-assert(paymentView.includes("row.voucher_status === 'UNGENERATED'"), 'payment table should only select ungenerated rows')
-assert(refundView.includes("row.voucher_status === 'UNGENERATED'"), 'refund table should only select ungenerated rows')
+assert(paymentView.includes("selectedPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'payment delete should reject selected generated rows before calling delete API')
+assert(refundView.includes("selectedRefundRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'refund delete should reject selected generated rows before calling delete API')
 assert(bankView.includes("row.reconcile_status === 'UNMATCHED'"), 'bank statement table should only select unmatched rows')
 
 console.log('Case fund delete actions test passed')

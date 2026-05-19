@@ -25,6 +25,9 @@ $checks = [
     ['fin_voucher_aux_value', 'Refund voucher generation should write voucher aux values'],
     ['generateRefundVoucherByOutOrderNoFlag', 'Refund voucher generation should read out-order grouping config'],
     ['groupRefundRowsForVoucher', 'Refund voucher generation should group rows through a dedicated helper'],
+    ['assertRowsCanGenerateVoucher', 'Refund voucher generation should validate whether selected generated rows can be regenerated'],
+    ['hasActiveGeneratedVoucher', 'Refund voucher generation should block duplicate generation when the original voucher is still active'],
+    ["'GENERATED' &&", 'Refund voucher generation should inspect generated rows before allowing regeneration'],
     ["'out_order_no'", 'Refund voucher generation should use out_order_no for grouping'],
     ["'SINGLE:' . \$row['refund_id']", 'Refund voucher generation should fall back to single-row grouping when out_order_no is empty'],
     ['buildRefundAggregateCreditDetail', 'Refund voucher generation should build one credit line for an out-order group'],
@@ -52,6 +55,68 @@ foreach ($schemaChecks as [$haystack, $needle, $message]) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }
+}
+
+if (!function_exists('input')) {
+    function input($key = '', $default = null)
+    {
+        return $default;
+    }
+}
+
+if (!function_exists('config')) {
+    function config($key = '')
+    {
+        if ($key === 'default_account_set_id') {
+            return '00000000-0000-0000-0000-000000000101';
+        }
+        if ($key === 'default_year') {
+            return '2026';
+        }
+        return null;
+    }
+}
+
+if (!function_exists('getNowTime')) {
+    function getNowTime()
+    {
+        return date('Y-m-d H:i:s');
+    }
+}
+
+require_once __DIR__ . '/../app/finance/model/Common.php';
+require_once $modelPath;
+
+use app\finance\model\CaseFund;
+
+$caseFund = new CaseFund();
+$groupMethod = new ReflectionMethod(CaseFund::class, 'groupRefundRowsForVoucher');
+$groupMethod->setAccessible(true);
+$sampleRows = [
+    ['refund_id' => 'refund-1', 'refund_date' => '2026-03-02', 'out_order_no' => 'OUT-001', 'case_no' => '案一'],
+    ['refund_id' => 'refund-2', 'refund_date' => '2026-03-02', 'out_order_no' => 'OUT-001', 'case_no' => '案二'],
+    ['refund_id' => 'refund-3', 'refund_date' => '2026-03-02', 'out_order_no' => '', 'case_no' => '案三'],
+    ['refund_id' => 'refund-4', 'refund_date' => '2026-03-03', 'out_order_no' => 'OUT-001', 'case_no' => '案四'],
+];
+
+$singleGroups = $groupMethod->invoke($caseFund, $sampleRows, 0, 1);
+if (count($singleGroups) !== 4) {
+    fwrite(STDERR, 'Refund out-order grouping should require daily voucher generation; expected 4 single groups when by-day is off' . PHP_EOL);
+    exit(1);
+}
+foreach ($singleGroups as $groupRows) {
+    if (count($groupRows) !== 1) {
+        fwrite(STDERR, 'Refund out-order grouping should not merge rows when by-day is off' . PHP_EOL);
+        exit(1);
+    }
+}
+
+$outOrderGroups = $groupMethod->invoke($caseFund, $sampleRows, 1, 1);
+$groupSizes = array_map('count', $outOrderGroups);
+sort($groupSizes);
+if ($groupSizes !== [1, 1, 2] || count($outOrderGroups['SINGLE:refund-3'] ?? []) !== 1) {
+    fwrite(STDERR, 'Refund out-order grouping should merge same-day non-empty out_order_no only when by-day is on, and keep empty out_order_no single' . PHP_EOL);
+    exit(1);
 }
 
 echo 'Case fund refund generate voucher test passed' . PHP_EOL;

@@ -981,10 +981,9 @@ class CaseFund extends Common
             return $this->error('所选缴费记录不存在');
         }
 
-        foreach ($rows as $row) {
-            if ($row['voucher_status'] !== 'UNGENERATED') {
-                return $this->error('案号【' . $row['case_no'] . '】的缴费记录已生成凭证，不允许重复生成');
-            }
+        $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '缴费记录');
+        if ($generationCheck !== null) {
+            return $this->error($generationCheck);
         }
 
         $bizType = $this->currentAccountSetBizType();
@@ -1252,10 +1251,9 @@ class CaseFund extends Common
             return $this->error('所选退付记录不存在');
         }
 
-        foreach ($rows as $row) {
-            if ($row['voucher_status'] !== 'UNGENERATED') {
-                return $this->error('案号【' . $row['case_no'] . '】的退付记录已生成凭证，不允许重复生成');
-            }
+        $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '退付记录');
+        if ($generationCheck !== null) {
+            return $this->error($generationCheck);
         }
 
         $bizType = $this->currentAccountSetBizType();
@@ -1306,7 +1304,7 @@ class CaseFund extends Common
                 $firstRow = $groupRows[0];
                 $period = substr($firstRow['refund_date'], 0, 7);
                 $voucherDate = $firstRow['refund_date'];
-                $aggregateByOutOrderNo = $byOutOrderNoFlag === 1 && trim((string)($firstRow['out_order_no'] ?? '')) !== '';
+                $aggregateByOutOrderNo = $byDayFlag === 1 && $byOutOrderNoFlag === 1 && trim((string)($firstRow['out_order_no'] ?? '')) !== '';
 
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
                     throw new \Exception('出账日期格式不正确：' . $voucherDate);
@@ -1522,19 +1520,54 @@ class CaseFund extends Common
         ], '成功生成 ' . $generatedCount . ' 张凭证');
     }
 
+    protected function assertRowsCanGenerateVoucher($rows, $recordLabel)
+    {
+        foreach ($rows as $row) {
+            $status = $row['voucher_status'] ?? 'UNGENERATED';
+            if ($status === 'UNGENERATED') {
+                continue;
+            }
+            if ($status === 'GENERATED' && !$this->hasActiveGeneratedVoucher($row)) {
+                continue;
+            }
+            if ($status === 'GENERATED') {
+                return '案号【' . $row['case_no'] . '】的' . $recordLabel . '已生成凭证且原凭证仍有效，不允许重复生成';
+            }
+            return '案号【' . $row['case_no'] . '】的' . $recordLabel . '制证状态为【' . $status . '】，不允许生成凭证';
+        }
+        return null;
+    }
+
+    protected function hasActiveGeneratedVoucher($row)
+    {
+        $voucherId = trim((string)($row['voucher_id'] ?? ''));
+        if ($voucherId === '') {
+            return false;
+        }
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'voucher_id' => $voucherId,
+            'del_flag' => 0,
+        ];
+        $period = trim((string)($row['voucher_period'] ?? ''));
+        if ($period !== '') {
+            $where['period'] = $period;
+        }
+        return (int)$this->getdb('fin_voucher')->where($where)->count() > 0;
+    }
+
     protected function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
     {
         $groups = [];
-        if ((int)$byOutOrderNoFlag === 1) {
+        if ((int)$byDayFlag === 1 && (int)$byOutOrderNoFlag === 1) {
             foreach ($rows as $row) {
+                $date = $row['refund_date'];
                 $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
-                if ($outOrderNo === '') {
-                    $outOrderNo = 'SINGLE:' . $row['refund_id'];
+                $key = $outOrderNo === '' ? 'SINGLE:' . $row['refund_id'] : $date . '|' . $outOrderNo;
+                if (!isset($groups[$key])) {
+                    $groups[$key] = [];
                 }
-                if (!isset($groups[$outOrderNo])) {
-                    $groups[$outOrderNo] = [];
-                }
-                $groups[$outOrderNo][] = $row;
+                $groups[$key][] = $row;
             }
             return $groups;
         }

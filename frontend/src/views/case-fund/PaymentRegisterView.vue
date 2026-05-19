@@ -23,9 +23,19 @@
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handlePaymentImportFile" />
         <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
-        <el-button v-permission="'case_fund:delete'" type="danger" :icon="Delete" :loading="deleting" @click="handleDeletePayments">删除</el-button>
-        <el-button v-permission="'case_fund:subject_config'" :icon="Setting" @click="openSubjectConfig">科目配置</el-button>
-        <el-button v-permission="'case_fund:import'" type="primary" :icon="Upload" :loading="importing" @click="choosePaymentImportFile">导入缴费</el-button>
+        <el-dropdown v-if="canUseMoreActions" trigger="click" @command="handleMoreAction">
+          <el-button :icon="MoreFilled">
+            更多功能
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-permission="'case_fund:delete'" command="delete" :icon="Delete" :disabled="deleting" class="danger-dropdown-item" style="color: var(--el-color-danger)">删除</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:subject_config'" command="subjectConfig" :icon="Setting">科目配置</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="importing">导入缴费</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
@@ -138,7 +148,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Setting, Upload, DocumentChecked, Delete } from '@element-plus/icons-vue'
+import { ArrowDown, Search, Setting, Upload, DocumentChecked, Delete, MoreFilled } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
@@ -156,6 +166,7 @@ const generating = ref(false)
 const deleting = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedPaymentIds = ref<string[]>([])
+const selectedPaymentRows = ref<CaseFundPayment[]>([])
 const subjectConfigVisible = ref(false)
 const subjectConfigLoading = ref(false)
 const subjectConfigSaving = ref(false)
@@ -177,6 +188,7 @@ const pageAmountText = computed(() => {
 })
 
 const ungeneratedCount = computed(() => rows.value.filter((row) => row.voucher_status === 'UNGENERATED').length)
+const canUseMoreActions = computed(() => context.hasAnyPermission(['case_fund:delete', 'case_fund:subject_config', 'case_fund:import']))
 const subjectOptions = computed(() => subjects.value.filter((subject: any) => {
   return Number(subject.leaf_flag ?? subject.leafFlag) === 1
     && Number(subject.voucher_entry_flag ?? 1) === 1
@@ -296,6 +308,20 @@ function initialPaymentDateRange(period: string) {
   }
 }
 
+const handleMoreAction = (command: string | number | object) => {
+  if (command === 'delete') {
+    void handleDeletePayments()
+    return
+  }
+  if (command === 'subjectConfig') {
+    void openSubjectConfig()
+    return
+  }
+  if (command === 'import') {
+    choosePaymentImportFile()
+  }
+}
+
 const choosePaymentImportFile = () => {
   if (!importInputRef.value) return
   importInputRef.value.value = ''
@@ -362,10 +388,11 @@ const subjectCode = (subject: Subject) => subject.subject_code || subject.subjec
 const subjectLabel = (subject: Subject) => `${subjectCode(subject)} ${subject.subject_name || subject.subjectName}`
 
 const isRowSelectable = (row: CaseFundPayment) => {
-  return row.voucher_status === 'UNGENERATED'
+  return row.voucher_status === 'UNGENERATED' || row.voucher_status === 'GENERATED'
 }
 
 const handleSelectionChange = (selection: CaseFundPayment[]) => {
+  selectedPaymentRows.value = selection
   selectedPaymentIds.value = selection.map((row) => row.payment_id)
 }
 
@@ -399,6 +426,10 @@ const handleGenerateVoucher = async () => {
 const handleDeletePayments = async () => {
   if (selectedPaymentIds.value.length === 0) {
     ElMessage.warning('请选择要删除的未制证缴费记录')
+    return
+  }
+  if (selectedPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')) {
+    ElMessage.warning('已制证缴费记录不能删除；如原凭证已删除，请使用生成凭证重新制证')
     return
   }
   try {
