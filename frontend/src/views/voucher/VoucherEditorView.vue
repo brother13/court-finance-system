@@ -13,6 +13,7 @@
   </div>
 
   <div class="panel voucher-u8-panel">
+    <img v-if="auditStampVisible" class="voucher-audit-stamp" :src="auditStampUrl" alt="已审核" />
     <div class="voucher-u8-title">
       <h2>记账凭证</h2>
       <span>{{ context.unitName || '当前单位' }} · {{ form.period }}</span>
@@ -57,7 +58,7 @@
           <tr>
             <th class="entry-index">序号</th>
             <th class="entry-summary">摘要</th>
-            <th class="entry-subject">科目编码 / 科目名称</th>
+            <th class="entry-subject">科目</th>
             <th class="entry-aux">辅助核算</th>
             <th class="entry-money">借方金额</th>
             <th class="entry-money">贷方金额</th>
@@ -217,6 +218,7 @@ import { baseApi } from '../../api/base'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
 import type { Subject, SubjectAuxConfig, Voucher } from '../../types/api'
+import auditStampUrl from '../../assets/audit.bf7a8a4c.png'
 
 interface VoucherLine {
   uid: string
@@ -289,6 +291,7 @@ const statusForForm = computed(() => {
 const isEditableStatus = computed(() => !statusForForm.value || editableStatuses.includes(statusForForm.value))
 const isReadonly = computed(() => isViewMode.value || (isEditMode.value && !isEditableStatus.value))
 const pageTitle = computed(() => (isViewMode.value ? '凭证查看' : isEditMode.value ? '凭证编辑' : '凭证录入'))
+const auditStampVisible = computed(() => isViewMode.value && statusForForm.value === 'AUDITED')
 
 const statusText = (status: string) =>
   ({

@@ -2337,8 +2337,37 @@ body {
 }
 
 .voucher-u8-panel {
+  position: relative;
   padding: 24px;
   overflow: visible;
+}
+
+.voucher-audit-stamp {
+  position: absolute;
+  top: 30px;
+  right: 44px;
+  z-index: 2;
+  width: 118px;
+  height: 118px;
+  object-fit: contain;
+  opacity: 0.92;
+  pointer-events: none;
+  user-select: none;
+}
+
+.voucher-u8-panel .el-input.is-disabled,
+.voucher-u8-panel .el-select.is-disabled,
+.voucher-u8-panel .el-date-editor.is-disabled,
+.voucher-u8-panel .el-input-number.is-disabled {
+  --el-disabled-text-color: #1f2937;
+}
+
+.voucher-u8-panel .el-input.is-disabled .el-input__inner,
+.voucher-u8-panel .el-select.is-disabled .el-select__placeholder,
+.voucher-u8-panel .el-select.is-disabled .el-select__selected-item {
+  color: #1f2937;
+  opacity: 1;
+  -webkit-text-fill-color: #1f2937;
 }
 
 .voucher-u8-title {
@@ -2430,11 +2459,11 @@ body {
 }
 
 .entry-summary {
-  width: 210px;
+  width: 290px;
 }
 
 .entry-subject {
-  width: 260px;
+  width: 180px;
 }
 
 .entry-aux {

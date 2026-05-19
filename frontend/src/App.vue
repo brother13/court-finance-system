@@ -40,6 +40,10 @@
           <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">案款退付登记</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
         </el-sub-menu>
+        <el-menu-item v-if="context.hasPermission('period:close')" index="/period/close">
+          <el-icon><Calendar /></el-icon>
+          <span>期末结账</span>
+        </el-menu-item>
         <el-sub-menu v-if="context.hasAnyPermission(['menu:base:subject', 'menu:base:opening', 'menu:base:aux'])" index="/base">
           <template #title>
             <el-icon><Grid /></el-icon>
@@ -118,7 +122,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close, Coin, DataLine, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
+import { Calendar, Close, Coin, DataLine, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
 
@@ -148,6 +152,7 @@ const titleMap: Record<string, string> = {
   '/case-fund/payments': '案款缴费登记',
   '/case-fund/refunds': '案款退付登记',
   '/case-fund/bank-statements': '银行对账单',
+  '/period/close': '期末结账',
   '/base/subjects': '科目',
   '/base/opening-balances': '期初',
   '/base/aux-items': '辅助核算项',

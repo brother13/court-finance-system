@@ -41,7 +41,7 @@ $checks = [
     [$book, 'normalBalanceCents', 'Aux balance should calculate ending balance by subject direction'],
     [$book, "'children'", 'Aux balance should return receipt rows under case rows'],
     [$book, "'monitor_flag'", 'Aux balance should mark non-zero receipt balances for monitoring'],
-    [$book, "v.status' => ['in', ['AUDITED', 'PRINTED']]", 'Aux balance should use audited and printed vouchers'],
+    [$book, "v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']]", 'Aux balance should use audited, posted and printed vouchers during posting transition'],
     [$rbac, "'menu:book:aux_balance'", 'RBAC should define auxiliary balance menu permission'],
     [$rbac, "'辅助核算余额表'", 'RBAC should name auxiliary balance menu'],
 ];

@@ -1245,6 +1245,7 @@ class CaseFund extends Common
             ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
             ->where('refund_id', 'in', $refundIds)
             ->field(self::REFUND_FIELD)
+            ->order('refund_date asc, source_row_no asc')
             ->select();
 
         if (empty($rows)) {
@@ -1330,86 +1331,12 @@ class CaseFund extends Common
                 $voucherId = uuid();
                 $voucherNo = $this->generateNextVoucherNo($period);
 
-                $totalDebit = 0;
-                $detailsData = [];
-                $lineNo = 1;
-                $aggregateCreditBuckets = [];
-
-                foreach ($groupRows as $row) {
-                    $outType = $row['out_type'];
-                    $config = $subjectConfigMap[$outType];
-                    $summary = trim($row['case_no'] . ' ' . ($row['party_name'] ?: $row['actual_payee_name']) . ' 退付');
-                    $amountCents = $this->decimalToCents($row['refund_amount']);
-                    $amountDecimal = $this->centsToDecimal($amountCents);
-                    $totalDebit += $amountCents;
-                    $receiptNo = $row['source_receipt_no'] ?: ($row['receipt_no'] ?? '');
-
-                    $auxValues = [
-                        ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
-                        ['aux_type_code' => 'receipt_no', 'aux_value' => $receiptNo, 'aux_label' => $receiptNo],
-                    ];
-
-                    $debitDetailId = uuid();
-                    $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
-                    $detailsData[] = [
-                        'detail_id' => $debitDetailId,
-                        'line_no' => $lineNo++,
-                        'subject_code' => $config['debit_subject_code'],
-                        'summary' => $summary,
-                        'debit_amount' => $amountDecimal,
-                        'credit_amount' => '0.00',
-                        'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                        'aux_desc' => $this->buildAuxDesc($auxValues),
-                        'aux_values' => $auxValues,
-                    ];
-
-                    $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-                    $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
-                    if ($aggregateByOutOrderNo && $outOrderNo !== '') {
-                        if (!isset($aggregateCreditBuckets[$outOrderNo])) {
-                            $aggregateCreditBuckets[$outOrderNo] = [
-                                'subject_code' => $config['credit_subject_code'],
-                                'configs' => $creditConfigs,
-                                'amount_cents' => 0,
-                            ];
-                        } elseif ($aggregateCreditBuckets[$outOrderNo]['subject_code'] !== $config['credit_subject_code']) {
-                            throw new \Exception('同一出账单号【' . $row['out_order_no'] . '】存在不同贷方科目配置，不允许汇总生成一张凭证');
-                        }
-                        if ($this->hasRequiredAuxConfigs($creditConfigs)) {
-                            throw new \Exception('贷方科目【' . $config['credit_subject_code'] . '】存在必填辅助核算，不允许按出账单号合并为一条贷方分录');
-                        }
-                        $aggregateCreditBuckets[$outOrderNo]['amount_cents'] += $amountCents;
-                    } else {
-                        $creditDetailId = uuid();
-                        $detailsData[] = [
-                            'detail_id' => $creditDetailId,
-                            'line_no' => $lineNo++,
-                            'subject_code' => $config['credit_subject_code'],
-                            'summary' => $summary,
-                            'debit_amount' => '0.00',
-                            'credit_amount' => $amountDecimal,
-                            'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                            'aux_desc' => $this->buildAuxDesc($auxValues),
-                            'aux_values' => $auxValues,
-                        ];
-                    }
-                }
+                $detailBuildResult = $this->buildRefundVoucherDetailsData($groupRows, $subjectConfigMap, $aggregateByOutOrderNo);
+                $detailsData = $detailBuildResult['details'];
+                $totalDebit = $detailBuildResult['total_cents'];
 
                 if ($totalDebit <= 0) {
                     throw new \Exception('凭证金额必须大于0');
-                }
-
-                if ($aggregateByOutOrderNo) {
-                    foreach ($aggregateCreditBuckets as $outOrderNo => $bucket) {
-                        $detailsData[] = $this->buildRefundAggregateCreditDetail(
-                            uuid(),
-                            $lineNo++,
-                            $bucket['subject_code'],
-                            '出账单号' . $outOrderNo . ' 退付合计',
-                            $bucket['amount_cents'],
-                            $bucket['configs']
-                        );
-                    }
                 }
 
                 $voucher = [
@@ -1580,6 +1507,133 @@ class CaseFund extends Common
             $groups[$row['refund_id']] = [$row];
         }
         return $groups;
+    }
+
+    protected function buildRefundVoucherDetailsData($groupRows, $subjectConfigMap, $aggregateByOutOrderNo)
+    {
+        $detailsData = [];
+        $totalDebit = 0;
+        $lineNo = 1;
+        $outOrderCounts = [];
+        $processedOutOrders = [];
+
+        if ($aggregateByOutOrderNo) {
+            foreach ($groupRows as $row) {
+                $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
+                if ($outOrderNo === '') {
+                    continue;
+                }
+                $outOrderCounts[$outOrderNo] = ($outOrderCounts[$outOrderNo] ?? 0) + 1;
+            }
+        }
+
+        foreach ($groupRows as $row) {
+            $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
+            $shouldAggregate = $aggregateByOutOrderNo
+                && $outOrderNo !== ''
+                && ($outOrderCounts[$outOrderNo] ?? 0) > 1;
+
+            if ($shouldAggregate) {
+                if (isset($processedOutOrders[$outOrderNo])) {
+                    continue;
+                }
+                $processedOutOrders[$outOrderNo] = true;
+                $aggregateAmountCents = 0;
+                $aggregateCreditSubjectCode = '';
+                $aggregateCreditConfigs = [];
+
+                foreach ($groupRows as $bucketRow) {
+                    if (trim((string)($bucketRow['out_order_no'] ?? '')) !== $outOrderNo) {
+                        continue;
+                    }
+                    $outType = $bucketRow['out_type'];
+                    $config = $subjectConfigMap[$outType];
+                    $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+                    if ($aggregateCreditSubjectCode === '') {
+                        $aggregateCreditSubjectCode = $config['credit_subject_code'];
+                        $aggregateCreditConfigs = $creditConfigs;
+                    } elseif ($aggregateCreditSubjectCode !== $config['credit_subject_code']) {
+                        throw new \Exception('同一出账单号【' . $bucketRow['out_order_no'] . '】存在不同贷方科目配置，不允许汇总生成一张凭证');
+                    }
+                    if ($this->hasRequiredAuxConfigs($creditConfigs)) {
+                        throw new \Exception('贷方科目【' . $config['credit_subject_code'] . '】存在必填辅助核算，不允许按出账单号合并为一条贷方分录');
+                    }
+
+                    $debitResult = $this->buildRefundDebitDetailData($bucketRow, $config, $lineNo++);
+                    $detailsData[] = $debitResult['detail'];
+                    $aggregateAmountCents += $debitResult['amount_cents'];
+                    $totalDebit += $debitResult['amount_cents'];
+                }
+
+                $detailsData[] = $this->buildRefundAggregateCreditDetail(
+                    uuid(),
+                    $lineNo++,
+                    $aggregateCreditSubjectCode,
+                    '出账单号' . $outOrderNo . ' 退付合计',
+                    $aggregateAmountCents,
+                    $aggregateCreditConfigs
+                );
+                continue;
+            }
+
+            $outType = $row['out_type'];
+            $config = $subjectConfigMap[$outType];
+            $debitResult = $this->buildRefundDebitDetailData($row, $config, $lineNo++);
+            $detailsData[] = $debitResult['detail'];
+            $totalDebit += $debitResult['amount_cents'];
+
+            $creditDetailId = uuid();
+            $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+            $detailsData[] = [
+                'detail_id' => $creditDetailId,
+                'line_no' => $lineNo++,
+                'subject_code' => $config['credit_subject_code'],
+                'summary' => $debitResult['summary'],
+                'debit_amount' => '0.00',
+                'credit_amount' => $debitResult['amount_decimal'],
+                'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                'aux_desc' => $debitResult['aux_desc'],
+                'aux_values' => $debitResult['aux_values'],
+            ];
+        }
+
+        return [
+            'details' => $detailsData,
+            'total_cents' => $totalDebit,
+        ];
+    }
+
+    protected function buildRefundDebitDetailData($row, $config, $lineNo)
+    {
+        $summary = trim($row['case_no'] . ' ' . ($row['party_name'] ?: $row['actual_payee_name']) . ' 退付');
+        $amountCents = $this->decimalToCents($row['refund_amount']);
+        $amountDecimal = $this->centsToDecimal($amountCents);
+        $receiptNo = $row['source_receipt_no'] ?: ($row['receipt_no'] ?? '');
+        $auxValues = [
+            ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
+            ['aux_type_code' => 'receipt_no', 'aux_value' => $receiptNo, 'aux_label' => $receiptNo],
+        ];
+        $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
+        $auxDesc = $this->buildAuxDesc($auxValues);
+
+        return [
+            'detail' => [
+                'detail_id' => uuid(),
+                'line_no' => $lineNo,
+                'subject_code' => $config['debit_subject_code'],
+                'summary' => $summary,
+                'debit_amount' => $amountDecimal,
+                'credit_amount' => '0.00',
+                'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                'aux_desc' => $auxDesc,
+                'aux_values' => $auxValues,
+            ],
+            'summary' => $summary,
+            'amount_cents' => $amountCents,
+            'amount_decimal' => $amountDecimal,
+            'aux_desc' => $auxDesc,
+            'aux_values' => $auxValues,
+        ];
     }
 
     protected function buildRefundAggregateCreditDetail($detailId, $lineNo, $subjectCode, $summary, $amountCents, $configs)

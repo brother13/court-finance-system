@@ -349,9 +349,11 @@ create database `court-finance` default character set utf8 collate utf8_general_
 4. 导入字段包括案号、确/可标记、业务类型、缴费人、当事人、开票抬头、金额、登记类型、前审案号、缴费日期、票据号码、开票日期、开票员、收费方式、收费员、承办法官、书记员、承办部门、收款账号、银行流水号、缴费单号、内转支出票号、是否提存撤销。
 5. 导入校验要求：案号不能为空，业务类型不能为空，缴费人和当事人不能同时为空，金额必须大于 0，缴费日期必须合法，票据号码/银行流水号/缴费单号至少一项用于追溯。
 6. 导入用 `case_no + payment_time + payment_amount + receipt_no + bank_serial_no + payment_order_no` 生成 MD5 指纹，防止重复导入。
-7. `voucher_status` 当前有 `UNGENERATED`、`GENERATED`、`VOIDED` 等口径，但案款自动生成凭证尚未完成。
+7. `voucher_status` 当前有 `UNGENERATED`、`GENERATED`、`VOIDED` 等口径；案款缴费、退付已接入自动生成凭证的部分业务口径，完整核销闭环尚未完成。
 8. 前端已有 `frontend/src/views/case-fund/PaymentRegisterView.vue` 和 `frontend/src/api/caseFund.ts`，但需要注意路由和菜单是否已经实际挂载到 `App.vue`、`router/index.ts`。
 9. 案款核销长期规则是按“案号 + 收据号”匹配，收据号允许为空；完整往来核销闭环属于后续重点。
+10. 案款退付批量生成凭证由 `CaseFund.php::refundGenerateVoucher()` 负责；取数必须按 `refund_date asc, source_row_no asc` 保持出账导入顺序，不能依赖前端勾选顺序或数据库默认返回顺序。
+11. 案款退付同时启用“是否按天生成凭证”和“是否按出账的单号汇总生成”时，仍先按出账日期生成凭证；每张日凭证内部再按出账单号出现顺序生成分录。当天同一非空出账单号出现多条时，生成“多借一贷”，贷方摘要为 `出账单号xxx 退付合计`；当天出账单号唯一或为空时，必须生成“一借一贷”，贷方摘要与对应借方摘要一致。严禁先把全部借方集中生成、再把全部贷方追加到最后。
 
 ## 十二、账套与期间实现现状
 

@@ -44,7 +44,7 @@ class Auth extends Common
     {
         foreach ($accountSets as &$accountSet) {
             $enabledPeriod = $this->normalizeEnabledPeriod($accountSet['enabled_period'] ?? '', $accountSet['enabled_year'] ?? '');
-            $currentPeriod = $this->currentPeriodValue($enabledPeriod, $this->latestVoucherDate($accountSet['account_set_id']));
+            $currentPeriod = $this->currentPeriodValue($accountSet['account_set_id'], $enabledPeriod);
             $accountSet['enabled_period'] = $enabledPeriod;
             $accountSet['current_period'] = $currentPeriod;
         }
@@ -59,21 +59,27 @@ class Auth extends Common
         return ((string)$enabledYear) . '-01';
     }
 
-    protected function currentPeriodValue($enabledPeriod, $latestVoucherDate)
+    protected function currentPeriodValue($accountSetId, $enabledPeriod)
     {
-        if (!empty($latestVoucherDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $latestVoucherDate)) {
-            return substr($latestVoucherDate, 0, 7);
+        $openPeriod = $this->openFiscalPeriodValue($accountSetId, $enabledPeriod);
+        if ($openPeriod !== '') {
+            return $openPeriod;
         }
         return $enabledPeriod;
     }
 
-    protected function latestVoucherDate($accountSetId)
+    protected function openFiscalPeriodValue($accountSetId, $enabledPeriod)
     {
         try {
-            return Db::name('fin_voucher')->where([
+            $query = Db::name('fin_fiscal_period')->where([
                 'account_set_id' => $accountSetId,
+                'status' => 'OPEN',
                 'del_flag' => 0,
-            ])->max('voucher_date') ?: '';
+            ]);
+            if ($enabledPeriod !== '') {
+                $query->where('period', '>=', $enabledPeriod);
+            }
+            return $query->order('period asc')->value('period') ?: '';
         } catch (\Exception $e) {
             return '';
         }

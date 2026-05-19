@@ -71,7 +71,7 @@ class Book extends Common
             'v.fiscal_year' => $fiscalYear,
             'v.del_flag' => 0,
             'v.voucher_date' => ['between', [$startDate, $endDate]],
-            'v.status' => ['in', ['AUDITED', 'PRINTED']],
+            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
         ];
         $codeRule = $this->subjectCodeRule();
         $lengths = $this->subjectCodeRuleLengths($codeRule);
@@ -290,7 +290,7 @@ class Book extends Common
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
             'v.del_flag' => 0,
-            'v.status' => ['in', ['AUDITED', 'PRINTED']],
+            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
         ];
 
         $query = db($detailTable)->alias('d')
@@ -426,7 +426,7 @@ class Book extends Common
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
             'v.del_flag' => 0,
-            'v.status' => ['in', ['AUDITED', 'PRINTED']],
+            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
             'case_aux.aux_type_code' => 'case_no',
             'case_aux.del_flag' => 0,
         ];
@@ -514,7 +514,7 @@ class Book extends Common
                 'd.del_flag' => 0,
                 'v.fiscal_year' => $fiscalYear,
                 'v.del_flag' => 0,
-                'v.status' => ['in', ['AUDITED', 'PRINTED']],
+                'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
             ])
             ->where('d.period', 'between', [$startPeriod, $endPeriod])
             ->where('v.period', 'between', [$startPeriod, $endPeriod])

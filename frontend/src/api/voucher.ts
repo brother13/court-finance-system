@@ -33,6 +33,18 @@ export const voucherApi = {
   unaudit(period: string, voucherId: string) {
     return apiAction('/voucher/unaudit', { period, voucher_id: voucherId }) as Promise<void>
   },
+  post(period: string, voucherId: string) {
+    return apiAction('/voucher/post', { period, voucher_id: voucherId }) as Promise<{ posted_count: number }>
+  },
+  batchPost(period: string, voucherIds: string[]) {
+    return apiAction('/voucher/batchPost', { period, voucher_ids: voucherIds }) as Promise<{ posted_count: number }>
+  },
+  unpost(period: string, voucherId: string) {
+    return apiAction('/voucher/unpost', { period, voucher_id: voucherId }) as Promise<{ unposted_count: number }>
+  },
+  batchUnpost(period: string, voucherIds: string[]) {
+    return apiAction('/voucher/batchUnpost', { period, voucher_ids: voucherIds }) as Promise<{ unposted_count: number }>
+  },
   printData(vouchers: { period: string; voucher_id: string }[]) {
     return apiAction('/voucher/printData', { vouchers }) as Promise<{
       account_set: {

@@ -17,24 +17,25 @@
       >
         打印凭证
       </el-button>
-      <el-button
-        v-if="context.hasPermission('voucher:delete')"
-        type="danger"
-        :icon="DeleteIcon"
-        :disabled="selectedRows.length === 0"
-        @click="batchDelete"
-      >
-        批量删除
-      </el-button>
-      <el-button
-        v-if="context.hasPermission('voucher:import')"
-        type="success"
-        :icon="Upload"
-        :loading="importing"
-        @click="openImportDialog"
-      >
-        批量导入
-      </el-button>
+      <el-dropdown v-if="hasBatchActions" trigger="click" @command="handleBatchCommand">
+        <el-button :icon="Operation" :loading="importing">
+          批量操作
+          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+        </el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
+              批量记账
+            </el-dropdown-item>
+            <el-dropdown-item v-if="context.hasPermission('voucher:delete')" command="delete" :disabled="selectedRows.length === 0">
+              批量删除
+            </el-dropdown-item>
+            <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
+              批量导入
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <el-button v-if="context.hasPermission('voucher:add')" type="primary" :icon="Plus" @click="$router.push('/vouchers/new')">新增凭证</el-button>
     </div>
   </div>
@@ -160,11 +161,13 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right" align="center">
+        <el-table-column label="操作" width="320" fixed="right" align="center">
           <template #default="{ row }">
             <el-button v-if="canEditRow(row)" link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="canAuditRow(row)" link type="success" :icon="Check" @click="audit(row)">审核</el-button>
             <el-button v-if="canUnauditRow(row)" link type="warning" :icon="RefreshLeft" @click="unaudit(row)">取消审核</el-button>
+            <el-button v-if="canPostRow(row)" link type="success" :icon="Check" @click="post(row)">记账</el-button>
+            <el-button v-if="canUnpostRow(row)" link type="warning" :icon="RefreshLeft" @click="unpost(row)">反记账</el-button>
             <el-button v-if="canDeleteRow(row)" link type="danger" :icon="DeleteIcon" @click="deleteOne(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -317,7 +320,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete as DeleteIcon, Document, Edit, Filter, Plus, Printer, Refresh, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Delete as DeleteIcon, Document, Edit, Filter, Operation, Plus, Printer, Refresh, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
 import { createVoucherPrintPdf } from '../../utils/voucherPrintPdf'
@@ -410,6 +413,11 @@ const periodRangeLabel = computed(() => {
 })
 
 const showFundAuxFilters = computed(() => ['CASE_FUND', 'LITIGATION_FEE'].includes(context.bizType))
+const hasBatchActions = computed(() =>
+  context.hasPermission('voucher:post') ||
+  context.hasPermission('voucher:delete') ||
+  context.hasPermission('voucher:import')
+)
 
 const cleanFilter = (filter: Record<string, any>) =>
   Object.fromEntries(Object.entries(filter).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== ''))
@@ -529,8 +537,10 @@ const canEditRow = (row: any) => context.hasPermission('voucher:edit') && isUnre
 const canDeleteRow = (row: any) => context.hasPermission('voucher:delete') && isUnreviewed(row) && !isAutoCarry(row)
 const canAuditRow = (row: any) => statusForRow(row) === 'SUBMITTED' && context.hasPermission('voucher:audit')
 const canUnauditRow = (row: any) => statusForRow(row) === 'AUDITED' && context.hasPermission('voucher:unaudit')
+const canPostRow = (row: any) => statusForRow(row) === 'AUDITED' && context.hasPermission('voucher:post')
+const canUnpostRow = (row: any) => statusForRow(row) === 'POSTED' && context.hasPermission('voucher:unpost')
 const canPrintRow = (row: any) => context.hasPermission('voucher:print') && statusForRow(row) !== 'VOIDED'
-const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row)
+const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row) || canPostRow(row)
 
 const handleSelectionChange = (selection: any[]) => {
   selectedRows.value = selection
@@ -604,6 +614,49 @@ const printSelectedVouchers = async () => {
   }
 }
 
+const handleBatchCommand = (command: string | number | object) => {
+  switch (command) {
+    case 'post':
+      batchPost()
+      break
+    case 'delete':
+      batchDelete()
+      break
+    case 'import':
+      openImportDialog()
+      break
+  }
+}
+
+const batchPost = async () => {
+  const postableRows = selectedRows.value.filter(canPostRow)
+  if (postableRows.length === 0) {
+    ElMessage.warning('请选择可记账的已审核凭证')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认将选中的 ${postableRows.length} 张已审核凭证记账？`, '批量记账', {
+      type: 'warning',
+      confirmButtonText: '批量记账',
+      cancelButtonText: '取消'
+    })
+    const rowsByPeriod = postableRows.reduce((groups: Record<string, string[]>, row: any) => {
+      const period = row.period || topFilter.period_start
+      if (!groups[period]) groups[period] = []
+      groups[period].push(row.voucher_id)
+      return groups
+    }, {})
+    for (const [period, voucherIds] of Object.entries(rowsByPeriod)) {
+      await voucherApi.batchPost(period, voucherIds)
+    }
+    ElMessage.success('凭证已批量记账')
+    selectedRows.value = []
+    await load()
+  } catch {
+    // 用户取消时不提示。
+  }
+}
+
 const audit = async (row: any) => {
   await voucherApi.audit(row.period, row.voucher_id)
   ElMessage.success('审核完成')
@@ -613,6 +666,18 @@ const audit = async (row: any) => {
 const unaudit = async (row: any) => {
   await voucherApi.unaudit(row.period, row.voucher_id)
   ElMessage.success('已取消审核')
+  await load()
+}
+
+const post = async (row: any) => {
+  await voucherApi.post(row.period, row.voucher_id)
+  ElMessage.success('记账完成')
+  await load()
+}
+
+const unpost = async (row: any) => {
+  await voucherApi.unpost(row.period, row.voucher_id)
+  ElMessage.success('已反记账')
   await load()
 }
 

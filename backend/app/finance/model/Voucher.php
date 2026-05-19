@@ -33,6 +33,14 @@ class Voucher extends Common
                 return $this->changeStatus($data, 'SUBMITTED', 'AUDITED', 'AUDIT');
             case 'unaudit':
                 return $this->changeStatus($data, 'AUDITED', 'SUBMITTED', 'UNAUDIT');
+            case 'post':
+                return $this->postVoucher($data);
+            case 'batchPost':
+                return $this->batchPostVouchers($data);
+            case 'unpost':
+                return $this->unpostVoucher($data);
+            case 'batchUnpost':
+                return $this->batchUnpostVouchers($data);
             case 'delete':
             case 'del':
                 return $this->deleteVoucher($data);
@@ -332,6 +340,9 @@ class Voucher extends Common
 
     public function saveVoucher($data, $status)
     {
+        if ($status === 'POSTED') {
+            return $this->error('凭证记账请通过记账功能执行');
+        }
         $voucherIdForPermission = $data['voucher_id'] ?? '';
         $auth = $this->requirePermission(empty($voucherIdForPermission) ? 'voucher:add' : 'voucher:edit');
         if ($auth) {
@@ -342,6 +353,10 @@ class Voucher extends Common
         $details = $data['details'] ?? [];
         if ($period === '') {
             return $this->error('会计期间不能为空');
+        }
+        $writableCheck = $this->ensurePeriodWritable($period, '会计期间已结账，不允许修改凭证');
+        if ($writableCheck) {
+            return $writableCheck;
         }
         $dateCheck = $this->checkVoucherDate($period, $voucherDate);
         if ($dateCheck['code'] !== self::CODE_SUCCESS) {
@@ -423,9 +438,9 @@ class Voucher extends Common
                     Db::rollback();
                     return $this->error('凭证不存在');
                 }
-                if (in_array($before['status'], ['AUDITED', 'PRINTED', 'VOIDED'])) {
+                if (in_array($before['status'], ['AUDITED', 'POSTED', 'PRINTED', 'VOIDED'])) {
                     Db::rollback();
-                    return $this->error('已审核、已打印或已作废凭证不允许修改');
+                    return $this->error('已审核、已记账、已打印或已作废凭证不允许修改');
                 }
                 $voucher = [
                     'voucher_date' => $voucherDate,
@@ -522,6 +537,144 @@ class Voucher extends Common
         return $this->getInfo(['period' => $period, 'voucher_id' => $voucherId]);
     }
 
+    public function postVoucher($data)
+    {
+        $voucherId = $data['voucher_id'] ?? '';
+        if ($voucherId === '') {
+            return $this->error('凭证ID不能为空');
+        }
+        return $this->postVoucherIds($data['period'] ?? '', [$voucherId]);
+    }
+
+    public function batchPostVouchers($data)
+    {
+        $voucherIds = $data['voucher_ids'] ?? [];
+        if (!is_array($voucherIds)) {
+            return $this->error('待记账凭证列表格式不正确');
+        }
+        $voucherIds = array_values(array_filter(array_unique($voucherIds)));
+        if (empty($voucherIds)) {
+            return $this->error('请选择要记账的凭证');
+        }
+        return $this->postVoucherIds($data['period'] ?? '', $voucherIds);
+    }
+
+    protected function postVoucherIds($period, $voucherIds)
+    {
+        $auth = $this->requirePermission('voucher:post');
+        if ($auth) {
+            return $auth;
+        }
+        if ($period === '') {
+            return $this->error('会计期间不能为空');
+        }
+
+        $periodStatus = $this->fiscalPeriodStatus($period);
+        $beforeRows = [];
+        foreach ($voucherIds as $voucherId) {
+            $voucher = $this->loadVoucher($period, $voucherId);
+            if (!$voucher) {
+                return $this->error('凭证不存在或已删除：' . $voucherId);
+            }
+            $reason = $this->voucherPostBlockReason($voucher, $periodStatus);
+            if ($reason !== '') {
+                return $this->error(($voucher['voucher_word'] ?? '记') . '-' . $voucher['voucher_no'] . '：' . $reason);
+            }
+            $detailCheck = $this->voucherPostingDetailCheck($period, $voucherId);
+            if ($detailCheck['code'] !== self::CODE_SUCCESS) {
+                return $this->error(($voucher['voucher_word'] ?? '记') . '-' . $voucher['voucher_no'] . '：' . $detailCheck['message']);
+            }
+            $beforeRows[] = $voucher;
+        }
+
+        Db::startTrans();
+        try {
+            foreach ($beforeRows as $voucher) {
+                $update = [
+                    'status' => 'POSTED',
+                    'posted_by' => $this->userid,
+                    'posted_time' => $this->now(),
+                ];
+                $this->fillUpdate($update);
+                $this->getdb(self::TABLE)->where($this->voucherWhere($voucher['voucher_id'], $period))->update($update);
+                $this->logAudit('VOUCHER', $voucher['voucher_id'], 'POST', $voucher, $update);
+            }
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('凭证记账失败：' . $e->getMessage());
+        }
+
+        return $this->ok(['posted_count' => count($beforeRows)], '记账成功', count($beforeRows));
+    }
+
+    public function unpostVoucher($data)
+    {
+        $voucherId = $data['voucher_id'] ?? '';
+        if ($voucherId === '') {
+            return $this->error('凭证ID不能为空');
+        }
+        return $this->unpostVoucherIds($data['period'] ?? '', [$voucherId]);
+    }
+
+    public function batchUnpostVouchers($data)
+    {
+        $voucherIds = $data['voucher_ids'] ?? [];
+        if (!is_array($voucherIds)) {
+            return $this->error('待反记账凭证列表格式不正确');
+        }
+        $voucherIds = array_values(array_filter(array_unique($voucherIds)));
+        if (empty($voucherIds)) {
+            return $this->error('请选择要反记账的凭证');
+        }
+        return $this->unpostVoucherIds($data['period'] ?? '', $voucherIds);
+    }
+
+    protected function unpostVoucherIds($period, $voucherIds)
+    {
+        $auth = $this->requirePermission('voucher:unpost');
+        if ($auth) {
+            return $auth;
+        }
+        if ($period === '') {
+            return $this->error('会计期间不能为空');
+        }
+
+        $periodStatus = $this->fiscalPeriodStatus($period);
+        $beforeRows = [];
+        foreach ($voucherIds as $voucherId) {
+            $voucher = $this->loadVoucher($period, $voucherId);
+            if (!$voucher) {
+                return $this->error('凭证不存在或已删除：' . $voucherId);
+            }
+            $reason = $this->voucherUnpostBlockReason($voucher, $periodStatus);
+            if ($reason !== '') {
+                return $this->error(($voucher['voucher_word'] ?? '记') . '-' . $voucher['voucher_no'] . '：' . $reason);
+            }
+            $beforeRows[] = $voucher;
+        }
+
+        Db::startTrans();
+        try {
+            foreach ($beforeRows as $voucher) {
+                $update = [
+                    'status' => 'AUDITED',
+                    'posted_by' => null,
+                    'posted_time' => null,
+                ];
+                $this->fillUpdate($update);
+                $this->getdb(self::TABLE)->where($this->voucherWhere($voucher['voucher_id'], $period))->update($update);
+                $this->logAudit('VOUCHER', $voucher['voucher_id'], 'UNPOST', $voucher, $update);
+            }
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('凭证反记账失败：' . $e->getMessage());
+        }
+
+        return $this->ok(['unposted_count' => count($beforeRows)], '反记账成功', count($beforeRows));
+    }
+
     public function changeStatus($data, $expected, $target, $operation)
     {
         $permissionCode = $operation === 'AUDIT' ? 'voucher:audit' : 'voucher:unaudit';
@@ -533,6 +686,10 @@ class Voucher extends Common
         $voucherId = $data['voucher_id'] ?? '';
         if ($period === '' || $voucherId === '') {
             return $this->error('会计期间和凭证ID不能为空');
+        }
+        $writableCheck = $this->ensurePeriodWritable($period, '会计期间已结账，不允许审核或反审核');
+        if ($writableCheck) {
+            return $writableCheck;
         }
         $table = self::TABLE;
         $where = $this->voucherWhere($voucherId, $period);
@@ -571,6 +728,10 @@ class Voucher extends Common
         if ($period === '' || $voucherId === '') {
             return $this->error('会计期间和凭证ID不能为空');
         }
+        $writableCheck = $this->ensurePeriodWritable($period, '会计期间已结账，不允许作废凭证');
+        if ($writableCheck) {
+            return $writableCheck;
+        }
         $table = self::TABLE;
         $where = $this->voucherWhere($voucherId, $period);
         $before = $this->getdb($table)->where($where)->find();
@@ -579,6 +740,9 @@ class Voucher extends Common
         }
         if ($before['printed_flag'] === '1') {
             return $this->error('已打印凭证不允许作废');
+        }
+        if ($before['status'] === 'POSTED') {
+            return $this->error('已记账凭证不允许直接作废，请先反记账');
         }
         $update = ['status' => 'VOIDED'];
         $this->fillUpdate($update);
@@ -682,6 +846,15 @@ class Voucher extends Common
         return $row['status'] ?? '';
     }
 
+    protected function ensurePeriodWritable($period, $message)
+    {
+        $status = $this->fiscalPeriodStatus($period);
+        if ($status !== '' && $status !== 'OPEN') {
+            return $this->error($message);
+        }
+        return null;
+    }
+
     protected function voucherDeleteBlockReason($voucher, $periodStatus)
     {
         if ($periodStatus !== 'OPEN') {
@@ -694,6 +867,46 @@ class Voucher extends Common
             return '只能删除未审核凭证，已审核凭证需取消审核后再删除';
         }
         return '';
+    }
+
+    protected function voucherPostBlockReason($voucher, $periodStatus)
+    {
+        if ($periodStatus !== 'OPEN') {
+            return '会计期间已结账，不允许记账';
+        }
+        if (($voucher['void_flag'] ?? '0') === '1' || ($voucher['status'] ?? '') === 'VOIDED') {
+            return '已作废凭证不允许记账';
+        }
+        if ($this->workflowStatus($voucher) !== 'AUDITED') {
+            return '只有已审核凭证允许记账';
+        }
+        return '';
+    }
+
+    protected function voucherUnpostBlockReason($voucher, $periodStatus)
+    {
+        if ($periodStatus !== 'OPEN') {
+            return '会计期间已结账，不允许反记账';
+        }
+        if ($this->workflowStatus($voucher) !== 'POSTED') {
+            return '只有已记账凭证允许反记账';
+        }
+        return '';
+    }
+
+    protected function voucherPostingDetailCheck($period, $voucherId)
+    {
+        $details = $this->getdb(self::TABLE_DETAIL)->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'voucher_id' => $voucherId,
+            'del_flag' => 0,
+        ])->field('debit_amount,credit_amount')->select();
+        if (!is_array($details) || count($details) < 2) {
+            return $this->error('凭证明细至少两行');
+        }
+        return $this->checkBalance($details);
     }
 
     public function printMark($data)

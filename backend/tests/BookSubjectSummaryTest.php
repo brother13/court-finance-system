@@ -35,7 +35,7 @@ $checks = [
     [$book, "where('d.period', 'between'", 'Subject summary should query voucher details by accounting period range'],
     [$book, 'subjectRangeUpperBound', 'Subject summary should include descendants of the ending subject code'],
     [$book, 'subjectRangeUpperBound($subjectCode', 'Detail ledger should include descendants when drilling into a non-leaf subject'],
-    [$book, "v.status' => ['in', ['AUDITED', 'PRINTED']]", 'Subject summary should use audited and printed vouchers'],
+    [$book, "v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']]", 'Subject summary should use audited, posted and printed vouchers during posting transition'],
     [$book, "'entry_count'", 'Subject summary rows should expose entry count'],
     [$rbac, "'menu:book:subject_summary'", 'RBAC should define subject summary menu permission'],
     [$rbac, "'科目汇总表'", 'RBAC should name the subject summary menu'],

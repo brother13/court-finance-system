@@ -8,6 +8,7 @@ $checks = [
     [$auth, 'appendAccountSetPeriodFields', 'auth account set list should append period fields'],
     [$auth, "'current_period'", 'auth account set list should return current_period'],
     [$auth, "'enabled_period'", 'auth account set list should return enabled_period'],
+    [$auth, 'openFiscalPeriodValue', 'auth account set current period should prefer the first open fiscal period'],
 ];
 
 foreach ($checks as [$haystack, $needle, $message]) {

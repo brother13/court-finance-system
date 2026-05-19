@@ -29,8 +29,8 @@ $checks = [
     ['hasActiveGeneratedVoucher', 'Refund voucher generation should block duplicate generation when the original voucher is still active'],
     ["'GENERATED' &&", 'Refund voucher generation should inspect generated rows before allowing regeneration'],
     ["'out_order_no'", 'Refund voucher generation should use out_order_no for grouping'],
-    ['$aggregateCreditBuckets', 'Refund voucher generation should aggregate credit lines inside a daily voucher'],
-    ['$aggregateByOutOrderNo && $outOrderNo !== \'\'', 'Refund voucher generation should only aggregate non-empty out_order_no credit lines'],
+    ['buildRefundVoucherDetailsData', 'Refund voucher generation should build ordered debit and credit details through a dedicated helper'],
+    ['$outOrderCounts[$outOrderNo] ?? 0) > 1', 'Refund voucher generation should only aggregate repeated non-empty out_order_no credit lines'],
     ['buildRefundAggregateCreditDetail', 'Refund voucher generation should build one credit line for an out-order group'],
 ];
 
@@ -85,6 +85,13 @@ if (!function_exists('getNowTime')) {
     }
 }
 
+if (!function_exists('uuid')) {
+    function uuid()
+    {
+        return '00000000-0000-4000-8000-000000000000';
+    }
+}
+
 require_once __DIR__ . '/../app/finance/model/Common.php';
 require_once $modelPath;
 
@@ -117,6 +124,87 @@ $groupSizes = array_map('count', $outOrderGroups);
 sort($groupSizes);
 if ($groupSizes !== [1, 3] || count($outOrderGroups['2026-03-02'] ?? []) !== 3 || count($outOrderGroups['2026-03-03'] ?? []) !== 1) {
     fwrite(STDERR, 'Daily refund generation should keep one voucher group per day; out_order_no only aggregates credit lines inside that daily voucher' . PHP_EOL);
+    exit(1);
+}
+
+class CaseFundRefundDetailProbe extends CaseFund
+{
+    protected function getSubjectAuxConfigs($subjectCode)
+    {
+        return [];
+    }
+
+    public function buildRefundDetails($rows, $subjectConfigMap, $aggregateByOutOrderNo)
+    {
+        $method = new ReflectionMethod(CaseFund::class, 'buildRefundVoucherDetailsData');
+        $method->setAccessible(true);
+        return $method->invoke($this, $rows, $subjectConfigMap, $aggregateByOutOrderNo);
+    }
+}
+
+$detailProbe = new CaseFundRefundDetailProbe();
+$subjectConfigMap = [
+    '执行款退付' => [
+        'debit_subject_code' => '224101',
+        'credit_subject_code' => '100201',
+    ],
+];
+$detailResult = $detailProbe->buildRefundDetails([
+    [
+        'refund_id' => 'refund-a1',
+        'case_no' => '案一',
+        'party_name' => '张三',
+        'actual_payee_name' => '',
+        'out_type' => '执行款退付',
+        'out_order_no' => 'OUT-001',
+        'refund_amount' => '10.00',
+        'receipt_no' => 'R001',
+        'source_receipt_no' => '',
+    ],
+    [
+        'refund_id' => 'refund-a2',
+        'case_no' => '案二',
+        'party_name' => '李四',
+        'actual_payee_name' => '',
+        'out_type' => '执行款退付',
+        'out_order_no' => 'OUT-001',
+        'refund_amount' => '20.00',
+        'receipt_no' => 'R002',
+        'source_receipt_no' => '',
+    ],
+    [
+        'refund_id' => 'refund-b1',
+        'case_no' => '案三',
+        'party_name' => '王五',
+        'actual_payee_name' => '',
+        'out_type' => '执行款退付',
+        'out_order_no' => 'OUT-002',
+        'refund_amount' => '30.00',
+        'receipt_no' => 'R003',
+        'source_receipt_no' => '',
+    ],
+], $subjectConfigMap, true);
+$detailSummaries = array_map(function ($detail) {
+    return [
+        'summary' => $detail['summary'],
+        'debit' => $detail['debit_amount'],
+        'credit' => $detail['credit_amount'],
+    ];
+}, $detailResult['details']);
+$expectedDetails = [
+    ['summary' => '案一 张三 退付', 'debit' => '10.00', 'credit' => '0.00'],
+    ['summary' => '案二 李四 退付', 'debit' => '20.00', 'credit' => '0.00'],
+    ['summary' => '出账单号OUT-001 退付合计', 'debit' => '0.00', 'credit' => '30.00'],
+    ['summary' => '案三 王五 退付', 'debit' => '30.00', 'credit' => '0.00'],
+    ['summary' => '案三 王五 退付', 'debit' => '0.00', 'credit' => '30.00'],
+];
+if ($detailSummaries !== $expectedDetails) {
+    fwrite(STDERR, 'Refund voucher details should keep repeated out_order_no as debit...credit group and unique out_order_no as debit-credit pair' . PHP_EOL);
+    fwrite(STDERR, var_export($detailSummaries, true) . PHP_EOL);
+    exit(1);
+}
+if ($detailResult['total_cents'] !== 6000) {
+    fwrite(STDERR, 'Refund voucher detail helper should return the total debit amount in cents' . PHP_EOL);
     exit(1);
 }
 

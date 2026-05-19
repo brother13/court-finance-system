@@ -36,7 +36,7 @@ class AccountSet extends Common
             ->select();
         foreach ($rows as &$row) {
             $enabledPeriod = $this->normalizeEnabledPeriod($row['enabled_period'] ?? '', $row['enabled_year'] ?? '');
-            $currentPeriod = $this->currentPeriodValue($enabledPeriod, $this->latestVoucherDate($row['account_set_id']));
+            $currentPeriod = $this->currentPeriodValue($row['account_set_id'], $enabledPeriod);
             $row['enabled_period'] = $enabledPeriod;
             $row['enabled_period_label'] = $this->formatPeriodLabel($enabledPeriod);
             $row['current_period'] = $currentPeriod;
@@ -169,10 +169,11 @@ class AccountSet extends Common
         return substr($period, 0, 4) . '年' . substr($period, 5, 2) . '月';
     }
 
-    protected function currentPeriodValue($enabledPeriod, $latestVoucherDate)
+    protected function currentPeriodValue($accountSetId, $enabledPeriod)
     {
-        if (!empty($latestVoucherDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $latestVoucherDate)) {
-            return substr($latestVoucherDate, 0, 7);
+        $openPeriod = $this->openFiscalPeriodValue($accountSetId, $enabledPeriod);
+        if ($openPeriod !== '') {
+            return $openPeriod;
         }
         return $enabledPeriod;
     }
@@ -183,13 +184,18 @@ class AccountSet extends Common
         return strtoupper($bizType) . '_' . str_replace('-', '', $enabledPeriod) . '_' . $shortId;
     }
 
-    protected function latestVoucherDate($accountSetId)
+    protected function openFiscalPeriodValue($accountSetId, $enabledPeriod)
     {
         try {
-            return $this->getdb('fin_voucher')->where([
+            $query = $this->getdb('fin_fiscal_period')->where([
                 'account_set_id' => $accountSetId,
+                'status' => 'OPEN',
                 'del_flag' => 0,
-            ])->max('voucher_date') ?: '';
+            ]);
+            if ($enabledPeriod !== '') {
+                $query->where('period', '>=', $enabledPeriod);
+            }
+            return $query->order('period asc')->value('period') ?: '';
         } catch (\Exception $e) {
             return '';
         }
