@@ -1304,7 +1304,7 @@ class CaseFund extends Common
                 $firstRow = $groupRows[0];
                 $period = substr($firstRow['refund_date'], 0, 7);
                 $voucherDate = $firstRow['refund_date'];
-                $aggregateByOutOrderNo = $byDayFlag === 1 && $byOutOrderNoFlag === 1 && trim((string)($firstRow['out_order_no'] ?? '')) !== '';
+                $aggregateByOutOrderNo = $byDayFlag === 1 && $byOutOrderNoFlag === 1;
 
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
                     throw new \Exception('出账日期格式不正确：' . $voucherDate);
@@ -1333,8 +1333,7 @@ class CaseFund extends Common
                 $totalDebit = 0;
                 $detailsData = [];
                 $lineNo = 1;
-                $aggregateCreditSubjectCode = '';
-                $aggregateCreditConfigs = [];
+                $aggregateCreditBuckets = [];
 
                 foreach ($groupRows as $row) {
                     $outType = $row['out_type'];
@@ -1365,16 +1364,21 @@ class CaseFund extends Common
                     ];
 
                     $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-                    if ($aggregateByOutOrderNo) {
-                        if ($aggregateCreditSubjectCode === '') {
-                            $aggregateCreditSubjectCode = $config['credit_subject_code'];
-                            $aggregateCreditConfigs = $creditConfigs;
-                        } elseif ($aggregateCreditSubjectCode !== $config['credit_subject_code']) {
+                    $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
+                    if ($aggregateByOutOrderNo && $outOrderNo !== '') {
+                        if (!isset($aggregateCreditBuckets[$outOrderNo])) {
+                            $aggregateCreditBuckets[$outOrderNo] = [
+                                'subject_code' => $config['credit_subject_code'],
+                                'configs' => $creditConfigs,
+                                'amount_cents' => 0,
+                            ];
+                        } elseif ($aggregateCreditBuckets[$outOrderNo]['subject_code'] !== $config['credit_subject_code']) {
                             throw new \Exception('同一出账单号【' . $row['out_order_no'] . '】存在不同贷方科目配置，不允许汇总生成一张凭证');
                         }
                         if ($this->hasRequiredAuxConfigs($creditConfigs)) {
                             throw new \Exception('贷方科目【' . $config['credit_subject_code'] . '】存在必填辅助核算，不允许按出账单号合并为一条贷方分录');
                         }
+                        $aggregateCreditBuckets[$outOrderNo]['amount_cents'] += $amountCents;
                     } else {
                         $creditDetailId = uuid();
                         $detailsData[] = [
@@ -1396,14 +1400,16 @@ class CaseFund extends Common
                 }
 
                 if ($aggregateByOutOrderNo) {
-                    $detailsData[] = $this->buildRefundAggregateCreditDetail(
-                        uuid(),
-                        $lineNo++,
-                        $aggregateCreditSubjectCode,
-                        '出账单号' . $firstRow['out_order_no'] . ' 退付合计',
-                        $totalDebit,
-                        $aggregateCreditConfigs
-                    );
+                    foreach ($aggregateCreditBuckets as $outOrderNo => $bucket) {
+                        $detailsData[] = $this->buildRefundAggregateCreditDetail(
+                            uuid(),
+                            $lineNo++,
+                            $bucket['subject_code'],
+                            '出账单号' . $outOrderNo . ' 退付合计',
+                            $bucket['amount_cents'],
+                            $bucket['configs']
+                        );
+                    }
                 }
 
                 $voucher = [
@@ -1415,7 +1421,7 @@ class CaseFund extends Common
                     'voucher_word' => '记',
                     'voucher_no' => $voucherNo,
                     'summary' => $aggregateByOutOrderNo
-                        ? '出账单号' . $firstRow['out_order_no'] . ' 退付合计'
+                        ? $voucherDate . ' 退付合计'
                         : trim($firstRow['case_no'] . ' ' . ($firstRow['party_name'] ?: $firstRow['actual_payee_name']) . ' 退付'),
                     'debit_amount' => $this->centsToDecimal($totalDebit),
                     'credit_amount' => $this->centsToDecimal($totalDebit),
@@ -1559,19 +1565,6 @@ class CaseFund extends Common
     protected function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
     {
         $groups = [];
-        if ((int)$byDayFlag === 1 && (int)$byOutOrderNoFlag === 1) {
-            foreach ($rows as $row) {
-                $date = $row['refund_date'];
-                $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
-                $key = $outOrderNo === '' ? 'SINGLE:' . $row['refund_id'] : $date . '|' . $outOrderNo;
-                if (!isset($groups[$key])) {
-                    $groups[$key] = [];
-                }
-                $groups[$key][] = $row;
-            }
-            return $groups;
-        }
-
         if ((int)$byDayFlag === 1) {
             foreach ($rows as $row) {
                 $date = $row['refund_date'];

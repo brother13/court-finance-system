@@ -29,7 +29,8 @@ $checks = [
     ['hasActiveGeneratedVoucher', 'Refund voucher generation should block duplicate generation when the original voucher is still active'],
     ["'GENERATED' &&", 'Refund voucher generation should inspect generated rows before allowing regeneration'],
     ["'out_order_no'", 'Refund voucher generation should use out_order_no for grouping'],
-    ["'SINGLE:' . \$row['refund_id']", 'Refund voucher generation should fall back to single-row grouping when out_order_no is empty'],
+    ['$aggregateCreditBuckets', 'Refund voucher generation should aggregate credit lines inside a daily voucher'],
+    ['$aggregateByOutOrderNo && $outOrderNo !== \'\'', 'Refund voucher generation should only aggregate non-empty out_order_no credit lines'],
     ['buildRefundAggregateCreditDetail', 'Refund voucher generation should build one credit line for an out-order group'],
 ];
 
@@ -114,8 +115,8 @@ foreach ($singleGroups as $groupRows) {
 $outOrderGroups = $groupMethod->invoke($caseFund, $sampleRows, 1, 1);
 $groupSizes = array_map('count', $outOrderGroups);
 sort($groupSizes);
-if ($groupSizes !== [1, 1, 2] || count($outOrderGroups['SINGLE:refund-3'] ?? []) !== 1) {
-    fwrite(STDERR, 'Refund out-order grouping should merge same-day non-empty out_order_no only when by-day is on, and keep empty out_order_no single' . PHP_EOL);
+if ($groupSizes !== [1, 3] || count($outOrderGroups['2026-03-02'] ?? []) !== 3 || count($outOrderGroups['2026-03-03'] ?? []) !== 1) {
+    fwrite(STDERR, 'Daily refund generation should keep one voucher group per day; out_order_no only aggregates credit lines inside that daily voucher' . PHP_EOL);
     exit(1);
 }
 
