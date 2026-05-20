@@ -193,6 +193,25 @@ create table if not exists fin_aux_opening_balance (
     key idx_aux_opening_desc (account_set_id, period, aux_desc(255))
 );
 
+create table if not exists fin_carry_forward_scheme (
+    scheme_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    scheme_name varchar(100) not null,
+    carry_mode varchar(50) not null default 'INCOME_EXPENSE',
+    target_subject_code varchar(50),
+    summary_template varchar(500),
+    rules_json text,
+    enabled_flag int not null default 1,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    key idx_carry_forward_account (account_set_id, enabled_flag, del_flag)
+);
+
 create table if not exists fin_voucher (
     voucher_id varchar(36) primary key,
     account_set_id varchar(36) not null,

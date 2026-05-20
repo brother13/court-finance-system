@@ -1074,7 +1074,7 @@ class CaseFund extends Common
                 foreach ($groupRows as $row) {
                     $businessType = $row['business_type'];
                     $config = $subjectConfigMap[$businessType];
-                    $summary = $row['case_no'] . ' ' . $row['party_name'];
+                    $summary = $this->buildPaymentVoucherSummary($row);
                     $amountCents = $this->decimalToCents($row['payment_amount']);
                     $amountDecimal = $this->centsToDecimal($amountCents);
                     $totalDebit += $amountCents;
@@ -1125,7 +1125,7 @@ class CaseFund extends Common
                     'voucher_date' => $voucherDate,
                     'voucher_word' => '记',
                     'voucher_no' => $voucherNo,
-                    'summary' => $firstRow['case_no'] . ' ' . $firstRow['party_name'],
+                    'summary' => $this->buildPaymentVoucherSummary($firstRow),
                     'debit_amount' => $this->centsToDecimal($totalDebit),
                     'credit_amount' => $this->centsToDecimal($totalDebit),
                     'attachment_count' => 0,
@@ -1347,9 +1347,7 @@ class CaseFund extends Common
                     'voucher_date' => $voucherDate,
                     'voucher_word' => '记',
                     'voucher_no' => $voucherNo,
-                    'summary' => $aggregateByOutOrderNo
-                        ? $voucherDate . ' 退付合计'
-                        : trim($firstRow['case_no'] . ' ' . ($firstRow['party_name'] ?: $firstRow['actual_payee_name']) . ' 退付'),
+                    'summary' => $this->buildRefundVoucherHeaderSummary($firstRow, $aggregateByOutOrderNo, $voucherDate),
                     'debit_amount' => $this->centsToDecimal($totalDebit),
                     'credit_amount' => $this->centsToDecimal($totalDebit),
                     'attachment_count' => 0,
@@ -1559,7 +1557,7 @@ class CaseFund extends Common
                         throw new \Exception('贷方科目【' . $config['credit_subject_code'] . '】存在必填辅助核算，不允许按出账单号合并为一条贷方分录');
                     }
 
-                    $debitResult = $this->buildRefundDebitDetailData($bucketRow, $config, $lineNo++);
+                    $debitResult = $this->buildRefundDebitDetailData($bucketRow, $config, $lineNo++, true);
                     $detailsData[] = $debitResult['detail'];
                     $aggregateAmountCents += $debitResult['amount_cents'];
                     $totalDebit += $debitResult['amount_cents'];
@@ -1569,7 +1567,7 @@ class CaseFund extends Common
                     uuid(),
                     $lineNo++,
                     $aggregateCreditSubjectCode,
-                    '出账单号' . $outOrderNo . ' 退付合计',
+                    $this->buildRefundAggregateCreditSummary($outOrderNo),
                     $aggregateAmountCents,
                     $aggregateCreditConfigs
                 );
@@ -1578,7 +1576,7 @@ class CaseFund extends Common
 
             $outType = $row['out_type'];
             $config = $subjectConfigMap[$outType];
-            $debitResult = $this->buildRefundDebitDetailData($row, $config, $lineNo++);
+            $debitResult = $this->buildRefundDebitDetailData($row, $config, $lineNo++, true);
             $detailsData[] = $debitResult['detail'];
             $totalDebit += $debitResult['amount_cents'];
 
@@ -1603,9 +1601,11 @@ class CaseFund extends Common
         ];
     }
 
-    protected function buildRefundDebitDetailData($row, $config, $lineNo)
+    protected function buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary = false)
     {
-        $summary = trim($row['case_no'] . ' ' . ($row['party_name'] ?: $row['actual_payee_name']) . ' 退付');
+        $summary = $useNormalSummary
+            ? $this->buildRefundNormalVoucherSummary($row)
+            : trim($row['case_no'] . ' ' . ($row['party_name'] ?: $row['actual_payee_name']) . ' 退付');
         $amountCents = $this->decimalToCents($row['refund_amount']);
         $amountDecimal = $this->centsToDecimal($amountCents);
         $receiptNo = $row['source_receipt_no'] ?: ($row['receipt_no'] ?? '');
@@ -1634,6 +1634,29 @@ class CaseFund extends Common
             'aux_desc' => $auxDesc,
             'aux_values' => $auxValues,
         ];
+    }
+
+    protected function buildPaymentVoucherSummary($row)
+    {
+        return trim('收 ' . ($row['case_no'] ?? '') . ' ' . ($row['party_name'] ?? ''));
+    }
+
+    protected function buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
+    {
+        if ($aggregateByOutOrderNo) {
+            return $voucherDate . ' 付合计';
+        }
+        return $this->buildRefundNormalVoucherSummary($row);
+    }
+
+    protected function buildRefundNormalVoucherSummary($row)
+    {
+        return trim('付 ' . ($row['case_no'] ?? '') . ' ' . (($row['party_name'] ?? '') ?: ($row['actual_payee_name'] ?? '')));
+    }
+
+    protected function buildRefundAggregateCreditSummary($outOrderNo)
+    {
+        return trim('付 出账单号' . $outOrderNo . ' 合计');
     }
 
     protected function buildRefundAggregateCreditDetail($detailId, $lineNo, $subjectCode, $summary, $amountCents, $configs)

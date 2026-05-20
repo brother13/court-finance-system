@@ -235,6 +235,26 @@ create table fin_opening_balance (
 
 create unique index uk_opening_subject on fin_opening_balance (account_set_id, period, subject_code);
 
+create table fin_carry_forward_scheme (
+    scheme_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    scheme_name varchar(100) not null,
+    carry_mode varchar(50) not null default 'INCOME_EXPENSE',
+    target_subject_code varchar(50),
+    summary_template varchar(500),
+    rules_json text,
+    enabled_flag int not null default 1,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create index idx_carry_forward_account on fin_carry_forward_scheme (account_set_id, enabled_flag, del_flag);
+
 create table fin_aux_opening_balance (
     balance_id varchar(36) primary key,
     account_set_id varchar(36) not null,

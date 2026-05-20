@@ -11,6 +11,11 @@ $checks = [
     [$patch, 'idx_voucher_ledger_period', 'Patch should add the detail-ledger voucher index for existing databases'],
     [$book, "force('idx_voucher_detail_ledger_subject')", 'Detail ledger should force the subject-period composite index on voucher details'],
     [$book, "where('d.period', 'between'", 'Detail ledger should keep period-range filtering so the composite period index is usable'],
+    [$book, "'page'", 'Detail ledger should accept a page parameter'],
+    [$book, "'pagesize'", 'Detail ledger should accept a page size parameter'],
+    [$book, "'items' => \$rows", 'Detail ledger should return paged items'],
+    [$book, "'debit_total'", 'Detail ledger should return full-filter debit total for pagination'],
+    [$book, "->page(\$page, \$pageSize)", 'Detail ledger should use database pagination'],
     [$book, 'subjectRangeUpperBound($subjectCode', 'Detail ledger should keep descendant subject filtering for selected parent subjects'],
 ];
 

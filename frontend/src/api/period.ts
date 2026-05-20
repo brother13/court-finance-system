@@ -35,6 +35,10 @@ export const periodApi = {
       created_periods: number
       subject_opening_count: number
       aux_opening_count: number
+      carry_mode: string
+      carry_label: string
+      auto_profit_loss_carry: number
+      carry_voucher_count: number
     }>
   }
 }

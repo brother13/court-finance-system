@@ -142,9 +142,14 @@ class Period extends Common
         if (!$row) {
             return $this->error('会计期间不存在');
         }
-        $reason = $this->yearEndBlockReason($period, $row['status'] ?? '');
+        $reason = $this->yearEndBlockReason($period, $row['status'] ?? '', $this->yearPeriodStatuses($period));
         if ($reason !== '') {
             return $this->error($reason);
+        }
+        $policy = $this->yearEndPolicyForBizType($this->accountSetBizType());
+        $profitLossBlocks = $this->yearEndProfitLossBlockItems($period, $policy);
+        if (!empty($profitLossBlocks)) {
+            return $this->error($profitLossBlocks[0]['message'], ['blocks' => $profitLossBlocks]);
         }
         $nextYear = ((int)substr($period, 0, 4)) + 1;
         $nextOpeningPeriod = sprintf('%04d-01', $nextYear);
@@ -164,6 +169,10 @@ class Period extends Common
                 'created_periods' => $createdPeriods,
                 'subject_opening_count' => $subjectSaved,
                 'aux_opening_count' => $auxSaved,
+                'carry_mode' => $policy['carry_mode'],
+                'carry_label' => $policy['label'],
+                'auto_profit_loss_carry' => $policy['auto_profit_loss_carry'],
+                'carry_voucher_count' => 0,
             ];
             $this->logAudit('FISCAL_YEAR', (string)$nextYear, 'YEAR_END', $row, $after);
             Db::commit();
@@ -251,13 +260,20 @@ class Period extends Common
         return $counts;
     }
 
-    protected function yearEndBlockReason($period, $periodStatus)
+    protected function yearEndBlockReason($period, $periodStatus, $yearStatuses = null)
     {
         if (substr($period, 5, 2) !== '12') {
             return '只有12月结账后才能生成下一年度';
         }
         if ($periodStatus !== 'CLOSED') {
             return '12月必须先期末结账，才能生成下一年度';
+        }
+        if (is_array($yearStatuses)) {
+            foreach ($this->yearPeriodValues((int)substr($period, 0, 4)) as $monthPeriod) {
+                if (($yearStatuses[$monthPeriod] ?? '') !== 'CLOSED') {
+                    return $monthPeriod . ' 尚未结账，不能年结';
+                }
+            }
         }
         return '';
     }
@@ -279,6 +295,123 @@ class Period extends Common
             $values[] = sprintf('%04d-%02d', (int)$year, $month);
         }
         return $values;
+    }
+
+    protected function yearPeriodStatuses($period)
+    {
+        $year = substr($period, 0, 4);
+        $rows = $this->getdb(self::TABLE)->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->where('period', 'between', [$year . '-01', $year . '-12'])->field('period,status')->select();
+        $statuses = [];
+        foreach ($rows as $row) {
+            $statuses[$row['period']] = $row['status'];
+        }
+        return $statuses;
+    }
+
+    protected function yearEndPolicyForBizType($bizType)
+    {
+        $bizType = strtoupper(trim((string)$bizType));
+        if ($bizType === 'CASE_FUND') {
+            return [
+                'carry_mode' => 'BALANCE_ROLLOVER',
+                'label' => '专项余额结转',
+                'auto_profit_loss_carry' => 0,
+                'block_profit_loss_balance' => 1,
+            ];
+        }
+        if (in_array($bizType, ['LITIGATION_FEE', 'CANTEEN', 'UNION'], true)) {
+            return [
+                'carry_mode' => 'CONFIG_REQUIRED',
+                'label' => '收支结转待配置',
+                'auto_profit_loss_carry' => 0,
+                'block_profit_loss_balance' => 1,
+            ];
+        }
+        return [
+            'carry_mode' => 'CONFIG_REQUIRED',
+            'label' => '年终结转待配置',
+            'auto_profit_loss_carry' => 0,
+            'block_profit_loss_balance' => 1,
+        ];
+    }
+
+    protected function yearEndProfitLossBlockItems($period, $policy)
+    {
+        if ((int)($policy['block_profit_loss_balance'] ?? 1) !== 1) {
+            return [];
+        }
+        $items = $this->profitLossEndingBalanceItems($period);
+        if (empty($items)) {
+            return [];
+        }
+        $schemeStatus = $this->carryForwardSchemeStatus();
+        $configured = (int)($schemeStatus['configured'] ?? 0) === 1;
+        $message = $configured
+            ? '收支结转方案【' . ($schemeStatus['scheme_name'] ?? '') . '】已配置，但自动生成结转凭证尚未启用；损益类科目存在年末余额，请先手工生成并记账结转凭证'
+            : '当前账套年结方式为' . ($policy['label'] ?? '年终结转') . '，损益类科目存在年末余额，请先到基础资料-收支结转方案配置结转规则';
+        return [[
+            'code' => 'PROFIT_LOSS_BALANCE_UNCARRIED',
+            'message' => $message,
+            'count' => count($items),
+            'items' => $items,
+        ]];
+    }
+
+    protected function profitLossEndingBalanceItems($period)
+    {
+        $balances = $this->subjectEndingBalances($period);
+        if (empty($balances)) {
+            return [];
+        }
+        $subjectInfo = $this->subjectInfoByCode(array_keys($balances));
+        $items = [];
+        foreach ($balances as $subjectCode => $cents) {
+            if ((int)$cents === 0) {
+                continue;
+            }
+            if (($subjectInfo[$subjectCode]['subject_type'] ?? '') !== 'PROFIT_LOSS') {
+                continue;
+            }
+            $items[] = [
+                'subject_code' => $subjectCode,
+                'subject_name' => $subjectInfo[$subjectCode]['subject_name'] ?? '',
+                'direction' => $cents > 0 ? 'DEBIT' : 'CREDIT',
+                'amount' => $this->centsToDecimal(abs((int)$cents)),
+            ];
+        }
+        return $items;
+    }
+
+    protected function shouldCarrySubjectToNextOpening($subjectType)
+    {
+        return strtoupper(trim((string)$subjectType)) !== 'PROFIT_LOSS';
+    }
+
+    protected function carryForwardSchemeStatus()
+    {
+        try {
+            $row = $this->getdb('fin_carry_forward_scheme')->where([
+                'account_set_id' => $this->accountSetId,
+                'enabled_flag' => 1,
+                'del_flag' => 0,
+            ])->order('updated_time desc, created_time desc')->find();
+        } catch (\Exception $e) {
+            $row = null;
+        }
+        if (!$row) {
+            return [
+                'configured' => 0,
+                'scheme_name' => '',
+            ];
+        }
+        return [
+            'configured' => 1,
+            'scheme_name' => $row['scheme_name'] ?? '',
+            'target_subject_code' => $row['target_subject_code'] ?? '',
+        ];
     }
 
     protected function ensureYearPeriods($year)
@@ -311,9 +444,14 @@ class Period extends Common
     protected function createNextYearSubjectOpening($sourcePeriod, $targetPeriod)
     {
         $balances = $this->subjectEndingBalances($sourcePeriod);
+        $subjectInfo = $this->subjectInfoByCode(array_keys($balances));
         $saved = 0;
         foreach ($balances as $subjectCode => $cents) {
             if ($cents === 0) {
+                continue;
+            }
+            $subjectType = $subjectInfo[$subjectCode]['subject_type'] ?? '';
+            if (!$this->shouldCarrySubjectToNextOpening($subjectType)) {
                 continue;
             }
             $row = [
@@ -335,10 +473,19 @@ class Period extends Common
     protected function createNextYearAuxOpening($sourcePeriod, $targetPeriod)
     {
         $balances = $this->auxEndingBalances($sourcePeriod);
+        $subjectCodes = [];
+        foreach ($balances as $item) {
+            $subjectCodes[] = $item['subject_code'];
+        }
+        $subjectInfo = $this->subjectInfoByCode(array_values(array_unique($subjectCodes)));
         $saved = 0;
         foreach ($balances as $key => $item) {
             $cents = (int)$item['cents'];
             if ($cents === 0) {
+                continue;
+            }
+            $subjectType = $subjectInfo[$item['subject_code']]['subject_type'] ?? '';
+            if (!$this->shouldCarrySubjectToNextOpening($subjectType)) {
                 continue;
             }
             $row = [
@@ -492,6 +639,31 @@ class Period extends Common
             'account_set_id' => $this->accountSetId,
             'del_flag' => 0,
         ])->value('enabled_period') ?: '';
+    }
+
+    protected function accountSetBizType()
+    {
+        return $this->getdb('fin_account_set')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->value('biz_type') ?: '';
+    }
+
+    protected function subjectInfoByCode($subjectCodes)
+    {
+        $subjectCodes = array_values(array_unique(array_filter($subjectCodes)));
+        if (empty($subjectCodes)) {
+            return [];
+        }
+        $rows = $this->getdb('fin_subject')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->where('subject_code', 'in', $subjectCodes)->field('subject_code,subject_name,subject_type')->select();
+        $map = [];
+        foreach ($rows as $row) {
+            $map[$row['subject_code']] = $row;
+        }
+        return $map;
     }
 
     protected function hasOpeningRows($period)

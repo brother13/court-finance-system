@@ -140,6 +140,11 @@ class CaseFundRefundDetailProbe extends CaseFund
         $method->setAccessible(true);
         return $method->invoke($this, $rows, $subjectConfigMap, $aggregateByOutOrderNo);
     }
+
+    public function refundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
+    {
+        return $this->buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate);
+    }
 }
 
 $detailProbe = new CaseFundRefundDetailProbe();
@@ -192,11 +197,11 @@ $detailSummaries = array_map(function ($detail) {
     ];
 }, $detailResult['details']);
 $expectedDetails = [
-    ['summary' => '案一 张三 退付', 'debit' => '10.00', 'credit' => '0.00'],
-    ['summary' => '案二 李四 退付', 'debit' => '20.00', 'credit' => '0.00'],
-    ['summary' => '出账单号OUT-001 退付合计', 'debit' => '0.00', 'credit' => '30.00'],
-    ['summary' => '案三 王五 退付', 'debit' => '30.00', 'credit' => '0.00'],
-    ['summary' => '案三 王五 退付', 'debit' => '0.00', 'credit' => '30.00'],
+    ['summary' => '付 案一 张三', 'debit' => '10.00', 'credit' => '0.00'],
+    ['summary' => '付 案二 李四', 'debit' => '20.00', 'credit' => '0.00'],
+    ['summary' => '付 出账单号OUT-001 合计', 'debit' => '0.00', 'credit' => '30.00'],
+    ['summary' => '付 案三 王五', 'debit' => '30.00', 'credit' => '0.00'],
+    ['summary' => '付 案三 王五', 'debit' => '0.00', 'credit' => '30.00'],
 ];
 if ($detailSummaries !== $expectedDetails) {
     fwrite(STDERR, 'Refund voucher details should keep repeated out_order_no as debit...credit group and unique out_order_no as debit-credit pair' . PHP_EOL);
@@ -205,6 +210,36 @@ if ($detailSummaries !== $expectedDetails) {
 }
 if ($detailResult['total_cents'] !== 6000) {
     fwrite(STDERR, 'Refund voucher detail helper should return the total debit amount in cents' . PHP_EOL);
+    exit(1);
+}
+
+$normalDetailResult = $detailProbe->buildRefundDetails([
+    [
+        'refund_id' => 'refund-normal-1',
+        'case_no' => '案四',
+        'party_name' => '',
+        'actual_payee_name' => '赵六',
+        'out_type' => '执行款退付',
+        'out_order_no' => 'OUT-003',
+        'refund_amount' => '40.00',
+        'receipt_no' => 'R004',
+        'source_receipt_no' => '',
+    ],
+], $subjectConfigMap, false);
+$normalSummaries = array_map(function ($detail) {
+    return $detail['summary'];
+}, $normalDetailResult['details']);
+if ($normalSummaries !== ['付 案四 赵六', '付 案四 赵六']) {
+    fwrite(STDERR, 'Normal refund voucher details should be 付 + case_no + party/payee' . PHP_EOL);
+    fwrite(STDERR, var_export($normalSummaries, true) . PHP_EOL);
+    exit(1);
+}
+if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => ''], false, '2026-03-05') !== '付 案五 钱七') {
+    fwrite(STDERR, 'Normal refund voucher header summary should be 付 + case_no + party/payee' . PHP_EOL);
+    exit(1);
+}
+if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => ''], true, '2026-03-05') !== '2026-03-05 付合计') {
+    fwrite(STDERR, 'Aggregated refund voucher header summary should be date + 付合计' . PHP_EOL);
     exit(1);
 }
 

@@ -15,6 +15,7 @@ const PeriodCloseView = () => import('../views/period/PeriodCloseView.vue')
 const SubjectManageView = () => import('../views/base/SubjectManageView.vue')
 const OpeningBalanceView = () => import('../views/base/OpeningBalanceView.vue')
 const AuxItemManageView = () => import('../views/base/AuxItemManageView.vue')
+const CarryForwardSchemeView = () => import('../views/base/CarryForwardSchemeView.vue')
 const AuditLogView = () => import('../views/system/AuditLogView.vue')
 const AccountSetManageView = () => import('../views/system/AccountSetManageView.vue')
 const UserManageView = () => import('../views/system/UserManageView.vue')
@@ -45,6 +46,7 @@ const router = createRouter({
     { path: '/base/subjects', component: SubjectManageView, meta: { permission: 'menu:base:subject' } },
     { path: '/base/opening-balances', component: OpeningBalanceView, meta: { permission: 'menu:base:opening' } },
     { path: '/base/aux-items', component: AuxItemManageView, meta: { permission: 'menu:base:aux' } },
+    { path: '/base/carry-forward-schemes', component: CarryForwardSchemeView, meta: { permission: 'menu:base:carry_forward' } },
     { path: '/system/users', component: UserManageView, meta: { permission: 'menu:system:user' } },
     { path: '/system/roles', component: RoleManageView, meta: { permission: 'menu:system:role' } },
     { path: '/system/role-permissions', component: RolePermissionView, meta: { permission: 'menu:system:role_permission' } },

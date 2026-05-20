@@ -36,15 +36,15 @@
             <el-icon><Coin /></el-icon>
             <span>案款业务</span>
           </template>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">案款缴费登记</el-menu-item>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">案款退付登记</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">缴费登记查询</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">出账查询</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
         </el-sub-menu>
         <el-menu-item v-if="context.hasPermission('period:close')" index="/period/close">
           <el-icon><Calendar /></el-icon>
           <span>期末结账</span>
         </el-menu-item>
-        <el-sub-menu v-if="context.hasAnyPermission(['menu:base:subject', 'menu:base:opening', 'menu:base:aux'])" index="/base">
+        <el-sub-menu v-if="context.hasAnyPermission(baseMenuPermissions)" index="/base">
           <template #title>
             <el-icon><Grid /></el-icon>
             <span>基础资料</span>
@@ -52,6 +52,7 @@
           <el-menu-item v-if="context.hasPermission('menu:base:subject')" index="/base/subjects">科目</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:base:opening')" index="/base/opening-balances">期初</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:base:aux')" index="/base/aux-items">辅助核算项</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:base:carry_forward')" index="/base/carry-forward-schemes">收支结转方案</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="context.hasAnyPermission(systemMenuPermissions)" index="/system">
           <template #title>
@@ -132,6 +133,7 @@ const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
 const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance']
 const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement']
+const baseMenuPermissions = ['menu:base:subject', 'menu:base:opening', 'menu:base:aux', 'menu:base:carry_forward']
 const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:account_set', 'menu:system:audit_log']
 
 interface PageTab {
@@ -149,13 +151,14 @@ const titleMap: Record<string, string> = {
   '/books/subject-balance': '科目余额表',
   '/books/subject-summary': '科目汇总表',
   '/books/aux-balance': '辅助核算余额表',
-  '/case-fund/payments': '案款缴费登记',
-  '/case-fund/refunds': '案款退付登记',
+  '/case-fund/payments': '缴费登记查询',
+  '/case-fund/refunds': '出账查询',
   '/case-fund/bank-statements': '银行对账单',
   '/period/close': '期末结账',
   '/base/subjects': '科目',
   '/base/opening-balances': '期初',
   '/base/aux-items': '辅助核算项',
+  '/base/carry-forward-schemes': '收支结转方案',
   '/system/users': '用户管理',
   '/system/roles': '角色管理',
   '/system/role-permissions': '角色权限配置',

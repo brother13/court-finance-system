@@ -94,6 +94,17 @@ class CaseFundGenerationGuardProbe extends CaseFund
     {
         return $this->assertRowsCanGenerateVoucher($rows, '缴费记录');
     }
+
+    public function paymentSummary($row)
+    {
+        return $this->buildPaymentVoucherSummary($row);
+    }
+}
+
+$summaryProbe = new CaseFundGenerationGuardProbe(false);
+if ($summaryProbe->paymentSummary(['case_no' => '执恢123号', 'party_name' => '张三']) !== '收 执恢123号 张三') {
+    fwrite(STDERR, 'Payment voucher summary should be 收 + case_no + party_name' . PHP_EOL);
+    exit(1);
 }
 
 $generatedRow = ['voucher_status' => 'GENERATED', 'voucher_id' => 'voucher-1', 'case_no' => '案一'];

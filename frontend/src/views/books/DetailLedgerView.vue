@@ -6,6 +6,7 @@
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新数据</el-button>
+      <el-button :icon="Printer" @click="printReport">打印</el-button>
       <el-button v-permission="'book:export'" type="primary" :icon="Download" @click="exportData">导出明细</el-button>
     </div>
   </div>
@@ -23,7 +24,7 @@
           <el-option v-for="period in periodOptions" :key="period" :label="periodLabel(period)" :value="period" />
         </el-select>
       </div>
-      <el-button type="primary" :icon="Search" @click="load">查询记录</el-button>
+      <el-button type="primary" :icon="Search" @click="queryLedger">查询记录</el-button>
     </div>
   </div>
 
@@ -33,7 +34,7 @@
         <el-icon><Tickets /></el-icon>
         明细账记录 · {{ selectedSubjectLabel }}
       </strong>
-      <span class="muted">共 {{ rows.length }} 条记录 · 借方合计 ¥ {{ totalDebit.toFixed(2) }} · 贷方合计 ¥ {{ totalCredit.toFixed(2) }}</span>
+      <span class="muted">共 {{ pageTotal }} 条记录 · 借方合计 ¥ {{ totalDebit.toFixed(2) }} · 贷方合计 ¥ {{ totalCredit.toFixed(2) }}</span>
     </div>
     <div class="panel-body compact detail-ledger-body">
       <aside class="ledger-subject-panel">
@@ -50,7 +51,7 @@
         />
       </aside>
       <div class="ledger-table-panel">
-        <el-table :data="rows" height="calc(100vh - 320px)" @row-dblclick="openVoucherDetail">
+        <el-table :data="rows" height="calc(100vh - 380px)" @row-dblclick="openVoucherDetail">
           <el-table-column prop="voucher_date" label="日期" width="120" align="center" />
           <el-table-column prop="voucher_no" label="凭证号" width="100" align="center">
             <template #default="{ row }">
@@ -85,6 +86,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-bar">
+          <el-pagination
+            v-model:current-page="page"
+            v-model:page-size="pageSize"
+            :page-sizes="[50, 100, 200]"
+            :total="pageTotal"
+            layout="total, sizes, prev, pager, next"
+            @current-change="load"
+            @size-change="handlePageSizeChange"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -94,11 +106,12 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Download, Refresh, Search, Tickets } from '@element-plus/icons-vue'
+import { Download, Printer, Refresh, Search, Tickets } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 import type { Subject } from '../../types/api'
+import { createReportPrintPdf, type ReportPrintColumn } from '../../utils/reportPrintPdf'
 
 type SubjectTreeNode = Subject & {
   subject_code: string
@@ -133,9 +146,13 @@ const filters = reactive({
 const query = reactive({ subjectCode: String(route.query.subject_code || defaultSubjectCode) })
 const rows = ref<any[]>([])
 const subjects = ref<Subject[]>([])
+const page = ref(1)
+const pageSize = ref(100)
+const pageTotal = ref(0)
+const totalDebit = ref(0)
+const totalCredit = ref(0)
+const exportPageSize = 200
 
-const totalDebit = computed(() => rows.value.reduce((sum, row) => sum + (Number(row.debit_amount) || 0), 0))
-const totalCredit = computed(() => rows.value.reduce((sum, row) => sum + (Number(row.credit_amount) || 0), 0))
 const subjectCodeOf = (subject: Subject) => String(subject.subject_code || subject.subjectCode || '')
 const subjectNameOf = (subject: Subject) => String(subject.subject_name || subject.subjectName || '')
 const parentCodeOf = (subject: Subject) => String(subject.parent_code || subject.parentCode || '')
@@ -145,6 +162,16 @@ const selectedSubjectLabel = computed(() => {
   const name = selected ? subjectNameOf(selected) : ''
   return `${query.subjectCode}${name ? ' ' + name : ''}`
 })
+const filterSummaryText = computed(() => `${periodLabel(filters.startPeriod)} 至 ${periodLabel(filters.endPeriod)} · ${selectedSubjectLabel.value}`)
+const ledgerReportColumns: ReportPrintColumn[] = [
+  { key: 'voucher_date', label: '日期', width: 11, align: 'center' },
+  { key: 'voucher_no', label: '凭证号', width: 10, align: 'center' },
+  { key: 'summary', label: '摘要', width: 24 },
+  { key: 'subject_label', label: '科目', width: 20 },
+  { key: 'debit_amount', label: '借方金额', width: 13, align: 'right' },
+  { key: 'credit_amount', label: '贷方金额', width: 13, align: 'right' },
+  { key: 'aux_desc', label: '辅助核算', width: 21 }
+]
 
 const subjectTreeRows = computed(() => {
   const activeSubjects = subjects.value.filter((subject) => Number(subject.status ?? 1) === 1)
@@ -196,21 +223,71 @@ const formatAuxDesc = (auxDesc?: string) => {
     .join('；')
 }
 
-const load = async () => {
-  if (filters.startPeriod > filters.endPeriod) {
-    ElMessage.warning('起始期间不能晚于结束期间')
-    return
-  }
+const ledgerReportRows = (items: any[]) => items.map((row) => ({
+  voucher_date: row.voucher_date || '',
+  voucher_no: row.voucher_no ? `记-${String(row.voucher_no).padStart(4, '0')}` : '',
+  summary: row.summary || '',
+  subject_label: `${row.subject_code || ''}${row.subject_name ? ' ' + row.subject_name : ''}`,
+  debit_amount: Number(row.debit_amount) > 0 ? Number(row.debit_amount).toFixed(2) : '',
+  credit_amount: Number(row.credit_amount) > 0 ? Number(row.credit_amount).toFixed(2) : '',
+  aux_desc: formatAuxDesc(row.aux_desc)
+}))
+
+const fetchLedgerPage = async (targetPage: number, targetPageSize: number) => {
   const [startDate] = periodMonthRange(filters.startPeriod)
   const [, endDate] = periodMonthRange(filters.endPeriod)
-  rows.value = await booksApi.detailLedger({
+  return booksApi.detailLedger({
     period: filters.endPeriod,
     startPeriod: filters.startPeriod,
     endPeriod: filters.endPeriod,
     subjectCode: query.subjectCode,
     startDate,
-    endDate
-  }) as any[]
+    endDate,
+    page: targetPage,
+    pagesize: targetPageSize
+  })
+}
+
+const load = async () => {
+  if (filters.startPeriod > filters.endPeriod) {
+    ElMessage.warning('起始期间不能晚于结束期间')
+    return
+  }
+  const result = await fetchLedgerPage(page.value, pageSize.value)
+  rows.value = result.items || []
+  pageTotal.value = Number(result.total || rows.value.length || 0)
+  totalDebit.value = Number(result.debit_total || 0)
+  totalCredit.value = Number(result.credit_total || 0)
+}
+
+const queryLedger = async () => {
+  page.value = 1
+  await load()
+}
+
+const loadAllLedgerRows = async () => {
+  if (filters.startPeriod > filters.endPeriod) {
+    ElMessage.warning('起始期间不能晚于结束期间')
+    return { items: [], debitTotal: 0, creditTotal: 0 }
+  }
+  const firstPage = await fetchLedgerPage(1, exportPageSize)
+  const items = [...(firstPage.items || [])]
+  const total = Number(firstPage.total || items.length || 0)
+  const pageCount = Math.ceil(total / exportPageSize)
+  for (let currentPage = 2; currentPage <= pageCount; currentPage += 1) {
+    const result = await fetchLedgerPage(currentPage, exportPageSize)
+    items.push(...(result.items || []))
+  }
+  return {
+    items,
+    debitTotal: Number(firstPage.debit_total || 0),
+    creditTotal: Number(firstPage.credit_total || 0)
+  }
+}
+
+const handlePageSizeChange = async () => {
+  page.value = 1
+  await load()
 }
 
 const applyRouteQuery = () => {
@@ -218,6 +295,7 @@ const applyRouteQuery = () => {
   filters.startPeriod = String(route.query.start_period || routePeriod)
   filters.endPeriod = String(route.query.end_period || routePeriod)
   query.subjectCode = String(route.query.subject_code || defaultSubjectCode)
+  page.value = 1
 }
 
 const loadSubjects = async () => {
@@ -228,7 +306,7 @@ const handleSubjectSelect = (row: SubjectTreeNode) => {
   const code = subjectCodeOf(row)
   if (!code || code === query.subjectCode) return
   query.subjectCode = code
-  load()
+  queryLedger()
 }
 
 const openVoucherDetail = (row: any) => {
@@ -239,8 +317,59 @@ const openVoucherDetail = (row: any) => {
   router.push({ path: `/vouchers/detail/${row.period}/${row.voucher_id}` })
 }
 
-const exportData = () => {
-  ElMessage.info('导出功能开发中,可对接 Excel 导出接口')
+const exportData = async () => {
+  const { items, debitTotal, creditTotal } = await loadAllLedgerRows()
+  if (items.length === 0) {
+    ElMessage.warning('当前没有可导出的明细账数据')
+    return
+  }
+  const XLSX = await import('xlsx')
+  const headers = ['日期', '凭证号', '摘要', '科目编码', '科目名称', '借方金额', '贷方金额', '辅助核算']
+  const body = items.map((row) => [
+    row.voucher_date || '',
+    row.voucher_no ? `记-${String(row.voucher_no).padStart(4, '0')}` : '',
+    row.summary || '',
+    row.subject_code || '',
+    row.subject_name || '',
+    Number(row.debit_amount || 0),
+    Number(row.credit_amount || 0),
+    formatAuxDesc(row.aux_desc)
+  ])
+  const totals = ['合计', '', '', '', '', debitTotal, creditTotal, '']
+  const sheet = XLSX.utils.aoa_to_sheet([['明细账'], [context.accountSetName || '当前账套', filterSummaryText.value], headers, ...body, totals])
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, sheet, '明细账')
+  XLSX.writeFile(workbook, `明细账_${query.subjectCode}_${filters.startPeriod}_${filters.endPeriod}.xlsx`)
+}
+
+const printReport = async () => {
+  const { items, debitTotal, creditTotal } = await loadAllLedgerRows()
+  if (items.length === 0) {
+    ElMessage.warning('当前没有可打印的明细账数据')
+    return
+  }
+  try {
+    const pdf = await createReportPrintPdf({
+      title: '明细账',
+      subtitle: `${context.accountSetName || '当前账套'} · ${filterSummaryText.value}`,
+      columns: ledgerReportColumns,
+      rows: ledgerReportRows(items),
+      totals: {
+        voucher_date: '合计',
+        voucher_no: '',
+        summary: '',
+        subject_label: '',
+        debit_amount: debitTotal.toFixed(2),
+        credit_amount: creditTotal.toFixed(2),
+        aux_desc: ''
+      }
+    })
+    const url = URL.createObjectURL(pdf)
+    window.open(url, '_blank')
+    ElMessage.success('明细账PDF已生成')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '生成明细账PDF失败')
+  }
 }
 
 watch(
@@ -308,6 +437,12 @@ onMounted(loadSubjects)
 
 .ledger-table-panel {
   min-width: 0;
+}
+
+.pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
 }
 
 @media (max-width: 960px) {

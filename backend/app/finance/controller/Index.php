@@ -7,6 +7,7 @@ use app\finance\model\AccountSet;
 use app\finance\model\Auxiliary;
 use app\finance\model\Book;
 use app\finance\model\CaseFund;
+use app\finance\model\CarryForward;
 use app\finance\model\Log;
 use app\finance\model\Opening;
 use app\finance\model\Permission;
@@ -85,6 +86,10 @@ class Index extends Controller
                 break;
             case 'caseFund':
                 $model = new CaseFund();
+                $data = $model->index($actionArr[2], $postdata);
+                break;
+            case 'carryForward':
+                $model = new CarryForward();
                 $data = $model->index($actionArr[2], $postdata);
                 break;
             case 'period':

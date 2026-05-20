@@ -72,5 +72,11 @@ export const baseApi = {
   },
   saveAuxOpeningBalances(period: string, subjectCode: string, items: any[]) {
     return apiAction('/opening/auxSave', { period, subject_code: subjectCode, items }) as Promise<{ saved: number }>
+  },
+  carryForwardScheme() {
+    return apiAction('/carryForward/info') as Promise<any>
+  },
+  saveCarryForwardScheme(payload: any) {
+    return apiAction('/carryForward/save', payload) as Promise<string>
   }
 }

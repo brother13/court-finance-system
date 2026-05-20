@@ -60,6 +60,8 @@ class Book extends Common
             $endDate = date('Y-m-t', strtotime($endPeriod . '-01'));
         }
         $subjectCode = $data['subject_code'] ?? '';
+        $page = max(1, (int)($data['page'] ?? 1));
+        $pageSize = max(1, min(200, (int)($data['pagesize'] ?? 100)));
         $fiscalYear = $this->fiscalYear($endPeriod);
         $voucherTable = 'fin_voucher';
         $detailTable = 'fin_voucher_detail';
@@ -77,24 +79,38 @@ class Book extends Common
         $lengths = $this->subjectCodeRuleLengths($codeRule);
         $maxLength = empty($lengths) ? 10 : max($lengths);
 
-        $query = db($detailTable)->alias('d')
-            ->force('idx_voucher_detail_ledger_subject')
-            ->join($voucherTable . ' v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
-            ->join('fin_subject s', 's.subject_code=d.subject_code and s.account_set_id=d.account_set_id and s.del_flag=0', 'LEFT')
-            ->where($where)
-            ->where('d.period', 'between', [$startPeriod, $endPeriod])
-            ->where('v.period', 'between', [$startPeriod, $endPeriod]);
-        if ($subjectCode !== '') {
-            $query->where('d.subject_code', '>=', $subjectCode);
-            $query->where('d.subject_code', '<=', $this->subjectRangeUpperBound($subjectCode, $maxLength));
-        }
+        $buildQuery = function ($withSubjectName = false) use ($detailTable, $voucherTable, $where, $startPeriod, $endPeriod, $subjectCode, $maxLength) {
+            $query = db($detailTable)->alias('d')
+                ->force('idx_voucher_detail_ledger_subject')
+                ->join($voucherTable . ' v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
+                ->where($where)
+                ->where('d.period', 'between', [$startPeriod, $endPeriod])
+                ->where('v.period', 'between', [$startPeriod, $endPeriod]);
+            if ($withSubjectName) {
+                $query->join('fin_subject s', 's.subject_code=d.subject_code and s.account_set_id=d.account_set_id and s.del_flag=0', 'LEFT');
+            }
+            if ($subjectCode !== '') {
+                $query->where('d.subject_code', '>=', $subjectCode);
+                $query->where('d.subject_code', '<=', $this->subjectRangeUpperBound($subjectCode, $maxLength));
+            }
+            return $query;
+        };
 
-        $rows = $query
+        $total = (int)$buildQuery()->count();
+        $debitTotal = $buildQuery()->sum('d.debit_amount');
+        $creditTotal = $buildQuery()->sum('d.credit_amount');
+        $rows = $buildQuery(true)
             ->field('v.voucher_id,v.period,v.voucher_date,v.voucher_no,d.summary,d.subject_code,s.subject_name,d.debit_amount,d.credit_amount,d.aux_desc')
             ->order('v.voucher_date asc,v.voucher_no asc,d.line_no asc')
+            ->page($page, $pageSize)
             ->select();
 
-        return $this->ok($rows, 'OK', count($rows));
+        return $this->ok([
+            'items' => $rows,
+            'total' => $total,
+            'debit_total' => $this->centsToDecimal($this->decimalToCents($debitTotal ?: 0)),
+            'credit_total' => $this->centsToDecimal($this->decimalToCents($creditTotal ?: 0)),
+        ], 'OK', $total);
     }
 
     public function subjectBalance($data = [])

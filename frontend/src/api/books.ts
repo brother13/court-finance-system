@@ -9,6 +9,8 @@ export const booksApi = {
     subjectCode?: string
     startDate: string
     endDate: string
+    page?: number
+    pagesize?: number
   }) {
     return apiAction('/book/detailLedger', {
       period: params.period,
@@ -16,8 +18,10 @@ export const booksApi = {
       end_period: params.endPeriod,
       subject_code: params.subjectCode,
       start_date: params.startDate,
-      end_date: params.endDate
-    }) as Promise<any[]>
+      end_date: params.endDate,
+      page: params.page,
+      pagesize: params.pagesize
+    }) as Promise<{ items: any[]; total: number; debit_total: string | number; credit_total: string | number }>
   },
   subjectBalance(params: string | {
     period?: string
