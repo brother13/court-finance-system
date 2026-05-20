@@ -17,6 +17,7 @@ use app\finance\model\Subject;
 use app\finance\model\User;
 use app\finance\model\Voucher;
 use think\Controller;
+use think\Response;
 
 class Index extends Controller
 {
@@ -130,6 +131,10 @@ class Index extends Controller
             default:
                 $rt['message'] = "操作【{$action}】不合法！";
                 return $rt;
+        }
+
+        if ($data instanceof Response) {
+            return $data;
         }
 
         $rt['code'] = isset($data['code']) ? $data['code'] : self::CODE_SUCCESS;

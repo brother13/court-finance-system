@@ -99,6 +99,7 @@
               <el-option label="8条" :value="8" />
               <el-option label="10条" :value="10" />
               <el-option label="12条" :value="12" />
+              <el-option label="20条" :value="20" />
             </el-select>
           </el-form-item>
         </el-col>

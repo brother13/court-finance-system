@@ -50,6 +50,8 @@ class Voucher extends Common
                 return $this->voidVoucher($data);
             case 'printMark':
                 return $this->printMark($data);
+            case 'printPdf':
+                return $this->printPdf($data);
             case 'printData':
                 return $this->printData($data);
             case 'import':
@@ -970,6 +972,78 @@ class Voucher extends Common
         ], 'OK', count($vouchers));
     }
 
+    public function printPdf($data = [])
+    {
+        $auth = $this->requirePermission('voucher:print');
+        if ($auth) {
+            return $auth;
+        }
+
+        $items = $this->resolvePrintVoucherItems($data);
+        if (empty($items)) {
+            return $this->error('请选择要打印的凭证');
+        }
+
+        $vouchers = $this->loadVouchersForPrint($items);
+        if (empty($vouchers)) {
+            return $this->error('所选凭证不存在');
+        }
+        $this->fillVoucherPrintDetails($vouchers);
+        $accountSet = $this->printAccountSetConfig();
+        $lineCount = max(1, (int)$accountSet['voucher_print_line_count']);
+        $pages = $this->splitVoucherPrintPages($vouchers, $lineCount);
+        if (empty($pages)) {
+            return $this->error('没有可打印的凭证内容');
+        }
+
+        $vendorDir = __DIR__ . '/../../../vendor';
+        if (!is_dir($vendorDir . '/mpdf/mpdf')) {
+            return $this->error('PDF组件未安装，请先在backend目录安装mpdf/mpdf');
+        }
+        $this->registerMpdfAutoloader($vendorDir);
+
+        $tempDir = __DIR__ . '/../../../runtime/mpdf';
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0775, true);
+        }
+        $format = strtoupper((string)$accountSet['paper_size']) === 'A4' ? 'A4-L' : 'A5-L';
+
+        try {
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'zh-CN+aCJK',
+                'format' => $format,
+                'tempDir' => $tempDir,
+                'margin_left' => 22,
+                'margin_right' => 16,
+                'margin_top' => 7,
+                'margin_bottom' => 7,
+                'autoScriptToLang' => true,
+                'autoLangToFont' => true,
+                'useAdobeCJK' => true,
+            ]);
+            $mpdf->SetTitle('记账凭证');
+            $mpdf->SetDisplayMode('fullpage');
+            $mpdf->WriteHTML($this->voucherPrintPdfStyles());
+            foreach ($pages as $index => $page) {
+                if ($index > 0) {
+                    $mpdf->AddPage();
+                }
+                $mpdf->WriteHTML($this->buildVoucherPrintPdfHtml($page, $accountSet, $lineCount));
+            }
+            $pdf = $mpdf->Output('', 'S');
+        } catch (\Exception $e) {
+            return $this->error('生成凭证PDF失败：' . $e->getMessage());
+        }
+
+        $this->markVouchersPrinted($vouchers);
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="voucher-print.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
+    }
+
     protected function loadVouchersForPrint($items)
     {
         $vouchers = [];
@@ -1003,6 +1077,185 @@ class Voucher extends Common
         });
         $this->fillUserDisplayNames($vouchers);
         return $vouchers;
+    }
+
+    protected function resolvePrintVoucherItems($data)
+    {
+        $items = $data['vouchers'] ?? [];
+        if (!is_array($items) || empty($items)) {
+            $items = [];
+            $period = $data['period'] ?? '';
+            $voucherIds = $data['voucher_ids'] ?? [];
+            if ($period !== '' && is_array($voucherIds)) {
+                foreach ($voucherIds as $voucherId) {
+                    $items[] = ['period' => $period, 'voucher_id' => $voucherId];
+                }
+            }
+        }
+        return is_array($items) ? $items : [];
+    }
+
+    protected function splitVoucherPrintPages($vouchers, $lineCount)
+    {
+        $pages = [];
+        foreach ($vouchers as $voucher) {
+            $details = $voucher['details'] ?? [];
+            if (empty($details)) {
+                $details = [[]];
+            }
+            $chunks = array_chunk($details, max(1, (int)$lineCount));
+            $pageCount = max(1, count($chunks));
+            foreach ($chunks as $index => $chunk) {
+                $pages[] = [
+                    'voucher' => $voucher,
+                    'details' => $chunk,
+                    'page_no' => $index + 1,
+                    'page_count' => $pageCount,
+                ];
+            }
+        }
+        return $pages;
+    }
+
+    protected function voucherPrintPdfStyles()
+    {
+        return '<style>
+body { font-family: gb, sun-exta, "SimSun", serif; color: #111; font-size: 10pt; }
+.voucher-page { width: 100%; }
+h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
+.meta { width: 100%; margin-bottom: 8px; font-size: 9pt; }
+.meta td { border: 0; padding: 0; }
+.meta-center { text-align: center; }
+.meta-right { text-align: right; }
+.voucher-table { width: 100%; border-collapse: collapse; }
+.voucher-table th, .voucher-table td { border: 1px solid #111; padding: 4px 5px; vertical-align: top; }
+.voucher-table th { text-align: center; font-weight: bold; background: #f2f2f2; }
+.summary { width: 48%; }
+.subject { width: 22%; }
+.amount { width: 15%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
+.total-row td { font-weight: bold; background: #f7f7f7; }
+.footer { width: 100%; margin-top: 10px; font-size: 9pt; }
+.footer td { border: 0; padding: 0; }
+</style>';
+    }
+
+    protected function buildVoucherPrintPdfHtml($page, $accountSet, $lineCount)
+    {
+        $escape = function ($value) {
+            return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+        };
+        $money = function ($value) {
+            $cents = $this->decimalToCents($value);
+            return $cents === 0 ? '' : number_format($cents / 100, 2, '.', ',');
+        };
+
+        $voucher = $page['voucher'];
+        $rows = $page['details'];
+        $debitCents = 0;
+        $creditCents = 0;
+        foreach ($rows as $detail) {
+            $debitCents += $this->decimalToCents($detail['debit_amount'] ?? 0);
+            $creditCents += $this->decimalToCents($detail['credit_amount'] ?? 0);
+        }
+        while (count($rows) < $lineCount) {
+            $rows[] = [];
+        }
+
+        $body = '';
+        foreach ($rows as $detail) {
+            $subjectText = trim((string)($detail['subject_code'] ?? '') . ' ' . (string)($detail['subject_name'] ?? ''));
+            if (!empty($detail['aux_desc'])) {
+                $subjectText .= ' ' . $this->formatVoucherPrintAuxDesc($detail['aux_desc']);
+            }
+            $body .= '<tr>';
+            $body .= '<td class="summary">' . $escape($detail['summary'] ?? '') . '</td>';
+            $body .= '<td class="subject">' . $escape(trim($subjectText)) . '</td>';
+            $body .= '<td class="amount">' . $escape($money($detail['debit_amount'] ?? 0)) . '</td>';
+            $body .= '<td class="amount">' . $escape($money($detail['credit_amount'] ?? 0)) . '</td>';
+            $body .= '</tr>';
+        }
+
+        $voucherNo = ($voucher['voucher_word'] ?? '记') . '-' . ($voucher['voucher_no'] ?? '');
+        if (($page['page_count'] ?? 1) > 1) {
+            $voucherNo .= '(' . $page['page_no'] . '/' . $page['page_count'] . ')';
+        }
+
+        return '<div class="voucher-page">
+  <h1>记账凭证</h1>
+  <table class="meta" border="0" cellpadding="0" cellspacing="0">
+    <tr>
+      <td>账套：' . $escape($accountSet['set_name'] ?? '') . '</td>
+      <td class="meta-center">日期：' . $escape($voucher['voucher_date'] ?? '') . '</td>
+      <td class="meta-right">凭证号：' . $escape($voucherNo) . '</td>
+    </tr>
+    <tr>
+      <td>附单据：' . $escape($voucher['attachment_count'] ?? 0) . '</td>
+      <td class="meta-center"></td>
+      <td class="meta-right"></td>
+    </tr>
+  </table>
+  <table class="voucher-table" border="1" cellpadding="4" cellspacing="0">
+    <thead>
+      <tr>
+        <th class="summary">摘要</th>
+        <th class="subject">科目</th>
+        <th class="amount">借方金额</th>
+        <th class="amount">贷方金额</th>
+      </tr>
+    </thead>
+    <tbody>' . $body . '
+      <tr class="total-row">
+        <td class="summary">合计：</td>
+        <td class="subject"></td>
+        <td class="amount">' . $escape(number_format($debitCents / 100, 2, '.', ',')) . '</td>
+        <td class="amount">' . $escape(number_format($creditCents / 100, 2, '.', ',')) . '</td>
+      </tr>
+    </tbody>
+  </table>
+  <table class="footer" border="0" cellpadding="0" cellspacing="0">
+    <tr>
+      <td>会计主管：' . $escape($accountSet['finance_manager'] ?? '') . '</td>
+      <td>审核人：' . $escape($voucher['audit_by_name'] ?? ($voucher['posted_by_name'] ?? '')) . '</td>
+      <td class="meta-right">制单人：' . $escape($voucher['prepared_by_name'] ?? '') . '</td>
+    </tr>
+  </table>
+</div>';
+    }
+
+    protected function formatVoucherPrintAuxDesc($auxDesc)
+    {
+        $parts = preg_split('/[;；\/]/u', (string)$auxDesc);
+        $labels = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '') {
+                continue;
+            }
+            $index = strpos($part, ':');
+            $labels[] = trim($index === false ? $part : substr($part, $index + 1));
+        }
+        return implode('；', array_filter($labels, 'strlen'));
+    }
+
+    protected function registerMpdfAutoloader($vendorDir)
+    {
+        if (class_exists('\Mpdf\Mpdf', false)) {
+            return;
+        }
+        if (!class_exists('\Composer\Autoload\ClassLoader', false)) {
+            require_once $vendorDir . '/composer/ClassLoader.php';
+        }
+        $loader = new \Composer\Autoload\ClassLoader($vendorDir);
+        $loader->addPsr4('Mpdf\\', $vendorDir . '/mpdf/mpdf/src');
+        $loader->addPsr4('Mpdf\\PsrHttpMessageShim\\', $vendorDir . '/mpdf/psr-http-message-shim/src');
+        $loader->addPsr4('Mpdf\\PsrLogAwareTrait\\', $vendorDir . '/mpdf/psr-log-aware-trait/src');
+        $loader->addPsr4('setasign\\Fpdi\\', $vendorDir . '/setasign/fpdi/src');
+        $loader->addPsr4('Psr\\Log\\', $vendorDir . '/psr/log/Psr/Log');
+        $loader->addPsr4('Psr\\Http\\Message\\', $vendorDir . '/psr/http-message/src');
+        $loader->addPsr4('DeepCopy\\', $vendorDir . '/myclabs/deep-copy/src/DeepCopy');
+        $loader->register(true);
+        require_once $vendorDir . '/myclabs/deep-copy/src/DeepCopy/deep_copy.php';
+        require_once $vendorDir . '/mpdf/mpdf/src/functions.php';
     }
 
     protected function fillVoucherPrintDetails(&$vouchers)

@@ -314,15 +314,15 @@ class Period extends Common
     protected function yearEndPolicyForBizType($bizType)
     {
         $bizType = strtoupper(trim((string)$bizType));
-        if ($bizType === 'CASE_FUND') {
+        if (in_array($bizType, ['CASE_FUND', 'LITIGATION_FEE'], true)) {
             return [
                 'carry_mode' => 'BALANCE_ROLLOVER',
-                'label' => '专项余额结转',
+                'label' => '本科目余额结转',
                 'auto_profit_loss_carry' => 0,
-                'block_profit_loss_balance' => 1,
+                'block_profit_loss_balance' => 0,
             ];
         }
-        if (in_array($bizType, ['LITIGATION_FEE', 'CANTEEN', 'UNION'], true)) {
+        if (in_array($bizType, ['CANTEEN', 'UNION'], true)) {
             return [
                 'carry_mode' => 'CONFIG_REQUIRED',
                 'label' => '收支结转待配置',
@@ -385,8 +385,11 @@ class Period extends Common
         return $items;
     }
 
-    protected function shouldCarrySubjectToNextOpening($subjectType)
+    protected function shouldCarrySubjectToNextOpening($subjectType, $policy = null)
     {
+        if (($policy['carry_mode'] ?? '') === 'BALANCE_ROLLOVER') {
+            return true;
+        }
         return strtoupper(trim((string)$subjectType)) !== 'PROFIT_LOSS';
     }
 
@@ -444,6 +447,7 @@ class Period extends Common
     protected function createNextYearSubjectOpening($sourcePeriod, $targetPeriod)
     {
         $balances = $this->subjectEndingBalances($sourcePeriod);
+        $policy = $this->yearEndPolicyForBizType($this->accountSetBizType());
         $subjectInfo = $this->subjectInfoByCode(array_keys($balances));
         $saved = 0;
         foreach ($balances as $subjectCode => $cents) {
@@ -451,7 +455,7 @@ class Period extends Common
                 continue;
             }
             $subjectType = $subjectInfo[$subjectCode]['subject_type'] ?? '';
-            if (!$this->shouldCarrySubjectToNextOpening($subjectType)) {
+            if (!$this->shouldCarrySubjectToNextOpening($subjectType, $policy)) {
                 continue;
             }
             $row = [
@@ -473,6 +477,7 @@ class Period extends Common
     protected function createNextYearAuxOpening($sourcePeriod, $targetPeriod)
     {
         $balances = $this->auxEndingBalances($sourcePeriod);
+        $policy = $this->yearEndPolicyForBizType($this->accountSetBizType());
         $subjectCodes = [];
         foreach ($balances as $item) {
             $subjectCodes[] = $item['subject_code'];
@@ -485,7 +490,7 @@ class Period extends Common
                 continue;
             }
             $subjectType = $subjectInfo[$item['subject_code']]['subject_type'] ?? '';
-            if (!$this->shouldCarrySubjectToNextOpening($subjectType)) {
+            if (!$this->shouldCarrySubjectToNextOpening($subjectType, $policy)) {
                 continue;
             }
             $row = [

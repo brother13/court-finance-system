@@ -6,7 +6,7 @@
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新</el-button>
-      <el-button :icon="Printer" @click="printReport">打印</el-button>
+      <el-button :icon="Printer" :loading="printing" @click="printReport">打印</el-button>
       <el-button v-permission="'book:export'" :icon="Download" @click="exportData">导出</el-button>
     </div>
   </div>
@@ -166,7 +166,6 @@ import { ElMessage } from 'element-plus'
 import { CaretBottom, CaretRight, Download, Notebook, Printer, Refresh, Search } from '@element-plus/icons-vue'
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
-import { createReportPrintPdf, type ReportPrintColumn } from '../../utils/reportPrintPdf'
 
 type BalanceRow = {
   subject_code: string
@@ -201,6 +200,7 @@ const amountFields = [
 const rows = ref<BalanceRow[]>([])
 const collapsedSubjectCodes = ref<Set<string>>(new Set())
 const filterDropdownVisible = ref(false)
+const printing = ref(false)
 const filters = reactive({
   startPeriod: context.period,
   endPeriod: context.period,
@@ -332,18 +332,6 @@ const balanceReportRows = computed(() => balanceDisplayRows.value.map((row) => (
   ending_debit_amount: moneyText(row.ending_debit_amount),
   ending_credit_amount: moneyText(row.ending_credit_amount)
 })))
-const balanceReportColumns: ReportPrintColumn[] = [
-  { key: 'subject_code', label: '科目编码', width: 13, align: 'center' },
-  { key: 'subject_name', label: '科目名称', width: 19 },
-  { key: 'opening_debit_amount', label: '期初借方', width: 10, align: 'right' },
-  { key: 'opening_credit_amount', label: '期初贷方', width: 10, align: 'right' },
-  { key: 'debit_amount', label: '本期借方', width: 10, align: 'right' },
-  { key: 'credit_amount', label: '本期贷方', width: 10, align: 'right' },
-  { key: 'year_debit_amount', label: '累计借方', width: 10, align: 'right' },
-  { key: 'year_credit_amount', label: '累计贷方', width: 10, align: 'right' },
-  { key: 'ending_debit_amount', label: '期末借方', width: 10, align: 'right' },
-  { key: 'ending_credit_amount', label: '期末贷方', width: 10, align: 'right' }
-]
 
 const summaryMethod = ({ columns }: { columns: any[] }) => {
   return columns.map((column, idx) => {
@@ -426,34 +414,30 @@ const exportData = async () => {
 }
 
 const printReport = async () => {
+  if (printing.value) return
   if (rows.value.length === 0) {
     ElMessage.warning('当前没有可打印的科目余额数据')
     return
   }
+  printing.value = true
   try {
-    const pdf = await createReportPrintPdf({
-      title: '科目余额表',
-      subtitle: `${context.accountSetName || '当前账套'} · ${filterSummaryText.value}`,
-      columns: balanceReportColumns,
-      rows: balanceReportRows.value,
-      totals: {
-        subject_code: '合计',
-        subject_name: '',
-        opening_debit_amount: sumAmount('opening_debit_amount').toFixed(2),
-        opening_credit_amount: sumAmount('opening_credit_amount').toFixed(2),
-        debit_amount: sumAmount('debit_amount').toFixed(2),
-        credit_amount: sumAmount('credit_amount').toFixed(2),
-        year_debit_amount: sumAmount('year_debit_amount').toFixed(2),
-        year_credit_amount: sumAmount('year_credit_amount').toFixed(2),
-        ending_debit_amount: sumAmount('ending_debit_amount').toFixed(2),
-        ending_credit_amount: sumAmount('ending_credit_amount').toFixed(2)
-      }
+    const pdf = await booksApi.subjectBalancePdf({
+      period: filters.endPeriod,
+      startPeriod: filters.startPeriod,
+      endPeriod: filters.endPeriod,
+      subjectStartCode: filters.subjectStartCode,
+      subjectEndCode: filters.subjectEndCode,
+      levelStart: filters.levelStart,
+      levelEnd: filters.levelEnd,
+      zeroFilter: filters.zeroFilter
     })
     const url = URL.createObjectURL(pdf)
     window.open(url, '_blank')
     ElMessage.success('科目余额表PDF已生成')
   } catch (error: any) {
     ElMessage.error(error?.message || '生成科目余额表PDF失败')
+  } finally {
+    printing.value = false
   }
 }
 

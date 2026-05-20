@@ -6,7 +6,7 @@
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新</el-button>
-      <el-button :icon="Printer" @click="printReport">打印</el-button>
+      <el-button :icon="Printer" :loading="printing" @click="printReport">打印</el-button>
       <el-button v-permission="'book:export'" :icon="Download" @click="exportData">导出</el-button>
     </div>
   </div>
@@ -69,6 +69,7 @@
     </div>
     <div class="panel-body compact">
       <el-table
+        class="subject-summary-table"
         :data="visibleRows"
         height="calc(100vh - 260px)"
         show-summary
@@ -97,28 +98,17 @@
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="level_no" label="级次" width="80" align="center" />
-        <el-table-column prop="entry_count" label="分录数" width="100" align="center" />
-        <el-table-column label="本期发生额" align="center">
-          <el-table-column prop="debit_amount" label="借方" width="160" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.debit_amount) > 0 ? 'amount-debit' : 'muted']">
-                {{ amountText(row.debit_amount) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="credit_amount" label="贷方" width="160" align="right">
-            <template #default="{ row }">
-              <span :class="['text-mono', Number(row.credit_amount) > 0 ? 'amount-credit' : 'muted']">
-                {{ amountText(row.credit_amount) }}
-              </span>
-            </template>
-          </el-table-column>
-        </el-table-column>
-        <el-table-column prop="balance_amount" label="借贷净额" width="180" align="right">
+        <el-table-column prop="debit_amount" label="金额合计借方" width="180" align="right">
           <template #default="{ row }">
-            <span :class="['text-mono', balanceClass(row.balance_amount)]">
-              {{ balanceText(row.balance_amount) }}
+            <span :class="['text-mono', Number(row.debit_amount) > 0 ? 'amount-debit' : 'muted']">
+              {{ amountText(row.debit_amount) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="credit_amount" label="金额合计贷方" width="180" align="right">
+          <template #default="{ row }">
+            <span :class="['text-mono', Number(row.credit_amount) > 0 ? 'amount-credit' : 'muted']">
+              {{ amountText(row.credit_amount) }}
             </span>
           </template>
         </el-table-column>
@@ -135,7 +125,6 @@ import { CaretBottom, CaretRight, Collection, Download, Printer, Refresh, Search
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 import type { SubjectSummaryRow } from '../../types/api'
-import { createReportPrintPdf, type ReportPrintColumn } from '../../utils/reportPrintPdf'
 
 const context = useContextStore()
 const router = useRouter()
@@ -157,6 +146,7 @@ const filters = reactive({
 })
 const rows = ref<SubjectSummaryRow[]>([])
 const collapsedSubjectCodes = ref<Set<string>>(new Set())
+const printing = ref(false)
 const subjectTypeOrder: Record<string, number> = {
   ASSET: 1,
   LIABILITY: 2,
@@ -249,7 +239,6 @@ const summaryRows = computed(() => {
 
 const totalDebit = computed(() => summaryRows.value.reduce((sum, row) => sum + (Number(row.debit_amount) || 0), 0))
 const totalCredit = computed(() => summaryRows.value.reduce((sum, row) => sum + (Number(row.credit_amount) || 0), 0))
-const totalBalance = computed(() => summaryRows.value.reduce((sum, row) => sum + (Number(row.balance_amount) || 0), 0))
 const totalEntries = computed(() => summaryRows.value.reduce((sum, row) => sum + (Number(row.entry_count) || 0), 0))
 const summaryFilterText = computed(() => `${periodLabel(filters.startPeriod)} 至 ${periodLabel(filters.endPeriod)}`)
 const queryDateRange = computed(() => {
@@ -264,46 +253,19 @@ const moneyText = (value: string | number) => {
 const summaryReportRows = computed(() => orderedRows.value.map((row) => ({
   subject_code: row.subject_code,
   subject_name: `${'  '.repeat(Math.max(0, Number(row.level_no || 1) - 1))}${row.subject_name || '未维护名称'}`,
-  level_no: Number(row.level_no || 0),
-  entry_count: Number(row.entry_count || 0),
   debit_amount: moneyText(row.debit_amount),
-  credit_amount: moneyText(row.credit_amount),
-  balance_amount: moneyText(row.balance_amount)
+  credit_amount: moneyText(row.credit_amount)
 })))
-const summaryReportColumns: ReportPrintColumn[] = [
-  { key: 'subject_code', label: '科目编码', width: 16, align: 'center' },
-  { key: 'subject_name', label: '科目名称', width: 26 },
-  { key: 'level_no', label: '级次', width: 7, align: 'center' },
-  { key: 'entry_count', label: '分录数', width: 9, align: 'center' },
-  { key: 'debit_amount', label: '借方发生额', width: 14, align: 'right' },
-  { key: 'credit_amount', label: '贷方发生额', width: 14, align: 'right' },
-  { key: 'balance_amount', label: '借贷净额', width: 14, align: 'right' }
-]
-
 const amountText = (val: string | number) => {
   const num = Number(val) || 0
   return num > 0 ? '¥ ' + num.toFixed(2) : '—'
 }
 
-const balanceText = (val: string | number) => {
-  const num = Number(val) || 0
-  if (Math.abs(num) < 0.001) return '—'
-  return (num >= 0 ? '¥ ' : '-¥ ') + Math.abs(num).toFixed(2)
-}
-
-const balanceClass = (val: string | number) => {
-  const num = Number(val) || 0
-  if (Math.abs(num) < 0.001) return 'muted'
-  return num >= 0 ? 'amount-debit' : 'amount-credit'
-}
-
 const summaryMethod = ({ columns }: { columns: any[] }) => {
   return columns.map((_, idx) => {
     if (idx === 0) return '合计'
-    if (idx === 3) return totalEntries.value
-    if (idx === 4) return '¥ ' + totalDebit.value.toFixed(2)
-    if (idx === 5) return '¥ ' + totalCredit.value.toFixed(2)
-    if (idx === 6) return balanceText(totalBalance.value)
+    if (idx === 2) return '¥ ' + totalDebit.value.toFixed(2)
+    if (idx === 3) return '¥ ' + totalCredit.value.toFixed(2)
     return ''
   })
 }
@@ -367,17 +329,14 @@ const exportData = async () => {
     return
   }
   const XLSX = await import('xlsx')
-  const headers = ['科目编码', '科目名称', '级次', '分录数', '借方发生额', '贷方发生额', '借贷净额']
+  const headers = ['科目编码', '科目名称', '金额合计借方', '金额合计贷方']
   const body = summaryReportRows.value.map((row) => [
     row.subject_code,
     row.subject_name,
-    row.level_no,
-    row.entry_count,
     Number(row.debit_amount || 0),
-    Number(row.credit_amount || 0),
-    Number(row.balance_amount || 0)
+    Number(row.credit_amount || 0)
   ])
-  const totals = ['合计', '', '', totalEntries.value, totalDebit.value, totalCredit.value, totalBalance.value]
+  const totals = ['合计', '', totalDebit.value, totalCredit.value]
   const sheet = XLSX.utils.aoa_to_sheet([['科目汇总表'], [context.accountSetName || '当前账套', summaryFilterText.value], headers, ...body, totals])
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, sheet, '科目汇总表')
@@ -385,31 +344,27 @@ const exportData = async () => {
 }
 
 const printReport = async () => {
+  if (printing.value) return
   if (rows.value.length === 0) {
     ElMessage.warning('当前没有可打印的科目汇总数据')
     return
   }
+  printing.value = true
   try {
-    const pdf = await createReportPrintPdf({
-      title: '科目汇总表',
-      subtitle: `${context.accountSetName || '当前账套'} · ${summaryFilterText.value}`,
-      columns: summaryReportColumns,
-      rows: summaryReportRows.value,
-      totals: {
-        subject_code: '合计',
-        subject_name: '',
-        level_no: '',
-        entry_count: totalEntries.value,
-        debit_amount: totalDebit.value.toFixed(2),
-        credit_amount: totalCredit.value.toFixed(2),
-        balance_amount: totalBalance.value.toFixed(2)
-      }
+    const pdf = await booksApi.subjectSummaryPdf({
+      period: filters.endPeriod,
+      startPeriod: filters.startPeriod,
+      endPeriod: filters.endPeriod,
+      subjectStartCode: filters.subjectStartCode,
+      subjectEndCode: filters.subjectEndCode
     })
     const url = URL.createObjectURL(pdf)
     window.open(url, '_blank')
     ElMessage.success('科目汇总表PDF已生成')
   } catch (error: any) {
     ElMessage.error(error?.message || '生成科目汇总表PDF失败')
+  } finally {
+    printing.value = false
   }
 }
 
@@ -525,6 +480,14 @@ onMounted(load)
 .leaf-spacer {
   display: inline-block;
   width: 17px;
+}
+
+.subject-summary-table :deep(.el-table__cell) {
+  padding: 4px 0;
+}
+
+.subject-summary-table :deep(.cell) {
+  line-height: 20px;
 }
 
 @media (max-width: 1180px) {

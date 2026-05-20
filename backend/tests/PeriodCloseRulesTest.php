@@ -125,8 +125,13 @@ if ($yearBlock->invoke($period, $decemberPeriod, 'CLOSED', $closedStatuses) !== 
 $policyMethod = new ReflectionMethod(Period::class, 'yearEndPolicyForBizType');
 $policyMethod->setAccessible(true);
 $casePolicy = $policyMethod->invoke($period, 'CASE_FUND');
-if ($casePolicy['carry_mode'] !== 'BALANCE_ROLLOVER' || $casePolicy['auto_profit_loss_carry'] !== 0 || $casePolicy['block_profit_loss_balance'] !== 1) {
-    fwrite(STDERR, 'Case-fund year-end should roll balances only and block profit/loss balances' . PHP_EOL);
+if ($casePolicy['carry_mode'] !== 'BALANCE_ROLLOVER' || $casePolicy['auto_profit_loss_carry'] !== 0 || $casePolicy['block_profit_loss_balance'] !== 0) {
+    fwrite(STDERR, 'Case-fund year-end should carry every subject balance without profit/loss blocking' . PHP_EOL);
+    exit(1);
+}
+$litigationFeePolicy = $policyMethod->invoke($period, 'LITIGATION_FEE');
+if ($litigationFeePolicy['carry_mode'] !== 'BALANCE_ROLLOVER' || $litigationFeePolicy['auto_profit_loss_carry'] !== 0 || $litigationFeePolicy['block_profit_loss_balance'] !== 0) {
+    fwrite(STDERR, 'Litigation-fee year-end should carry every subject balance without profit/loss blocking' . PHP_EOL);
     exit(1);
 }
 $canteenPolicy = $policyMethod->invoke($period, 'CANTEEN');
@@ -137,11 +142,19 @@ if ($canteenPolicy['carry_mode'] !== 'CONFIG_REQUIRED' || $canteenPolicy['auto_p
 
 $carrySubject = new ReflectionMethod(Period::class, 'shouldCarrySubjectToNextOpening');
 $carrySubject->setAccessible(true);
-if ($carrySubject->invoke($period, 'PROFIT_LOSS')) {
-    fwrite(STDERR, 'Profit/loss subjects should not be carried into next-year opening balances' . PHP_EOL);
+if (!$carrySubject->invoke($period, 'PROFIT_LOSS', $casePolicy)) {
+    fwrite(STDERR, 'Profit/loss subjects should carry forward for case-fund balance rollover' . PHP_EOL);
     exit(1);
 }
-if (!$carrySubject->invoke($period, 'ASSET')) {
+if (!$carrySubject->invoke($period, 'PROFIT_LOSS', $litigationFeePolicy)) {
+    fwrite(STDERR, 'Profit/loss subjects should carry forward for litigation-fee balance rollover' . PHP_EOL);
+    exit(1);
+}
+if ($carrySubject->invoke($period, 'PROFIT_LOSS', $canteenPolicy)) {
+    fwrite(STDERR, 'Profit/loss subjects should not carry forward before configured revenue/expense carry' . PHP_EOL);
+    exit(1);
+}
+if (!$carrySubject->invoke($period, 'ASSET', $canteenPolicy)) {
     fwrite(STDERR, 'Asset subjects should be carried into next-year opening balances' . PHP_EOL);
     exit(1);
 }

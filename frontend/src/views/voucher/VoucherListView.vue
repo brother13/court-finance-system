@@ -161,7 +161,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right" align="center">
+        <el-table-column label="操作" width="220" fixed="right" align="center">
           <template #default="{ row }">
             <el-button v-if="canEditRow(row)" link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="canAuditRow(row)" link type="success" :icon="Check" @click="audit(row)">审核</el-button>
@@ -323,7 +323,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Check, Delete as DeleteIcon, Document, Edit, Filter, Operation, Plus, Printer, Refresh, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
-import { createVoucherPrintPdf } from '../../utils/voucherPrintPdf'
 import * as XLSX from 'xlsx'
 
 type TopFilter = {
@@ -591,6 +590,7 @@ const batchDelete = async () => {
 }
 
 const printSelectedVouchers = async () => {
+  if (printing.value) return
   const printableRows = selectedRows.value.filter(canPrintRow)
   if (printableRows.length === 0) {
     ElMessage.warning('请选择要打印的凭证')
@@ -598,11 +598,10 @@ const printSelectedVouchers = async () => {
   }
   printing.value = true
   try {
-    const payload = await voucherApi.printData(printableRows.map((row) => ({
+    const pdf = await voucherApi.printPdf(printableRows.map((row) => ({
       period: row.period || topFilter.period_start,
       voucher_id: row.voucher_id
     })))
-    const pdf = await createVoucherPrintPdf(payload)
     const url = URL.createObjectURL(pdf)
     window.open(url, '_blank')
     ElMessage.success('凭证PDF已生成')

@@ -1,4 +1,4 @@
-import { apiAction } from './http'
+import { apiAction, apiBlobAction } from './http'
 import type { Voucher } from '../types/api'
 
 export const voucherApi = {
@@ -59,6 +59,9 @@ export const voucherApi = {
       voucher_print_line_count: number
       vouchers: any[]
     }>
+  },
+  printPdf(vouchers: { period: string; voucher_id: string }[]) {
+    return apiBlobAction('/voucher/printPdf', { vouchers }, {}, { timeout: 120000 })
   },
   import(payload: { vouchers: any[] }) {
     return apiAction('/voucher/import', payload, {}, { timeout: 120000 }) as Promise<{ success: number; failed: number; errors: string[] }>

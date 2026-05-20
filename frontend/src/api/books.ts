@@ -1,4 +1,4 @@
-import { apiAction } from './http'
+import { apiAction, apiBlobAction } from './http'
 import type { AuxBalanceRow, Subject, SubjectSummaryRow } from '../types/api'
 
 export const booksApi = {
@@ -22,6 +22,23 @@ export const booksApi = {
       page: params.page,
       pagesize: params.pagesize
     }) as Promise<{ items: any[]; total: number; debit_total: string | number; credit_total: string | number }>
+  },
+  detailLedgerPdf(params: {
+    period: string
+    startPeriod?: string
+    endPeriod?: string
+    subjectCode?: string
+    startDate: string
+    endDate: string
+  }) {
+    return apiBlobAction('/book/detailLedgerPdf', {
+      period: params.period,
+      start_period: params.startPeriod,
+      end_period: params.endPeriod,
+      subject_code: params.subjectCode,
+      start_date: params.startDate,
+      end_date: params.endDate
+    }, {}, { timeout: 60000 })
   },
   subjectBalance(params: string | {
     period?: string
@@ -61,6 +78,42 @@ export const booksApi = {
       subject_start_code: params.subjectStartCode,
       subject_end_code: params.subjectEndCode
     }) as Promise<SubjectSummaryRow[]>
+  },
+  subjectBalancePdf(params: {
+    period: string
+    startPeriod: string
+    endPeriod: string
+    subjectStartCode?: string
+    subjectEndCode?: string
+    levelStart?: number
+    levelEnd?: number
+    zeroFilter?: 'all' | 'nonzero' | 'active' | 'balance'
+  }) {
+    return apiBlobAction('/book/subjectBalancePdf', {
+      period: params.period,
+      start_period: params.startPeriod,
+      end_period: params.endPeriod,
+      subject_start_code: params.subjectStartCode,
+      subject_end_code: params.subjectEndCode,
+      level_start: params.levelStart,
+      level_end: params.levelEnd,
+      zero_filter: params.zeroFilter
+    }, {}, { timeout: 60000 })
+  },
+  subjectSummaryPdf(params: {
+    period: string
+    startPeriod: string
+    endPeriod: string
+    subjectStartCode?: string
+    subjectEndCode?: string
+  }) {
+    return apiBlobAction('/book/subjectSummaryPdf', {
+      period: params.period,
+      start_period: params.startPeriod,
+      end_period: params.endPeriod,
+      subject_start_code: params.subjectStartCode,
+      subject_end_code: params.subjectEndCode
+    }, {}, { timeout: 60000 })
   },
   auxBalance(params: {
     period: string

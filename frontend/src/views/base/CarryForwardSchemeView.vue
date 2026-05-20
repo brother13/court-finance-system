@@ -2,7 +2,7 @@
   <div class="page-header">
     <div>
       <h1>收支结转方案</h1>
-      <p>维护非案款账套年终收支结转规则；案款账套通常只做专项余额结转。</p>
+      <p>维护食堂、工会等需要收支结转的账套规则；案款和诉讼费默认按本科目余额结转。</p>
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="loadAll">刷新</el-button>
@@ -15,7 +15,7 @@
     type="warning"
     show-icon
     :closable="false"
-    title="当前版本先维护收支结转方案参数；期末年结会读取方案状态，但自动生成结转凭证需要后续单独实现。"
+    title="案款和诉讼费无需启用本方案；确需损益或收支结转的账套，再启用并维护结转规则。"
   />
 
   <div class="carry-layout">

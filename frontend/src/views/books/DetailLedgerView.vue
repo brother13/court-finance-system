@@ -6,7 +6,7 @@
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新数据</el-button>
-      <el-button :icon="Printer" @click="printReport">打印</el-button>
+      <el-button :icon="Printer" :loading="printing" @click="printReport">打印</el-button>
       <el-button v-permission="'book:export'" type="primary" :icon="Download" @click="exportData">导出明细</el-button>
     </div>
   </div>
@@ -111,7 +111,6 @@ import { baseApi } from '../../api/base'
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 import type { Subject } from '../../types/api'
-import { createReportPrintPdf, type ReportPrintColumn } from '../../utils/reportPrintPdf'
 
 type SubjectTreeNode = Subject & {
   subject_code: string
@@ -152,6 +151,7 @@ const pageTotal = ref(0)
 const totalDebit = ref(0)
 const totalCredit = ref(0)
 const exportPageSize = 200
+const printing = ref(false)
 
 const subjectCodeOf = (subject: Subject) => String(subject.subject_code || subject.subjectCode || '')
 const subjectNameOf = (subject: Subject) => String(subject.subject_name || subject.subjectName || '')
@@ -163,15 +163,6 @@ const selectedSubjectLabel = computed(() => {
   return `${query.subjectCode}${name ? ' ' + name : ''}`
 })
 const filterSummaryText = computed(() => `${periodLabel(filters.startPeriod)} 至 ${periodLabel(filters.endPeriod)} · ${selectedSubjectLabel.value}`)
-const ledgerReportColumns: ReportPrintColumn[] = [
-  { key: 'voucher_date', label: '日期', width: 11, align: 'center' },
-  { key: 'voucher_no', label: '凭证号', width: 10, align: 'center' },
-  { key: 'summary', label: '摘要', width: 24 },
-  { key: 'subject_label', label: '科目', width: 20 },
-  { key: 'debit_amount', label: '借方金额', width: 13, align: 'right' },
-  { key: 'credit_amount', label: '贷方金额', width: 13, align: 'right' },
-  { key: 'aux_desc', label: '辅助核算', width: 21 }
-]
 
 const subjectTreeRows = computed(() => {
   const activeSubjects = subjects.value.filter((subject) => Number(subject.status ?? 1) === 1)
@@ -222,16 +213,6 @@ const formatAuxDesc = (auxDesc?: string) => {
     .filter(Boolean)
     .join('；')
 }
-
-const ledgerReportRows = (items: any[]) => items.map((row) => ({
-  voucher_date: row.voucher_date || '',
-  voucher_no: row.voucher_no ? `记-${String(row.voucher_no).padStart(4, '0')}` : '',
-  summary: row.summary || '',
-  subject_label: `${row.subject_code || ''}${row.subject_name ? ' ' + row.subject_name : ''}`,
-  debit_amount: Number(row.debit_amount) > 0 ? Number(row.debit_amount).toFixed(2) : '',
-  credit_amount: Number(row.credit_amount) > 0 ? Number(row.credit_amount).toFixed(2) : '',
-  aux_desc: formatAuxDesc(row.aux_desc)
-}))
 
 const fetchLedgerPage = async (targetPage: number, targetPageSize: number) => {
   const [startDate] = periodMonthRange(filters.startPeriod)
@@ -343,32 +324,30 @@ const exportData = async () => {
 }
 
 const printReport = async () => {
-  const { items, debitTotal, creditTotal } = await loadAllLedgerRows()
-  if (items.length === 0) {
+  if (printing.value) return
+  if (pageTotal.value === 0) {
     ElMessage.warning('当前没有可打印的明细账数据')
     return
   }
+  printing.value = true
   try {
-    const pdf = await createReportPrintPdf({
-      title: '明细账',
-      subtitle: `${context.accountSetName || '当前账套'} · ${filterSummaryText.value}`,
-      columns: ledgerReportColumns,
-      rows: ledgerReportRows(items),
-      totals: {
-        voucher_date: '合计',
-        voucher_no: '',
-        summary: '',
-        subject_label: '',
-        debit_amount: debitTotal.toFixed(2),
-        credit_amount: creditTotal.toFixed(2),
-        aux_desc: ''
-      }
+    const [startDate] = periodMonthRange(filters.startPeriod)
+    const [, endDate] = periodMonthRange(filters.endPeriod)
+    const pdf = await booksApi.detailLedgerPdf({
+      period: filters.endPeriod,
+      startPeriod: filters.startPeriod,
+      endPeriod: filters.endPeriod,
+      subjectCode: query.subjectCode,
+      startDate,
+      endDate
     })
     const url = URL.createObjectURL(pdf)
     window.open(url, '_blank')
     ElMessage.success('明细账PDF已生成')
   } catch (error: any) {
     ElMessage.error(error?.message || '生成明细账PDF失败')
+  } finally {
+    printing.value = false
   }
 }
 

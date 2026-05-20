@@ -49,3 +49,41 @@ export const apiAction = <T = any>(
     }
   }) as Promise<T>
 }
+
+export const apiBlobAction = async (
+  action: string,
+  data: Record<string, any> = {},
+  extra: Record<string, any> = {},
+  options: ApiActionOptions = {}
+) => {
+  const context = useContextStore()
+  const body = new URLSearchParams()
+  body.set('action', action)
+  body.set('account_set_id', context.accountSetId)
+  body.set('year', String(context.year))
+  body.set('data', JSON.stringify(data))
+  Object.entries(extra).forEach(([key, value]) => body.set(key, String(value)))
+  const response = await axios.post(apiBaseURL, body, {
+    timeout: options.timeout || 30000,
+    responseType: 'blob',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-User-Id': context.userId || 'anonymous',
+      'X-User-Name': context.username || context.userId || 'anonymous'
+    }
+  })
+  const contentType = String(response.headers['content-type'] || '')
+  if (contentType.includes('application/pdf')) {
+    return response.data as Blob
+  }
+  const text = await (response.data as Blob).text()
+  try {
+    const result = JSON.parse(text)
+    throw new Error(result.message || '生成PDF失败')
+  } catch (error: any) {
+    if (error?.message && error.message !== 'Unexpected end of JSON input') {
+      throw error
+    }
+    throw new Error(text || '生成PDF失败')
+  }
+}

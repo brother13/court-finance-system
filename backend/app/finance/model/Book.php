@@ -11,10 +11,16 @@ class Book extends Common
         switch ($action) {
             case 'detailLedger':
                 return $this->detailLedger($data);
+            case 'detailLedgerPdf':
+                return $this->detailLedgerPdf($data);
             case 'subjectBalance':
                 return $this->subjectBalance($data);
+            case 'subjectBalancePdf':
+                return $this->subjectBalancePdf($data);
             case 'subjectSummary':
                 return $this->subjectSummary($data);
+            case 'subjectSummaryPdf':
+                return $this->subjectSummaryPdf($data);
             case 'auxBalanceSubjects':
                 return $this->auxBalanceSubjects($data);
             case 'auxBalance':
@@ -111,6 +117,94 @@ class Book extends Common
             'debit_total' => $this->centsToDecimal($this->decimalToCents($debitTotal ?: 0)),
             'credit_total' => $this->centsToDecimal($this->decimalToCents($creditTotal ?: 0)),
         ], 'OK', $total);
+    }
+
+    public function detailLedgerPdf($data = [])
+    {
+        $ledgerResult = $this->loadDetailLedgerRowsForPdf($data);
+        if (($ledgerResult['code'] ?? self::CODE_SUCCESS) !== self::CODE_SUCCESS) {
+            return $ledgerResult;
+        }
+
+        $vendorDir = __DIR__ . '/../../../vendor';
+        if (!is_dir($vendorDir . '/mpdf/mpdf')) {
+            return $this->error('PDF组件未安装，请先在backend目录安装mpdf/mpdf');
+        }
+        $this->registerMpdfAutoloader($vendorDir);
+
+        $rows = $ledgerResult['items'] ?? [];
+        $startPeriod = trim((string)($data['start_period'] ?? ($data['period'] ?? '')));
+        $endPeriod = trim((string)($data['end_period'] ?? ($data['period'] ?? '')));
+        $subjectCode = trim((string)($data['subject_code'] ?? ''));
+        $accountSetName = db('fin_account_set')
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])
+            ->value('set_name') ?: '当前账套';
+        $subjectName = '';
+        if ($subjectCode !== '') {
+            $subjectName = db('fin_subject')
+                ->where([
+                    'account_set_id' => $this->accountSetId,
+                    'subject_code' => $subjectCode,
+                    'del_flag' => 0,
+                ])
+                ->value('subject_name') ?: '';
+        }
+
+        $tempDir = __DIR__ . '/../../../runtime/mpdf';
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0775, true);
+        }
+
+        $rowCount = max(1, count($rows));
+        $fontSizePt = 8.4;
+        if ($rowCount > 32) {
+            $fontSizePt = 7.8;
+        }
+        if ($rowCount > 55) {
+            $fontSizePt = 7.1;
+        }
+
+        $html = $this->buildDetailLedgerPdfHtml(
+            $rows,
+            $accountSetName,
+            $startPeriod,
+            $endPeriod,
+            $subjectCode,
+            $subjectName,
+            $ledgerResult['debit_total'] ?? 0,
+            $ledgerResult['credit_total'] ?? 0,
+            $fontSizePt
+        );
+
+        try {
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'zh-CN+aCJK',
+                'format' => 'A4-L',
+                'tempDir' => $tempDir,
+                'margin_left' => 7,
+                'margin_right' => 7,
+                'margin_top' => 7,
+                'margin_bottom' => 7,
+                'autoScriptToLang' => true,
+                'autoLangToFont' => true,
+                'useAdobeCJK' => true,
+            ]);
+            $mpdf->SetTitle('明细账');
+            $mpdf->SetDisplayMode('fullpage');
+            $mpdf->WriteHTML($html);
+            $pdf = $mpdf->Output('', 'S');
+        } catch (\Exception $e) {
+            return $this->error('生成明细账PDF失败：' . $e->getMessage());
+        }
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="detail-ledger.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
     }
 
     public function subjectBalance($data = [])
@@ -252,6 +346,83 @@ class Book extends Common
         return $this->ok($rows, 'OK', count($rows));
     }
 
+    public function subjectBalancePdf($data = [])
+    {
+        $result = $this->subjectBalance($data);
+        if (($result['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+            return $result;
+        }
+
+        $vendorDir = __DIR__ . '/../../../vendor';
+        if (!is_dir($vendorDir . '/mpdf/mpdf')) {
+            return $this->error('PDF组件未安装，请先在backend目录安装mpdf/mpdf');
+        }
+        $this->registerMpdfAutoloader($vendorDir);
+
+        $rows = $result['data'] ?? [];
+        $displayRows = $this->subjectBalanceDisplayRows($rows);
+        $totals = $this->subjectBalanceTotals($rows);
+
+        $startPeriod = trim((string)($data['start_period'] ?? ($data['period'] ?? '')));
+        $endPeriod = trim((string)($data['end_period'] ?? ($data['period'] ?? '')));
+        $accountSetName = db('fin_account_set')
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])
+            ->value('set_name') ?: '当前账套';
+
+        $tempDir = __DIR__ . '/../../../runtime/mpdf';
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0775, true);
+        }
+
+        $rowCount = max(1, count($displayRows));
+        $fontSizePt = 7.8;
+        if ($rowCount > 34) {
+            $fontSizePt = 7.2;
+        }
+        if ($rowCount > 52) {
+            $fontSizePt = 6.6;
+        }
+
+        $html = $this->buildSubjectBalancePdfHtml(
+            $displayRows,
+            $accountSetName,
+            $startPeriod,
+            $endPeriod,
+            $totals,
+            $fontSizePt
+        );
+
+        try {
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'zh-CN+aCJK',
+                'format' => 'A4-L',
+                'tempDir' => $tempDir,
+                'margin_left' => 6,
+                'margin_right' => 6,
+                'margin_top' => 7,
+                'margin_bottom' => 7,
+                'autoScriptToLang' => true,
+                'autoLangToFont' => true,
+                'useAdobeCJK' => true,
+            ]);
+            $mpdf->SetTitle('科目余额表');
+            $mpdf->SetDisplayMode('fullpage');
+            $mpdf->WriteHTML($html);
+            $pdf = $mpdf->Output('', 'S');
+        } catch (\Exception $e) {
+            return $this->error('生成科目余额表PDF失败：' . $e->getMessage());
+        }
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="subject-balance.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
+    }
+
     public function subjectSummary($data = [])
     {
         $auth = $this->requirePermission('book:view');
@@ -379,8 +550,591 @@ class Book extends Common
                 'entry_count' => $item['entry_count'],
             ];
         }
+        $rows = $this->sortSubjectSummaryRows($rows);
 
         return $this->ok($rows, 'OK', count($rows));
+    }
+
+    public function subjectSummaryPdf($data = [])
+    {
+        $result = $this->subjectSummary($data);
+        if (($result['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+            return $result;
+        }
+
+        $vendorDir = __DIR__ . '/../../../vendor';
+        if (!is_dir($vendorDir . '/mpdf/mpdf')) {
+            return $this->error('PDF组件未安装，请先在backend目录安装mpdf/mpdf');
+        }
+        $this->registerMpdfAutoloader($vendorDir);
+
+        $rows = $result['data'] ?? [];
+        $summaryRows = array_filter($rows, function ($row) {
+            return (int)($row['leaf_flag'] ?? 1) === 1;
+        });
+        if (empty($summaryRows)) {
+            $summaryRows = $rows;
+        }
+
+        $totalDebitCents = 0;
+        $totalCreditCents = 0;
+        foreach ($summaryRows as $row) {
+            $totalDebitCents += $this->decimalToCents($row['debit_amount'] ?? 0);
+            $totalCreditCents += $this->decimalToCents($row['credit_amount'] ?? 0);
+        }
+
+        $startPeriod = trim((string)($data['start_period'] ?? ($data['period'] ?? '')));
+        $endPeriod = trim((string)($data['end_period'] ?? ($data['period'] ?? '')));
+        $accountSetName = db('fin_account_set')
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])
+            ->value('set_name') ?: '当前账套';
+
+        $tempDir = __DIR__ . '/../../../runtime/mpdf';
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0775, true);
+        }
+
+        $rowCount = max(1, count($rows));
+        $fontSizePt = 9.5;
+        if ($rowCount > 42) {
+            $fontSizePt = 8.5;
+        }
+        if ($rowCount > 58) {
+            $fontSizePt = 7.5;
+        }
+        if ($rowCount > 76) {
+            $fontSizePt = 6.8;
+        }
+
+        $html = $this->buildSubjectSummaryPdfHtml(
+            $rows,
+            $accountSetName,
+            $startPeriod,
+            $endPeriod,
+            $this->centsToDecimal($totalDebitCents),
+            $this->centsToDecimal($totalCreditCents),
+            $fontSizePt
+        );
+
+        try {
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'zh-CN+aCJK',
+                'format' => 'A4-L',
+                'tempDir' => $tempDir,
+                'margin_left' => 8,
+                'margin_right' => 8,
+                'margin_top' => 8,
+                'margin_bottom' => 8,
+                'autoScriptToLang' => true,
+                'autoLangToFont' => true,
+                'useAdobeCJK' => true,
+            ]);
+            $mpdf->SetTitle('科目汇总表');
+            $mpdf->SetDisplayMode('fullpage');
+            $mpdf->WriteHTML($html);
+            $pdf = $mpdf->Output('', 'S');
+        } catch (\Exception $e) {
+            return $this->error('生成科目汇总表PDF失败：' . $e->getMessage());
+        }
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="subject-summary.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
+    }
+
+    protected function buildSubjectSummaryPdfHtml($rows, $accountSetName, $startPeriod, $endPeriod, $totalDebit, $totalCredit, $fontSizePt)
+    {
+        $escape = function ($value) {
+            return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+        };
+        $money = function ($value) {
+            return $this->decimalToCents($value) === 0 ? '' : number_format((float)$value, 2, '.', ',');
+        };
+        $body = '';
+        foreach ($rows as $row) {
+            $level = max(1, (int)($row['level_no'] ?? 1));
+            $indent = str_repeat('&nbsp;&nbsp;', $level - 1);
+            $body .= '<tr>';
+            $body .= '<td class="code">' . $escape($row['subject_code'] ?? '') . '</td>';
+            $body .= '<td class="name">' . $indent . $escape($row['subject_name'] ?? '未维护名称') . '</td>';
+            $body .= '<td class="amount">' . $escape($money($row['debit_amount'] ?? 0)) . '</td>';
+            $body .= '<td class="amount">' . $escape($money($row['credit_amount'] ?? 0)) . '</td>';
+            $body .= '</tr>';
+        }
+        if ($body === '') {
+            $body = '<tr><td class="empty" colspan="4">暂无科目汇总数据</td></tr>';
+        }
+        $body .= '<tr class="total-row">'
+            . '<td class="code">合计</td>'
+            . '<td class="name"></td>'
+            . '<td class="amount">' . $escape(number_format((float)$totalDebit, 2, '.', ',')) . '</td>'
+            . '<td class="amount">' . $escape(number_format((float)$totalCredit, 2, '.', ',')) . '</td>'
+            . '</tr>';
+
+        return '<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: gb, sun-exta, "SimSun", serif; color: #111; font-size: ' . $fontSizePt . 'pt; }
+    h1 { text-align: center; margin: 0 0 8px; font-size: 16pt; font-weight: bold; }
+    .meta { width: 100%; margin-bottom: 8px; font-size: 8pt; }
+    .meta td { border: 0; padding: 0; }
+    .meta-right { text-align: right; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #111; padding: 3px 5px; }
+    th { text-align: center; font-weight: bold; background: #f2f2f2; }
+    .code { width: 18%; text-align: center; }
+    .name { width: 42%; }
+    .amount { width: 20%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
+    .empty { text-align: center; color: #666; }
+    .total-row td { font-weight: bold; background: #f7f7f7; }
+  </style>
+</head>
+<body>
+  <h1>科目汇总表</h1>
+  <table class="meta" border="0" cellpadding="0" cellspacing="0">
+    <tr>
+      <td>账套：' . $escape($accountSetName) . '</td>
+      <td class="meta-right">期间：' . $escape($startPeriod) . ' 至 ' . $escape($endPeriod) . '</td>
+    </tr>
+  </table>
+  <table border="1" cellpadding="3" cellspacing="0">
+    <thead>
+      <tr>
+        <th class="code">科目编码</th>
+        <th class="name">科目名称</th>
+        <th class="amount">金额合计借方</th>
+        <th class="amount">金额合计贷方</th>
+      </tr>
+    </thead>
+    <tbody>' . $body . '</tbody>
+  </table>
+</body>
+</html>';
+    }
+
+    protected function registerMpdfAutoloader($vendorDir)
+    {
+        if (class_exists('\Mpdf\Mpdf', false)) {
+            return;
+        }
+        if (!class_exists('\Composer\Autoload\ClassLoader', false)) {
+            require_once $vendorDir . '/composer/ClassLoader.php';
+        }
+        $loader = new \Composer\Autoload\ClassLoader($vendorDir);
+        $loader->addPsr4('Mpdf\\', $vendorDir . '/mpdf/mpdf/src');
+        $loader->addPsr4('Mpdf\\PsrHttpMessageShim\\', $vendorDir . '/mpdf/psr-http-message-shim/src');
+        $loader->addPsr4('Mpdf\\PsrLogAwareTrait\\', $vendorDir . '/mpdf/psr-log-aware-trait/src');
+        $loader->addPsr4('setasign\\Fpdi\\', $vendorDir . '/setasign/fpdi/src');
+        $loader->addPsr4('Psr\\Log\\', $vendorDir . '/psr/log/Psr/Log');
+        $loader->addPsr4('Psr\\Http\\Message\\', $vendorDir . '/psr/http-message/src');
+        $loader->addPsr4('DeepCopy\\', $vendorDir . '/myclabs/deep-copy/src/DeepCopy');
+        $loader->register(true);
+        require_once $vendorDir . '/myclabs/deep-copy/src/DeepCopy/deep_copy.php';
+        require_once $vendorDir . '/mpdf/mpdf/src/functions.php';
+    }
+
+    protected function buildSubjectBalancePdfHtml($rows, $accountSetName, $startPeriod, $endPeriod, $totals, $fontSizePt)
+    {
+        $escape = function ($value) {
+            return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+        };
+        $money = function ($value, $keepZero = false) {
+            $cents = $this->decimalToCents($value);
+            if (!$keepZero && $cents === 0) {
+                return '';
+            }
+            return number_format($cents / 100, 2, '.', ',');
+        };
+        $amountFields = $this->subjectBalanceAmountFields();
+        $body = '';
+        foreach ($rows as $row) {
+            $level = max(1, (int)($row['level_no'] ?? 1));
+            $indent = ($row['row_type'] ?? 'subject') === 'subtotal' ? '' : str_repeat('&nbsp;&nbsp;', $level - 1);
+            $body .= '<tr class="' . (($row['row_type'] ?? 'subject') === 'subtotal' ? 'subtotal-row' : '') . '">';
+            $body .= '<td class="code">' . $escape($row['subject_code'] ?? '') . '</td>';
+            $body .= '<td class="name">' . $indent . $escape(($row['row_type'] ?? 'subject') === 'subtotal' ? '小计' : ($row['subject_name'] ?? '未维护名称')) . '</td>';
+            foreach ($amountFields as $field) {
+                $body .= '<td class="amount">' . $escape($money($row[$field] ?? 0)) . '</td>';
+            }
+            $body .= '</tr>';
+        }
+        if ($body === '') {
+            $body = '<tr><td class="empty" colspan="10">暂无科目余额数据</td></tr>';
+        }
+        $body .= '<tr class="total-row">'
+            . '<td class="code">合计</td>'
+            . '<td class="name"></td>';
+        foreach ($amountFields as $field) {
+            $body .= '<td class="amount">' . $escape($money($totals[$field] ?? 0, true)) . '</td>';
+        }
+        $body .= '</tr>';
+
+        return '<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: gb, sun-exta, "SimSun", serif; color: #111; font-size: ' . $fontSizePt . 'pt; }
+    h1 { text-align: center; margin: 0 0 8px; font-size: 16pt; font-weight: bold; }
+    .meta { width: 100%; margin-bottom: 8px; font-size: 8pt; }
+    .meta td { border: 0; padding: 0; }
+    .meta-right { text-align: right; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #111; padding: 3px 4px; }
+    th { text-align: center; font-weight: bold; background: #f2f2f2; }
+    .code { width: 10%; text-align: center; }
+    .name { width: 18%; }
+    .amount { width: 9%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
+    .empty { text-align: center; color: #666; }
+    .subtotal-row td { font-weight: bold; background: #f7f7f7; }
+    .total-row td { font-weight: bold; background: #efefef; }
+  </style>
+</head>
+<body>
+  <h1>科目余额表</h1>
+  <table class="meta" border="0" cellpadding="0" cellspacing="0">
+    <tr>
+      <td>账套：' . $escape($accountSetName) . '</td>
+      <td class="meta-right">期间：' . $escape($startPeriod) . ' 至 ' . $escape($endPeriod) . '</td>
+    </tr>
+  </table>
+  <table border="1" cellpadding="3" cellspacing="0">
+    <thead>
+      <tr>
+        <th class="code">科目编码</th>
+        <th class="name">科目名称</th>
+        <th class="amount">期初借方</th>
+        <th class="amount">期初贷方</th>
+        <th class="amount">本期借方</th>
+        <th class="amount">本期贷方</th>
+        <th class="amount">累计借方</th>
+        <th class="amount">累计贷方</th>
+        <th class="amount">期末借方</th>
+        <th class="amount">期末贷方</th>
+      </tr>
+    </thead>
+    <tbody>' . $body . '</tbody>
+  </table>
+</body>
+</html>';
+    }
+
+    protected function loadDetailLedgerRowsForPdf($data)
+    {
+        $pageSize = 200;
+        $firstResult = $this->detailLedger(array_merge($data, [
+            'page' => 1,
+            'pagesize' => 200,
+        ]));
+        if (($firstResult['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+            return $firstResult;
+        }
+        $payload = $firstResult['data'] ?? [];
+        $items = $payload['items'] ?? [];
+        $total = (int)($payload['total'] ?? count($items));
+        $pageCount = (int)ceil($total / $pageSize);
+        for ($page = 2; $page <= $pageCount; $page++) {
+            $pageResult = $this->detailLedger(array_merge($data, [
+                'page' => $page,
+                'pagesize' => 200,
+            ]));
+            if (($pageResult['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+                return $pageResult;
+            }
+            $pagePayload = $pageResult['data'] ?? [];
+            $items = array_merge($items, $pagePayload['items'] ?? []);
+        }
+
+        return [
+            'code' => self::CODE_SUCCESS,
+            'items' => $items,
+            'total' => $total,
+            'debit_total' => $payload['debit_total'] ?? 0,
+            'credit_total' => $payload['credit_total'] ?? 0,
+        ];
+    }
+
+    protected function buildDetailLedgerPdfHtml($rows, $accountSetName, $startPeriod, $endPeriod, $subjectCode, $subjectName, $debitTotal, $creditTotal, $fontSizePt)
+    {
+        $escape = function ($value) {
+            return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+        };
+        $money = function ($value, $keepZero = false) {
+            $cents = $this->decimalToCents($value);
+            if (!$keepZero && $cents === 0) {
+                return '';
+            }
+            return number_format($cents / 100, 2, '.', ',');
+        };
+        $body = '';
+        foreach ($rows as $row) {
+            $voucherNo = $row['voucher_no'] !== null && $row['voucher_no'] !== ''
+                ? '记-' . str_pad((string)$row['voucher_no'], 4, '0', STR_PAD_LEFT)
+                : '';
+            $subjectLabel = trim((string)($row['subject_code'] ?? '') . ' ' . (string)($row['subject_name'] ?? ''));
+            $body .= '<tr>';
+            $body .= '<td class="date">' . $escape($row['voucher_date'] ?? '') . '</td>';
+            $body .= '<td class="voucher-no">' . $escape($voucherNo) . '</td>';
+            $body .= '<td class="summary">' . $escape($row['summary'] ?? '') . '</td>';
+            $body .= '<td class="subject">' . $escape($subjectLabel) . '</td>';
+            $body .= '<td class="amount">' . $escape($money($row['debit_amount'] ?? 0)) . '</td>';
+            $body .= '<td class="amount">' . $escape($money($row['credit_amount'] ?? 0)) . '</td>';
+            $body .= '<td class="aux">' . $escape($this->formatDetailLedgerAuxDesc($row['aux_desc'] ?? '')) . '</td>';
+            $body .= '</tr>';
+        }
+        if ($body === '') {
+            $body = '<tr><td class="empty" colspan="7">暂无明细账数据</td></tr>';
+        }
+        $body .= '<tr class="total-row">'
+            . '<td class="date">合计</td>'
+            . '<td class="voucher-no"></td>'
+            . '<td class="summary"></td>'
+            . '<td class="subject"></td>'
+            . '<td class="amount">' . $escape($money($debitTotal, true)) . '</td>'
+            . '<td class="amount">' . $escape($money($creditTotal, true)) . '</td>'
+            . '<td class="aux"></td>'
+            . '</tr>';
+        $subjectText = trim($subjectCode . ($subjectName !== '' ? ' ' . $subjectName : ''));
+
+        return '<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: gb, sun-exta, "SimSun", serif; color: #111; font-size: ' . $fontSizePt . 'pt; }
+    h1 { text-align: center; margin: 0 0 8px; font-size: 16pt; font-weight: bold; }
+    .meta { width: 100%; margin-bottom: 8px; font-size: 8pt; }
+    .meta td { border: 0; padding: 0; }
+    .meta-right { text-align: right; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #111; padding: 3px 4px; vertical-align: top; }
+    th { text-align: center; font-weight: bold; background: #f2f2f2; }
+    .date { width: 10%; text-align: center; }
+    .voucher-no { width: 9%; text-align: center; }
+    .summary { width: 24%; }
+    .subject { width: 18%; }
+    .amount { width: 11%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
+    .aux { width: 17%; }
+    .empty { text-align: center; color: #666; }
+    .total-row td { font-weight: bold; background: #efefef; }
+  </style>
+</head>
+<body>
+  <h1>明细账</h1>
+  <table class="meta" border="0" cellpadding="0" cellspacing="0">
+    <tr>
+      <td>账套：' . $escape($accountSetName) . '</td>
+      <td class="meta-right">期间：' . $escape($startPeriod) . ' 至 ' . $escape($endPeriod) . '</td>
+    </tr>
+    <tr>
+      <td colspan="2">科目：' . $escape($subjectText !== '' ? $subjectText : '全部科目') . '</td>
+    </tr>
+  </table>
+  <table border="1" cellpadding="3" cellspacing="0">
+    <thead>
+      <tr>
+        <th class="date">日期</th>
+        <th class="voucher-no">凭证号</th>
+        <th class="summary">摘要</th>
+        <th class="subject">科目</th>
+        <th class="amount">借方金额</th>
+        <th class="amount">贷方金额</th>
+        <th class="aux">辅助核算</th>
+      </tr>
+    </thead>
+    <tbody>' . $body . '</tbody>
+  </table>
+</body>
+</html>';
+    }
+
+    protected function formatDetailLedgerAuxDesc($auxDesc)
+    {
+        $parts = preg_split('/[;；\/]/u', (string)$auxDesc);
+        $labels = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '') {
+                continue;
+            }
+            $index = strpos($part, ':');
+            $labels[] = trim($index === false ? $part : substr($part, $index + 1));
+        }
+        return implode('；', array_filter($labels, 'strlen'));
+    }
+
+    protected function subjectBalanceDisplayRows($rows)
+    {
+        $displayRows = [];
+        $currentType = '';
+        $groupRows = [];
+        foreach ($rows as $row) {
+            $rowType = (string)($row['subject_type'] ?? 'OTHER');
+            if (!empty($groupRows) && $rowType !== $currentType) {
+                $displayRows[] = $this->makeSubjectBalanceSubtotalRow($currentType, $groupRows);
+                $groupRows = [];
+            }
+            $currentType = $rowType;
+            $subjectRow = $row;
+            $subjectRow['row_type'] = 'subject';
+            $displayRows[] = $subjectRow;
+            $groupRows[] = $row;
+        }
+        if (!empty($groupRows)) {
+            $displayRows[] = $this->makeSubjectBalanceSubtotalRow($currentType, $groupRows);
+        }
+        return $displayRows;
+    }
+
+    protected function makeSubjectBalanceSubtotalRow($subjectType, $rows)
+    {
+        $leafRows = array_filter($rows, function ($row) {
+            return (int)($row['leaf_flag'] ?? 1) === 1;
+        });
+        $sourceRows = empty($leafRows) ? $rows : $leafRows;
+        $subtotal = [
+            'row_type' => 'subtotal',
+            'subject_code' => $this->subjectTypeLabel($subjectType) . '小计',
+            'subject_name' => '',
+            'subject_type' => $subjectType,
+            'level_no' => 0,
+            'leaf_flag' => 0,
+        ];
+        foreach ($this->subjectBalanceAmountFields() as $field) {
+            $cents = 0;
+            foreach ($sourceRows as $row) {
+                $cents += $this->decimalToCents($row[$field] ?? 0);
+            }
+            $subtotal[$field] = $this->centsToDecimal($cents);
+        }
+        return $subtotal;
+    }
+
+    protected function subjectBalanceTotals($rows)
+    {
+        $leafRows = array_filter($rows, function ($row) {
+            return (int)($row['leaf_flag'] ?? 1) === 1;
+        });
+        $sourceRows = empty($leafRows) ? $rows : $leafRows;
+        $totals = [];
+        foreach ($this->subjectBalanceAmountFields() as $field) {
+            $cents = 0;
+            foreach ($sourceRows as $row) {
+                $cents += $this->decimalToCents($row[$field] ?? 0);
+            }
+            $totals[$field] = $this->centsToDecimal($cents);
+        }
+        return $totals;
+    }
+
+    protected function subjectBalanceAmountFields()
+    {
+        return [
+            'opening_debit_amount',
+            'opening_credit_amount',
+            'debit_amount',
+            'credit_amount',
+            'year_debit_amount',
+            'year_credit_amount',
+            'ending_debit_amount',
+            'ending_credit_amount',
+        ];
+    }
+
+    protected function subjectTypeLabel($subjectType)
+    {
+        $labels = [
+            'ASSET' => '资产',
+            'LIABILITY' => '负债',
+            'COMMON' => '共同',
+            'EQUITY' => '所有者权益',
+            'COST' => '成本',
+            'PROFIT_LOSS' => '损益',
+        ];
+        return $labels[(string)$subjectType] ?? '未分类';
+    }
+
+    protected function sortSubjectSummaryRows($rows)
+    {
+        $childrenByParent = [];
+        foreach ($rows as $row) {
+            $parentCode = $this->subjectSummaryParentCode($row, $rows);
+            if (!isset($childrenByParent[$parentCode])) {
+                $childrenByParent[$parentCode] = [];
+            }
+            $childrenByParent[$parentCode][] = $row;
+        }
+
+        $result = [];
+        $this->appendSubjectSummaryTree('', $childrenByParent, $result);
+        return $result;
+    }
+
+    protected function appendSubjectSummaryTree($parentCode, &$childrenByParent, &$result)
+    {
+        if (empty($childrenByParent[$parentCode])) {
+            return;
+        }
+        usort($childrenByParent[$parentCode], [$this, 'compareSubjectSummaryRows']);
+        foreach ($childrenByParent[$parentCode] as $row) {
+            $result[] = $row;
+            $this->appendSubjectSummaryTree((string)($row['subject_code'] ?? ''), $childrenByParent, $result);
+        }
+    }
+
+    protected function subjectSummaryParentCode($row, $rows)
+    {
+        $code = (string)($row['subject_code'] ?? '');
+        $level = (int)($row['level_no'] ?? 1);
+        $parentCode = '';
+        foreach ($rows as $candidate) {
+            $candidateCode = (string)($candidate['subject_code'] ?? '');
+            if ($candidateCode === '' || $candidateCode === $code) {
+                continue;
+            }
+            if ((int)($candidate['level_no'] ?? 1) >= $level) {
+                continue;
+            }
+            if (strpos($code, $candidateCode) !== 0) {
+                continue;
+            }
+            if (strlen($candidateCode) > strlen($parentCode)) {
+                $parentCode = $candidateCode;
+            }
+        }
+        return $parentCode;
+    }
+
+    protected function compareSubjectSummaryRows($a, $b)
+    {
+        $typeDiff = $this->subjectTypeOrder($a['subject_type'] ?? '') - $this->subjectTypeOrder($b['subject_type'] ?? '');
+        if ($typeDiff !== 0) {
+            return $typeDiff;
+        }
+        $codeA = (string)($a['subject_code'] ?? '');
+        $codeB = (string)($b['subject_code'] ?? '');
+        $codeDiff = strnatcmp($codeA, $codeB);
+        return $codeDiff !== 0 ? $codeDiff : strcmp($codeA, $codeB);
+    }
+
+    protected function subjectTypeOrder($subjectType)
+    {
+        $orders = [
+            'ASSET' => 1,
+            'LIABILITY' => 2,
+            'COMMON' => 3,
+            'EQUITY' => 4,
+            'COST' => 5,
+            'PROFIT_LOSS' => 6,
+        ];
+        return $orders[(string)$subjectType] ?? 99;
     }
 
     public function auxBalance($data = [])
