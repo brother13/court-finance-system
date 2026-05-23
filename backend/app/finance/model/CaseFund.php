@@ -9,6 +9,8 @@ class CaseFund extends Common
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
     const TABLE_REFUND = 'fin_case_fund_refund';
+    const TABLE_UNKNOWN_PAYMENT = 'fin_case_fund_unknown_payment';
+    const TABLE_DISTRIBUTION = 'fin_case_fund_distribution';
     const TABLE_BANK_STATEMENT = 'fin_case_fund_bank_statement';
     const TABLE_BANK_RECONCILE = 'fin_case_fund_bank_reconcile';
     const TABLE_SUBJECT_CONFIG = 'fin_case_fund_subject_config';
@@ -34,6 +36,26 @@ class CaseFund extends Common
         'source_fingerprint', 'source_raw_json', 'voucher_status', 'voucher_id', 'voucher_no',
         'voucher_period', 'voucher_generated_time', 'created_by', 'created_time', 'updated_by',
         'updated_time', 'del_flag', 'version', 'remark',
+    ];
+    const UNKNOWN_PAYMENT_FIELD = [
+        'unknown_payment_id', 'account_set_id', 'fiscal_year', 'period', 'court_name',
+        'claim_status', 'payer_name', 'unknown_amount', 'bank_summary', 'bank_remark',
+        'transaction_date', 'transaction_time', 'court_bank_account_no', 'arrival_method',
+        'payer_bank_name', 'payer_account_no', 'claim_user_name', 'claim_date',
+        'last_modified_time', 'source_file_name', 'source_row_no', 'source_fingerprint',
+        'source_raw_json', 'voucher_status', 'voucher_id', 'voucher_no', 'voucher_period',
+        'voucher_generated_time', 'created_by', 'created_time', 'updated_by', 'updated_time',
+        'del_flag', 'version', 'remark',
+    ];
+    const DISTRIBUTION_FIELD = [
+        'distribution_id', 'account_set_id', 'fiscal_year', 'period', 'distribution_no',
+        'in_case_no', 'in_judge_name', 'in_party_name', 'out_case_no', 'out_judge_name',
+        'out_party_name', 'invoice_type', 'receipt_no', 'distribution_amount',
+        'applicant_name', 'apply_date', 'receive_date', 'business_status', 'description',
+        'original_invoice_date', 'source_file_name', 'source_row_no', 'source_fingerprint',
+        'source_raw_json', 'voucher_status', 'voucher_id', 'voucher_no', 'voucher_period',
+        'voucher_generated_time', 'created_by', 'created_time', 'updated_by', 'updated_time',
+        'del_flag', 'version', 'remark',
     ];
     const SUBJECT_CONFIG_FIELD = [
         'config_id', 'account_set_id', 'biz_type', 'voucher_biz_type', 'business_item_type',
@@ -64,6 +86,22 @@ class CaseFund extends Common
                 return $this->paymentList($data);
             case 'paymentImport':
                 return $this->paymentImport($data);
+            case 'unknownPaymentList':
+                return $this->unknownPaymentList($data);
+            case 'unknownPaymentImport':
+                return $this->unknownPaymentImport($data);
+            case 'unknownPaymentGenerateVoucher':
+                return $this->unknownPaymentGenerateVoucher($data);
+            case 'unknownPaymentDelete':
+                return $this->unknownPaymentDelete($data);
+            case 'distributionList':
+                return $this->distributionList($data);
+            case 'distributionImport':
+                return $this->distributionImport($data);
+            case 'distributionGenerateVoucher':
+                return $this->distributionGenerateVoucher($data);
+            case 'distributionDelete':
+                return $this->distributionDelete($data);
             case 'paymentGenerateVoucher':
                 return $this->paymentGenerateVoucher($data);
             case 'paymentDelete':
@@ -228,6 +266,290 @@ class CaseFund extends Common
             'total' => count($rows),
             'created' => $created,
             'updated' => $updated,
+            'skipped' => $skipped,
+        ], '导入成功', count($rows));
+    }
+
+    public function unknownPaymentList($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:view');
+        if ($auth) {
+            return $auth;
+        }
+        $bizType = $this->currentAccountSetBizType();
+        if ($bizType !== 'CASE_FUND') {
+            return $this->error('当前账套类型不支持不明款业务：' . $bizType);
+        }
+
+        $page = $data['page'] ?? input('param.page', 1);
+        $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        if (!empty($data['period'])) {
+            $where['period'] = $data['period'];
+        }
+        if (!empty($data['voucher_status'])) {
+            $where['voucher_status'] = $data['voucher_status'];
+        }
+        if (!empty($data['claim_status'])) {
+            $where['claim_status'] = $data['claim_status'];
+        }
+        if (!empty($data['date_start'])) {
+            $where['transaction_date'][] = ['>=', $data['date_start']];
+        }
+        if (!empty($data['date_end'])) {
+            $where['transaction_date'][] = ['<=', $data['date_end']];
+        }
+
+        $keyword = trim($data['keyword'] ?? '');
+        $query = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where($where);
+        $totalQuery = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where($where);
+        $amountQuery = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where($where);
+        foreach ([$query, $totalQuery, $amountQuery] as $item) {
+            if ($keyword !== '') {
+                $item->where('payer_name|bank_summary|bank_remark|court_bank_account_no|payer_bank_name|payer_account_no', 'like', '%' . $keyword . '%');
+            }
+        }
+
+        $total = $totalQuery->count();
+        $totalAmount = $amountQuery->sum('unknown_amount');
+        $rows = $query->field(self::UNKNOWN_PAYMENT_FIELD)
+            ->order('transaction_date asc, source_row_no asc')
+            ->page($page, $pagesize)
+            ->select();
+        return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
+    }
+
+    public function unknownPaymentImport($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:import');
+        if ($auth) {
+            return $auth;
+        }
+        $content = $data['content_base64'] ?? '';
+        if ($content === '') {
+            return $this->error('导入文件不能为空');
+        }
+        $binary = base64_decode($content, true);
+        if ($binary === false || $binary === '') {
+            return $this->error('导入文件内容不正确');
+        }
+
+        try {
+            $rows = $this->parseUnknownPaymentImportRowsFromXls($binary);
+        } catch (\Exception $e) {
+            return $this->error('解析不明款失败：' . $e->getMessage());
+        }
+        if (empty($rows)) {
+            return $this->error('导入文件没有不明款数据');
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        $errors = $this->validateUnknownPaymentRows($rows, $bizType);
+        if (!empty($errors)) {
+            return $this->error('导入校验失败', $errors);
+        }
+
+        $fingerprints = [];
+        foreach ($rows as $row) {
+            $fingerprints[] = $row['source_fingerprint'];
+        }
+        $fingerprints = array_values(array_unique($fingerprints));
+        $existing = [];
+        if (!empty($fingerprints)) {
+            $existingRows = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('source_fingerprint', 'in', $fingerprints)->select();
+            foreach ($existingRows as $row) {
+                $existing[$row['source_fingerprint']] = true;
+            }
+        }
+
+        $created = 0;
+        $skipped = 0;
+        $seen = [];
+        Db::startTrans();
+        try {
+            foreach ($rows as $row) {
+                $fingerprint = $row['source_fingerprint'];
+                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
+                    $skipped++;
+                    $seen[$fingerprint] = true;
+                    continue;
+                }
+                $seen[$fingerprint] = true;
+                $insert = $row;
+                $insert['unknown_payment_id'] = uuid();
+                $insert['account_set_id'] = $this->accountSetId;
+                $insert['source_file_name'] = $data['filename'] ?? '';
+                $insert['voucher_status'] = 'UNGENERATED';
+                $insert['voucher_id'] = null;
+                $insert['voucher_no'] = null;
+                $insert['voucher_period'] = null;
+                $insert['voucher_generated_time'] = null;
+                $insert['remark'] = $data['remark'] ?? '';
+                $this->fillCreate($insert);
+                $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->insert($insert);
+                $created++;
+            }
+            $this->logAudit('CASE_FUND_UNKNOWN_PAYMENT', 'IMPORT', 'IMPORT', null, [
+                'filename' => $data['filename'] ?? '',
+                'total' => count($rows),
+                'created' => $created,
+                'skipped' => $skipped,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('保存不明款失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'total' => count($rows),
+            'created' => $created,
+            'skipped' => $skipped,
+        ], '导入成功', count($rows));
+    }
+
+    public function distributionList($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:view');
+        if ($auth) {
+            return $auth;
+        }
+        $bizType = $this->currentAccountSetBizType();
+        if ($bizType !== 'CASE_FUND') {
+            return $this->error('当前账套类型不支持案款分配：' . $bizType);
+        }
+
+        $page = $data['page'] ?? input('param.page', 1);
+        $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
+        $where = $this->accountWhere();
+        $where['fiscal_year'] = $this->currentYear();
+        if (!empty($data['period'])) {
+            $where['period'] = $data['period'];
+        }
+        if (!empty($data['voucher_status'])) {
+            $where['voucher_status'] = $data['voucher_status'];
+        }
+        if (!empty($data['invoice_type'])) {
+            $where['invoice_type'] = $data['invoice_type'];
+        }
+        if (!empty($data['date_start'])) {
+            $where['receive_date'][] = ['>=', $data['date_start']];
+        }
+        if (!empty($data['date_end'])) {
+            $where['receive_date'][] = ['<=', $data['date_end']];
+        }
+
+        $keyword = trim($data['keyword'] ?? '');
+        $query = $this->getdb(self::TABLE_DISTRIBUTION)->where($where);
+        $totalQuery = $this->getdb(self::TABLE_DISTRIBUTION)->where($where);
+        $amountQuery = $this->getdb(self::TABLE_DISTRIBUTION)->where($where);
+        foreach ([$query, $totalQuery, $amountQuery] as $item) {
+            if ($keyword !== '') {
+                $item->where('distribution_no|in_case_no|out_case_no|in_party_name|out_party_name|receipt_no|applicant_name', 'like', '%' . $keyword . '%');
+            }
+        }
+
+        $total = $totalQuery->count();
+        $totalAmount = $amountQuery->sum('distribution_amount');
+        $rows = $query->field(self::DISTRIBUTION_FIELD)
+            ->order('receive_date asc, distribution_no asc, source_row_no asc')
+            ->page($page, $pagesize)
+            ->select();
+        return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
+    }
+
+    public function distributionImport($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:import');
+        if ($auth) {
+            return $auth;
+        }
+        $content = $data['content_base64'] ?? '';
+        if ($content === '') {
+            return $this->error('导入文件不能为空');
+        }
+        $binary = base64_decode($content, true);
+        if ($binary === false || $binary === '') {
+            return $this->error('导入文件内容不正确');
+        }
+
+        try {
+            $rows = $this->parseDistributionImportRowsFromXls($binary);
+        } catch (\Exception $e) {
+            return $this->error('解析案款分配失败：' . $e->getMessage());
+        }
+        if (empty($rows)) {
+            return $this->error('导入文件没有案款分配数据');
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        $errors = $this->validateDistributionRows($rows, $bizType);
+        if (!empty($errors)) {
+            return $this->error('导入校验失败', $errors);
+        }
+
+        $fingerprints = [];
+        foreach ($rows as $row) {
+            $fingerprints[] = $row['source_fingerprint'];
+        }
+        $fingerprints = array_values(array_unique($fingerprints));
+        $existing = [];
+        if (!empty($fingerprints)) {
+            $existingRows = $this->getdb(self::TABLE_DISTRIBUTION)->where([
+                'account_set_id' => $this->accountSetId,
+                'del_flag' => 0,
+            ])->where('source_fingerprint', 'in', $fingerprints)->select();
+            foreach ($existingRows as $row) {
+                $existing[$row['source_fingerprint']] = true;
+            }
+        }
+
+        $created = 0;
+        $skipped = 0;
+        $seen = [];
+        Db::startTrans();
+        try {
+            foreach ($rows as $row) {
+                $fingerprint = $row['source_fingerprint'];
+                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
+                    $skipped++;
+                    $seen[$fingerprint] = true;
+                    continue;
+                }
+                $seen[$fingerprint] = true;
+                $insert = $row;
+                $insert['distribution_id'] = uuid();
+                $insert['account_set_id'] = $this->accountSetId;
+                $insert['source_file_name'] = $data['filename'] ?? '';
+                $insert['voucher_status'] = 'UNGENERATED';
+                $insert['voucher_id'] = null;
+                $insert['voucher_no'] = null;
+                $insert['voucher_period'] = null;
+                $insert['voucher_generated_time'] = null;
+                $insert['remark'] = $data['remark'] ?? '';
+                $this->fillCreate($insert);
+                $this->getdb(self::TABLE_DISTRIBUTION)->insert($insert);
+                $created++;
+            }
+            $this->logAudit('CASE_FUND_DISTRIBUTION', 'IMPORT', 'IMPORT', null, [
+                'filename' => $data['filename'] ?? '',
+                'total' => count($rows),
+                'created' => $created,
+                'skipped' => $skipped,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('保存案款分配失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'total' => count($rows),
+            'created' => $created,
             'skipped' => $skipped,
         ], '导入成功', count($rows));
     }
@@ -563,6 +885,54 @@ class CaseFund extends Common
             'REFUND',
             'CASE_FUND_REFUND',
             '退付记录'
+        );
+    }
+
+    public function unknownPaymentDelete($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $bizType = $this->currentAccountSetBizType();
+        if ($bizType !== 'CASE_FUND') {
+            return $this->error('当前账套类型不支持删除不明款记录：' . $bizType);
+        }
+        $ids = $this->normalizeIdList($data['unknown_payment_ids'] ?? ($data['ids'] ?? []));
+        if (empty($ids)) {
+            return $this->error('请选择要删除的不明款记录');
+        }
+        return $this->deleteCaseFundBusinessRows(
+            self::TABLE_UNKNOWN_PAYMENT,
+            'unknown_payment_id',
+            $ids,
+            'UNKNOWN_PAYMENT',
+            'CASE_FUND_UNKNOWN_PAYMENT',
+            '不明款记录'
+        );
+    }
+
+    public function distributionDelete($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:delete');
+        if ($auth) {
+            return $auth;
+        }
+        $bizType = $this->currentAccountSetBizType();
+        if ($bizType !== 'CASE_FUND') {
+            return $this->error('当前账套类型不支持删除案款分配记录：' . $bizType);
+        }
+        $ids = $this->normalizeIdList($data['distribution_ids'] ?? ($data['ids'] ?? []));
+        if (empty($ids)) {
+            return $this->error('请选择要删除的案款分配记录');
+        }
+        return $this->deleteCaseFundBusinessRows(
+            self::TABLE_DISTRIBUTION,
+            'distribution_id',
+            $ids,
+            'DISTRIBUTION',
+            'CASE_FUND_DISTRIBUTION',
+            '案款分配记录'
         );
     }
 
@@ -1229,6 +1599,472 @@ class CaseFund extends Common
         ], '成功生成 ' . $generatedCount . ' 张凭证');
     }
 
+    public function unknownPaymentGenerateVoucher($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:generate_voucher');
+        if ($auth) {
+            return $auth;
+        }
+
+        $unknownPaymentIds = $this->normalizeIdList($data['unknown_payment_ids'] ?? ($data['ids'] ?? []));
+        if (empty($unknownPaymentIds)) {
+            return $this->error('请选择要生成凭证的不明款记录');
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        if ($bizType !== 'CASE_FUND') {
+            return $this->error('当前账套类型不支持不明款生成凭证：' . $bizType);
+        }
+
+        $subjectConfig = $this->getdb(self::TABLE_SUBJECT_CONFIG)
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'biz_type' => 'CASE_FUND',
+                'voucher_biz_type' => 'UNKNOWN_PAYMENT',
+                'business_item_type' => '不明款',
+                'del_flag' => 0,
+            ])
+            ->field(self::SUBJECT_CONFIG_FIELD)
+            ->find();
+        if (!$subjectConfig) {
+            return $this->error('不明款未配置借方/贷方科目');
+        }
+
+        $debitCheck = $this->validateVoucherSubjectCode($subjectConfig['debit_subject_code'], '借方科目');
+        if ($debitCheck !== null) {
+            return $this->error($debitCheck);
+        }
+        $creditCheck = $this->validateVoucherSubjectCode($subjectConfig['credit_subject_code'], '贷方科目');
+        if ($creditCheck !== null) {
+            return $this->error($creditCheck);
+        }
+
+        $debitConfigs = $this->getSubjectAuxConfigs($subjectConfig['debit_subject_code']);
+        $creditConfigs = $this->getSubjectAuxConfigs($subjectConfig['credit_subject_code']);
+        if ($this->hasRequiredAuxConfigs($debitConfigs) || $this->hasRequiredAuxConfigs($creditConfigs)) {
+            return $this->error('不明款借方/贷方科目存在必填辅助核算，不允许自动生成凭证');
+        }
+
+        $generatedCount = 0;
+        $voucherInfos = [];
+        $rows = [];
+        $byDayFlag = $this->subjectConfigAccountSetFlag();
+
+        Db::startTrans();
+        try {
+            $rows = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)
+                ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+                ->where('unknown_payment_id', 'in', $unknownPaymentIds)
+                ->field(self::UNKNOWN_PAYMENT_FIELD)
+                ->order('transaction_date asc, source_row_no asc')
+                ->lock(true)
+                ->select();
+
+            if (count($rows) !== count($unknownPaymentIds)) {
+                throw new \Exception('所选不明款记录不存在或已被删除，请刷新后重试');
+            }
+
+            foreach ($rows as &$row) {
+                $row['case_no'] = '不明款';
+            }
+            unset($row);
+
+            $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '不明款记录');
+            if ($generationCheck !== null) {
+                throw new \Exception($generationCheck);
+            }
+
+            $groups = [];
+            if ($byDayFlag === 1) {
+                foreach ($rows as $row) {
+                    $date = $row['transaction_date'];
+                    if (!isset($groups[$date])) {
+                        $groups[$date] = [];
+                    }
+                    $groups[$date][] = $row;
+                }
+            } else {
+                foreach ($rows as $row) {
+                    $groups[$row['unknown_payment_id']] = [$row];
+                }
+            }
+
+            foreach ($groups as $groupRows) {
+                $firstRow = $groupRows[0];
+                $period = substr($firstRow['transaction_date'], 0, 7);
+                $voucherDate = $firstRow['transaction_date'];
+                foreach ($groupRows as $row) {
+                    $periodCheck = $this->validateUnknownPaymentVoucherPeriod($row, $period);
+                    if ($periodCheck !== null) {
+                        throw new \Exception($periodCheck);
+                    }
+                }
+
+                $fiscalYear = $this->fiscalYear($period);
+                $voucherTable = 'fin_voucher';
+                $detailTable = 'fin_voucher_detail';
+
+                $voucherId = uuid();
+                $voucherNo = $this->generateNextVoucherNo($period);
+
+                $totalDebit = 0;
+                $detailsData = [];
+                $lineNo = 1;
+
+                foreach ($groupRows as $row) {
+                    $summary = $this->buildUnknownPaymentVoucherSummary($row);
+                    $amountCents = $this->decimalToCents($row['unknown_amount']);
+                    $amountDecimal = $this->centsToDecimal($amountCents);
+                    $totalDebit += $amountCents;
+
+                    $detailsData[] = [
+                        'detail_id' => uuid(),
+                        'line_no' => $lineNo++,
+                        'subject_code' => $subjectConfig['debit_subject_code'],
+                        'summary' => $summary,
+                        'debit_amount' => $amountDecimal,
+                        'credit_amount' => '0.00',
+                        'verification_status' => 'NOT_REQUIRED',
+                        'aux_desc' => '',
+                    ];
+                    $detailsData[] = [
+                        'detail_id' => uuid(),
+                        'line_no' => $lineNo++,
+                        'subject_code' => $subjectConfig['credit_subject_code'],
+                        'summary' => $summary,
+                        'debit_amount' => '0.00',
+                        'credit_amount' => $amountDecimal,
+                        'verification_status' => 'NOT_REQUIRED',
+                        'aux_desc' => '',
+                    ];
+                }
+
+                if ($totalDebit <= 0) {
+                    throw new \Exception('凭证金额必须大于0');
+                }
+
+                $voucher = [
+                    'voucher_id' => $voucherId,
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
+                    'voucher_date' => $voucherDate,
+                    'voucher_word' => '记',
+                    'voucher_no' => $voucherNo,
+                    'summary' => $this->buildUnknownPaymentVoucherSummary($firstRow),
+                    'debit_amount' => $this->centsToDecimal($totalDebit),
+                    'credit_amount' => $this->centsToDecimal($totalDebit),
+                    'attachment_count' => 0,
+                    'status' => 'SUBMITTED',
+                    'source_type' => 'BUSINESS',
+                    'printed_flag' => '0',
+                    'prepared_by' => $this->userid,
+                    'prepared_time' => $this->now(),
+                    'audit_by' => null,
+                    'audit_time' => null,
+                    'posted_by' => null,
+                    'posted_time' => null,
+                    'void_flag' => '0',
+                    'remark' => '',
+                ];
+                $this->fillCreate($voucher);
+                $this->getdb($voucherTable)->insert($voucher);
+
+                foreach ($detailsData as $detail) {
+                    $detailRow = [
+                        'detail_id' => $detail['detail_id'],
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $fiscalYear,
+                        'period' => $period,
+                        'voucher_id' => $voucherId,
+                        'line_no' => $detail['line_no'],
+                        'subject_code' => $detail['subject_code'],
+                        'summary' => $detail['summary'],
+                        'debit_amount' => $detail['debit_amount'],
+                        'credit_amount' => $detail['credit_amount'],
+                        'verification_status' => $detail['verification_status'],
+                        'aux_desc' => $detail['aux_desc'],
+                        'remark' => '',
+                    ];
+                    $this->fillCreate($detailRow);
+                    $this->getdb($detailTable)->insert($detailRow);
+                }
+
+                foreach ($groupRows as $row) {
+                    $affectedRows = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where([
+                        'unknown_payment_id' => $row['unknown_payment_id'],
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $this->currentYear(),
+                        'del_flag' => 0,
+                    ])->update([
+                        'voucher_status' => 'GENERATED',
+                        'voucher_id' => $voucherId,
+                        'voucher_no' => $voucherNo,
+                        'voucher_period' => $period,
+                        'voucher_generated_time' => $this->now(),
+                        'updated_by' => $this->userid,
+                        'updated_time' => $this->now(),
+                    ]);
+                    if ((int)$affectedRows !== 1) {
+                        throw new \Exception('不明款记录状态已变化，请刷新后重试');
+                    }
+                }
+
+                $generatedCount++;
+                $voucherInfos[] = [
+                    'voucher_id' => $voucherId,
+                    'voucher_no' => $voucherNo,
+                    'period' => $period,
+                ];
+            }
+
+            $this->logAudit('CASE_FUND_UNKNOWN_PAYMENT', 'VOUCHER_GENERATE', 'GENERATE', null, [
+                'unknown_payment_count' => count($rows),
+                'voucher_count' => $generatedCount,
+                'vouchers' => $voucherInfos,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('生成凭证失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'generated_count' => $generatedCount,
+            'unknown_payment_count' => count($rows),
+            'vouchers' => $voucherInfos,
+        ], '成功生成 ' . $generatedCount . ' 张凭证');
+    }
+
+    public function distributionGenerateVoucher($data = [])
+    {
+        $auth = $this->requirePermission('case_fund:generate_voucher');
+        if ($auth) {
+            return $auth;
+        }
+
+        $distributionIds = $this->normalizeIdList($data['distribution_ids'] ?? ($data['ids'] ?? []));
+        if (empty($distributionIds)) {
+            return $this->error('请选择要生成凭证的案款分配记录');
+        }
+
+        $bizType = $this->currentAccountSetBizType();
+        if ($bizType !== 'CASE_FUND') {
+            return $this->error('当前账套类型不支持案款分配生成凭证：' . $bizType);
+        }
+
+        $configRows = $this->getdb(self::TABLE_SUBJECT_CONFIG)
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'biz_type' => 'CASE_FUND',
+                'voucher_biz_type' => 'DISTRIBUTION',
+                'del_flag' => 0,
+            ])
+            ->field(self::SUBJECT_CONFIG_FIELD)
+            ->select();
+
+        $subjectConfigMap = [];
+        foreach ($configRows as $config) {
+            $subjectConfigMap[$config['business_item_type']] = $config;
+            if ($config['business_item_type'] === '执行、调解款') {
+                $subjectConfigMap['执行、调节款'] = $config;
+            }
+        }
+        if (empty($subjectConfigMap)) {
+            return $this->error('案款分配未配置借方/贷方科目');
+        }
+
+        $generatedCount = 0;
+        $voucherInfos = [];
+        $rows = [];
+
+        Db::startTrans();
+        try {
+            $rows = $this->getdb(self::TABLE_DISTRIBUTION)
+                ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+                ->where('distribution_id', 'in', $distributionIds)
+                ->field(self::DISTRIBUTION_FIELD)
+                ->order('receive_date asc, distribution_no asc, source_row_no asc')
+                ->lock(true)
+                ->select();
+
+            if (count($rows) !== count($distributionIds)) {
+                throw new \Exception('所选案款分配记录不存在或已被删除，请刷新后重试');
+            }
+
+            foreach ($rows as &$row) {
+                $row['case_no'] = $row['out_case_no'] ?? '';
+            }
+            unset($row);
+
+            $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '案款分配记录');
+            if ($generationCheck !== null) {
+                throw new \Exception($generationCheck);
+            }
+
+            foreach ($rows as $row) {
+                $invoiceType = $row['invoice_type'];
+                if (!isset($subjectConfigMap[$invoiceType])) {
+                    throw new \Exception('分配单号【' . $row['distribution_no'] . '】的开票种类【' . $invoiceType . '】未配置借方/贷方科目');
+                }
+                $debitCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$invoiceType]['debit_subject_code'], '借方科目');
+                if ($debitCheck !== null) {
+                    throw new \Exception('分配单号【' . $row['distribution_no'] . '】' . $debitCheck);
+                }
+                $creditCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$invoiceType]['credit_subject_code'], '贷方科目');
+                if ($creditCheck !== null) {
+                    throw new \Exception('分配单号【' . $row['distribution_no'] . '】' . $creditCheck);
+                }
+            }
+
+            $groups = $this->groupDistributionRowsForVoucher($rows);
+            foreach ($groups as $groupRows) {
+                $firstRow = $groupRows[0];
+                $period = substr($firstRow['receive_date'], 0, 7);
+                $voucherDate = $firstRow['receive_date'];
+                foreach ($groupRows as $row) {
+                    $periodCheck = $this->validateDistributionVoucherPeriod($row, $period);
+                    if ($periodCheck !== null) {
+                        throw new \Exception($periodCheck);
+                    }
+                }
+
+                $this->ensureDistributionAuxArchives($groupRows);
+
+                $fiscalYear = $this->fiscalYear($period);
+                $voucherTable = 'fin_voucher';
+                $detailTable = 'fin_voucher_detail';
+                $auxTable = 'fin_voucher_aux_value';
+
+                $voucherId = uuid();
+                $voucherNo = $this->generateNextVoucherNo($period);
+
+                $detailBuildResult = $this->buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap);
+                $detailsData = $detailBuildResult['details'];
+                $totalDebit = $detailBuildResult['total_cents'];
+
+                if ($totalDebit <= 0) {
+                    throw new \Exception('凭证金额必须大于0');
+                }
+
+                $voucher = [
+                    'voucher_id' => $voucherId,
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $fiscalYear,
+                    'period' => $period,
+                    'voucher_date' => $voucherDate,
+                    'voucher_word' => '记',
+                    'voucher_no' => $voucherNo,
+                    'summary' => $this->buildDistributionVoucherHeaderSummary($firstRow),
+                    'debit_amount' => $this->centsToDecimal($totalDebit),
+                    'credit_amount' => $this->centsToDecimal($totalDebit),
+                    'attachment_count' => 0,
+                    'status' => 'SUBMITTED',
+                    'source_type' => 'BUSINESS',
+                    'printed_flag' => '0',
+                    'prepared_by' => $this->userid,
+                    'prepared_time' => $this->now(),
+                    'audit_by' => null,
+                    'audit_time' => null,
+                    'posted_by' => null,
+                    'posted_time' => null,
+                    'void_flag' => '0',
+                    'remark' => '',
+                ];
+                $this->fillCreate($voucher);
+                $this->getdb($voucherTable)->insert($voucher);
+
+                foreach ($detailsData as $detail) {
+                    $auxValues = $detail['aux_values'];
+                    unset($detail['aux_values']);
+
+                    $detailRow = [
+                        'detail_id' => $detail['detail_id'],
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $fiscalYear,
+                        'period' => $period,
+                        'voucher_id' => $voucherId,
+                        'line_no' => $detail['line_no'],
+                        'subject_code' => $detail['subject_code'],
+                        'summary' => $detail['summary'],
+                        'debit_amount' => $detail['debit_amount'],
+                        'credit_amount' => $detail['credit_amount'],
+                        'verification_status' => $detail['verification_status'],
+                        'aux_desc' => $detail['aux_desc'],
+                        'remark' => '',
+                    ];
+                    $this->fillCreate($detailRow);
+                    $this->getdb($detailTable)->insert($detailRow);
+
+                    foreach ($auxValues as $aux) {
+                        if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
+                            continue;
+                        }
+                        $auxRow = [
+                            'id' => uuid(),
+                            'account_set_id' => $this->accountSetId,
+                            'fiscal_year' => $fiscalYear,
+                            'period' => $period,
+                            'voucher_id' => $voucherId,
+                            'detail_id' => $detail['detail_id'],
+                            'aux_type_code' => $aux['aux_type_code'],
+                            'aux_value' => $aux['aux_value'],
+                            'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
+                            'remark' => '',
+                        ];
+                        $this->fillCreate($auxRow);
+                        $this->getdb($auxTable)->insert($auxRow);
+                    }
+                }
+
+                foreach ($groupRows as $row) {
+                    $affectedRows = $this->getdb(self::TABLE_DISTRIBUTION)->where([
+                        'distribution_id' => $row['distribution_id'],
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $this->currentYear(),
+                        'del_flag' => 0,
+                    ])->update([
+                        'voucher_status' => 'GENERATED',
+                        'voucher_id' => $voucherId,
+                        'voucher_no' => $voucherNo,
+                        'voucher_period' => $period,
+                        'voucher_generated_time' => $this->now(),
+                        'updated_by' => $this->userid,
+                        'updated_time' => $this->now(),
+                    ]);
+                    if ((int)$affectedRows !== 1) {
+                        throw new \Exception('案款分配记录状态已变化，请刷新后重试');
+                    }
+                }
+
+                $generatedCount++;
+                $voucherInfos[] = [
+                    'voucher_id' => $voucherId,
+                    'voucher_no' => $voucherNo,
+                    'period' => $period,
+                ];
+            }
+
+            $this->logAudit('CASE_FUND_DISTRIBUTION', 'VOUCHER_GENERATE', 'GENERATE', null, [
+                'distribution_count' => count($rows),
+                'voucher_count' => $generatedCount,
+                'vouchers' => $voucherInfos,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('生成凭证失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'generated_count' => $generatedCount,
+            'distribution_count' => count($rows),
+            'vouchers' => $voucherInfos,
+        ], '成功生成 ' . $generatedCount . ' 张凭证');
+    }
+
     public function refundGenerateVoucher($data = [])
     {
         $auth = $this->requirePermission('case_fund:generate_voucher');
@@ -1507,6 +2343,22 @@ class CaseFund extends Common
         return $groups;
     }
 
+    protected function groupDistributionRowsForVoucher($rows)
+    {
+        $groups = [];
+        foreach ($rows as $row) {
+            $distributionNo = trim((string)($row['distribution_no'] ?? ''));
+            if ($distributionNo === '') {
+                $distributionNo = $row['distribution_id'] ?? uuid();
+            }
+            if (!isset($groups[$distributionNo])) {
+                $groups[$distributionNo] = [];
+            }
+            $groups[$distributionNo][] = $row;
+        }
+        return $groups;
+    }
+
     protected function buildRefundVoucherDetailsData($groupRows, $subjectConfigMap, $aggregateByOutOrderNo)
     {
         $detailsData = [];
@@ -1601,6 +2453,61 @@ class CaseFund extends Common
         ];
     }
 
+    protected function buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap)
+    {
+        $detailsData = [];
+        $totalDebit = 0;
+        $lineNo = 1;
+
+        foreach ($groupRows as $row) {
+            $invoiceType = $row['invoice_type'];
+            $config = $subjectConfigMap[$invoiceType];
+            $amountCents = $this->decimalToCents($row['distribution_amount']);
+            $amountDecimal = $this->centsToDecimal($amountCents);
+            $totalDebit += $amountCents;
+
+            $outAuxValues = [
+                ['aux_type_code' => 'case_no', 'aux_value' => $row['out_case_no'], 'aux_label' => $row['out_case_no']],
+                ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'], 'aux_label' => $row['receipt_no']],
+            ];
+            $inAuxValues = [
+                ['aux_type_code' => 'case_no', 'aux_value' => $row['in_case_no'], 'aux_label' => $row['in_case_no']],
+                ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'], 'aux_label' => $row['receipt_no']],
+            ];
+
+            $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
+            $detailsData[] = [
+                'detail_id' => uuid(),
+                'line_no' => $lineNo++,
+                'subject_code' => $config['debit_subject_code'],
+                'summary' => $this->buildDistributionTransferOutSummary($row),
+                'debit_amount' => $amountDecimal,
+                'credit_amount' => '0.00',
+                'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                'aux_desc' => $this->buildAuxDesc($outAuxValues),
+                'aux_values' => $outAuxValues,
+            ];
+
+            $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+            $detailsData[] = [
+                'detail_id' => uuid(),
+                'line_no' => $lineNo++,
+                'subject_code' => $config['credit_subject_code'],
+                'summary' => $this->buildDistributionTransferInSummary($row),
+                'debit_amount' => '0.00',
+                'credit_amount' => $amountDecimal,
+                'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                'aux_desc' => $this->buildAuxDesc($inAuxValues),
+                'aux_values' => $inAuxValues,
+            ];
+        }
+
+        return [
+            'details' => $detailsData,
+            'total_cents' => $totalDebit,
+        ];
+    }
+
     protected function buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary = false)
     {
         $summary = $useNormalSummary
@@ -1659,6 +2566,30 @@ class CaseFund extends Common
         return trim('付 出账单号' . $outOrderNo . ' 合计');
     }
 
+    protected function buildDistributionVoucherHeaderSummary($row)
+    {
+        return trim('分配 ' . ($row['distribution_no'] ?? '') . ' 合计');
+    }
+
+    protected function buildDistributionTransferOutSummary($row)
+    {
+        return trim('分配 ' . ($row['distribution_no'] ?? '') . ' 转出 ' . ($row['out_case_no'] ?? '') . ' ' . ($row['out_party_name'] ?? ''));
+    }
+
+    protected function buildDistributionTransferInSummary($row)
+    {
+        return trim('分配 ' . ($row['distribution_no'] ?? '') . ' 转入 ' . ($row['in_case_no'] ?? '') . ' ' . ($row['in_party_name'] ?? ''));
+    }
+
+    protected function buildUnknownPaymentVoucherSummary($row)
+    {
+        $remark = trim((string)($row['bank_remark'] ?? ''));
+        if ($remark === '') {
+            $remark = trim((string)($row['bank_summary'] ?? ''));
+        }
+        return trim('收 不明款 ' . ($row['payer_name'] ?? '') . ' ' . $remark);
+    }
+
     protected function buildRefundAggregateCreditDetail($detailId, $lineNo, $subjectCode, $summary, $amountCents, $configs)
     {
         return [
@@ -1687,6 +2618,27 @@ class CaseFund extends Common
             }
             if (!empty($row['source_receipt_no'])) {
                 $receiptNos[] = $row['source_receipt_no'];
+            }
+        }
+        $this->ensureAuxType('case_no', '案号');
+        $this->ensureAuxType('receipt_no', '收据号');
+        $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
+        $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
+    }
+
+    protected function ensureDistributionAuxArchives($rows)
+    {
+        $caseNos = [];
+        $receiptNos = [];
+        foreach ($rows as $row) {
+            if (!empty($row['in_case_no'])) {
+                $caseNos[] = $row['in_case_no'];
+            }
+            if (!empty($row['out_case_no'])) {
+                $caseNos[] = $row['out_case_no'];
+            }
+            if (!empty($row['receipt_no'])) {
+                $receiptNos[] = $row['receipt_no'];
             }
         }
         $this->ensureAuxType('case_no', '案号');
@@ -1779,6 +2731,52 @@ class CaseFund extends Common
             }
         }
         return false;
+    }
+
+    protected function validateUnknownPaymentVoucherPeriod($row, $period)
+    {
+        $transactionDate = (string)($row['transaction_date'] ?? '');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $transactionDate)) {
+            return '不明款交易日期格式不正确：' . $transactionDate;
+        }
+        $sourcePeriod = (string)($row['period'] ?? '');
+        if ($sourcePeriod !== $period || substr($transactionDate, 0, 7) !== $period) {
+            return '不明款交易日期与会计期间不一致：' . $transactionDate;
+        }
+        $periodRow = $this->getdb('fin_fiscal_period')->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'status' => 'OPEN',
+            'del_flag' => 0,
+        ])->find();
+        if (!$periodRow || ($periodRow['status'] ?? '') !== 'OPEN') {
+            return '不明款交易日期所属会计期间不是打开状态：' . $period;
+        }
+        return null;
+    }
+
+    protected function validateDistributionVoucherPeriod($row, $period)
+    {
+        $receiveDate = (string)($row['receive_date'] ?? '');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $receiveDate)) {
+            return '案款分配接收日期格式不正确：' . $receiveDate;
+        }
+        $sourcePeriod = (string)($row['period'] ?? '');
+        if ($sourcePeriod !== $period || substr($receiveDate, 0, 7) !== $period) {
+            return '案款分配接收日期与会计期间不一致：' . $receiveDate;
+        }
+        $periodRow = $this->getdb('fin_fiscal_period')->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'status' => 'OPEN',
+            'del_flag' => 0,
+        ])->find();
+        if (!$periodRow || ($periodRow['status'] ?? '') !== 'OPEN') {
+            return '案款分配接收日期所属会计期间不是打开状态：' . $period;
+        }
+        return null;
     }
 
     protected function buildAuxDesc($auxValues)
@@ -2010,6 +3008,151 @@ class CaseFund extends Common
         return $rows;
     }
 
+    protected function parseUnknownPaymentImportRowsFromXls($binary)
+    {
+        $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
+        if (empty($cells)) {
+            throw new \Exception('文件中没有可识别的工作表数据');
+        }
+        $maxRow = -1;
+        $maxCol = -1;
+        foreach ($cells as $key => $value) {
+            list($row, $col) = array_map('intval', explode(':', $key));
+            $maxRow = max($maxRow, $row);
+            $maxCol = max($maxCol, $col);
+        }
+
+        $headers = [];
+        for ($col = 0; $col <= $maxCol; $col++) {
+            $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
+        }
+        $required = [
+            '法院名称', '认领状态', '缴款人', '金额', '银行摘要', '银行备注',
+            '交易日期', '法院银行账户', '到账方式', '缴款人开户行', '缴款人账号',
+            '认领人姓名', '认领日期', '最后修改时间',
+        ];
+        $index = [];
+        foreach ($required as $name) {
+            $found = array_search($name, $headers, true);
+            if ($found === false) {
+                throw new \Exception('缺少表头：' . $name);
+            }
+            $index[$name] = $found;
+        }
+
+        $rows = [];
+        for ($row = 1; $row <= $maxRow; $row++) {
+            $raw = [];
+            foreach ($index as $name => $col) {
+                $raw[$name] = $this->normalizeImportCellText($cells[$row . ':' . $col] ?? '');
+            }
+            if ($this->isEmptyPaymentRawRow($raw)) {
+                continue;
+            }
+            if ($this->isMalformedPaymentRawRow($raw)) {
+                continue;
+            }
+
+            $transactionTime = $this->normalizeDateTimeValue($raw['交易日期']);
+            $transactionDate = $transactionTime === '' ? '' : substr($transactionTime, 0, 10);
+            $lastModifiedTime = $this->normalizeDateTimeValue($raw['最后修改时间']);
+            $unknownAmount = $this->centsToDecimal($this->decimalToCents($raw['金额']));
+            $parsed = [
+                'fiscal_year' => $transactionDate === '' ? '' : substr($transactionDate, 0, 4),
+                'period' => $transactionDate === '' ? '' : substr($transactionDate, 0, 7),
+                'court_name' => $raw['法院名称'],
+                'claim_status' => $raw['认领状态'],
+                'payer_name' => $raw['缴款人'],
+                'unknown_amount' => $unknownAmount,
+                'bank_summary' => $raw['银行摘要'],
+                'bank_remark' => $raw['银行备注'],
+                'transaction_date' => $transactionDate,
+                'transaction_time' => $transactionTime,
+                'court_bank_account_no' => $raw['法院银行账户'],
+                'arrival_method' => $raw['到账方式'],
+                'payer_bank_name' => $raw['缴款人开户行'],
+                'payer_account_no' => $raw['缴款人账号'],
+                'claim_user_name' => $raw['认领人姓名'],
+                'claim_date' => $this->nullableDateValue($raw['认领日期']),
+                'last_modified_time' => $lastModifiedTime === '' ? null : $lastModifiedTime,
+                'source_row_no' => $row + 1,
+                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
+            ];
+            $parsed['source_fingerprint'] = $this->unknownPaymentFingerprint($parsed);
+            $rows[] = $parsed;
+        }
+        return $rows;
+    }
+
+    protected function parseDistributionImportRowsFromXls($binary)
+    {
+        $tableRows = $this->parseSpreadsheetRows($binary);
+        if (empty($tableRows)) {
+            throw new \Exception('文件中没有可识别的工作表数据');
+        }
+
+        $headers = [];
+        foreach ($tableRows[0] as $col => $value) {
+            $headers[$col] = $this->normalizeImportCellText($value);
+        }
+        $required = [
+            '序号', '分配单号', '转入案号', '转入承办法官', '转入当事人',
+            '转出案号', '转出承办法官', '转出当事人', '开票种类', '单据号',
+            '分配金额', '申请人', '申请日期', '接收日期', '状态', '情况说明',
+            '原开票日期',
+        ];
+        $index = [];
+        foreach ($required as $name) {
+            $found = array_search($name, $headers, true);
+            if ($found === false) {
+                throw new \Exception('缺少表头：' . $name);
+            }
+            $index[$name] = $found;
+        }
+
+        $rows = [];
+        for ($row = 1; $row < count($tableRows); $row++) {
+            $raw = [];
+            foreach ($index as $name => $col) {
+                $raw[$name] = $this->normalizeImportCellText($tableRows[$row][$col] ?? '');
+            }
+            if ($this->isEmptyPaymentRawRow($raw)) {
+                continue;
+            }
+            if ($this->isMalformedPaymentRawRow($raw)) {
+                continue;
+            }
+
+            $receiveDate = $this->normalizeDateValue($raw['接收日期']);
+            $amount = $this->centsToDecimal($this->decimalToCents($raw['分配金额']));
+            $parsed = [
+                'fiscal_year' => $receiveDate === '' ? '' : substr($receiveDate, 0, 4),
+                'period' => $receiveDate === '' ? '' : substr($receiveDate, 0, 7),
+                'distribution_no' => $raw['分配单号'],
+                'in_case_no' => $raw['转入案号'],
+                'in_judge_name' => $raw['转入承办法官'],
+                'in_party_name' => $raw['转入当事人'],
+                'out_case_no' => $raw['转出案号'],
+                'out_judge_name' => $raw['转出承办法官'],
+                'out_party_name' => $raw['转出当事人'],
+                'invoice_type' => $raw['开票种类'],
+                'receipt_no' => $raw['单据号'],
+                'distribution_amount' => $amount,
+                'applicant_name' => $raw['申请人'],
+                'apply_date' => $this->nullableDateValue($raw['申请日期']),
+                'receive_date' => $receiveDate,
+                'business_status' => $raw['状态'],
+                'description' => $raw['情况说明'],
+                'original_invoice_date' => $this->nullableDateValue($raw['原开票日期']),
+                'source_row_no' => $row + 1,
+                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
+            ];
+            $parsed['source_fingerprint'] = $this->distributionFingerprint($parsed);
+            $rows[] = $parsed;
+        }
+        return $rows;
+    }
+
     protected function validatePaymentRows($rows, $bizType = '')
     {
         $errors = [];
@@ -2018,6 +3161,85 @@ class CaseFund extends Common
             $errors = array_merge($errors, $this->paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes));
         }
         return $errors;
+    }
+
+    protected function validateDistributionRows($rows, $bizType = '')
+    {
+        $errors = [];
+        $allowedInvoiceTypes = $this->allowedDistributionInvoiceTypes($bizType);
+        foreach ($rows as $row) {
+            $prefix = '第' . ($row['source_row_no'] ?? '?') . '行：';
+            if ($bizType !== 'CASE_FUND') {
+                $errors[] = $prefix . '当前账套类型不支持案款分配：' . $bizType;
+                continue;
+            }
+            if (($row['distribution_no'] ?? '') === '') {
+                $errors[] = $prefix . '分配单号不能为空';
+            }
+            if (($row['in_case_no'] ?? '') === '') {
+                $errors[] = $prefix . '转入案号不能为空';
+            }
+            if (($row['out_case_no'] ?? '') === '') {
+                $errors[] = $prefix . '转出案号不能为空';
+            }
+            if (($row['invoice_type'] ?? '') === '') {
+                $errors[] = $prefix . '开票种类不能为空';
+            } elseif (!in_array($row['invoice_type'], $allowedInvoiceTypes, true)) {
+                $errors[] = $prefix . '当前账套不允许导入开票种类【' . $row['invoice_type'] . '】，允许类型：' . implode('、', $allowedInvoiceTypes);
+            }
+            if (($row['receipt_no'] ?? '') === '') {
+                $errors[] = $prefix . '单据号不能为空';
+            }
+            if ($this->decimalToCents($row['distribution_amount'] ?? '0') <= 0) {
+                $errors[] = $prefix . '分配金额必须大于0';
+            }
+            if (!$this->isValidImportDate($row['receive_date'] ?? '')) {
+                $errors[] = $prefix . '接收日期不能为空或格式不正确';
+            }
+        }
+        return $errors;
+    }
+
+    protected function validateUnknownPaymentRows($rows, $bizType = '')
+    {
+        $errors = [];
+        foreach ($rows as $row) {
+            $prefix = '第' . ($row['source_row_no'] ?? '?') . '行：';
+            if ($bizType !== 'CASE_FUND') {
+                $errors[] = $prefix . '当前账套类型不支持不明款业务：' . $bizType;
+                continue;
+            }
+            if ($this->decimalToCents($row['unknown_amount'] ?? '0') <= 0) {
+                $errors[] = $prefix . '金额必须大于0';
+            }
+            if (!$this->isValidImportDate($row['transaction_date'] ?? '')) {
+                $errors[] = $prefix . '交易日期不能为空或格式不正确';
+            }
+            if (!$this->unknownPaymentRowHasTraceField($row)) {
+                $errors[] = $prefix . '缴款人、银行备注、银行摘要、法院银行账户、缴款人账号至少填写一项用于追溯';
+            }
+        }
+        return $errors;
+    }
+
+    protected function unknownPaymentRowHasTraceField($row)
+    {
+        foreach (['payer_name', 'bank_remark', 'bank_summary', 'court_bank_account_no', 'payer_account_no'] as $field) {
+            if (trim((string)($row[$field] ?? '')) !== '') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function isValidImportDate($value)
+    {
+        $text = trim((string)$value);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $text)) {
+            return false;
+        }
+        list($year, $month, $day) = array_map('intval', explode('-', $text));
+        return checkdate($month, $day, $year);
     }
 
     protected function paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes = null)
@@ -2122,6 +3344,14 @@ class CaseFund extends Common
         return $map[$bizType] ?? [];
     }
 
+    protected function allowedDistributionInvoiceTypes($bizType)
+    {
+        $map = [
+            'CASE_FUND' => ['执行、调解款', '执行、调节款'],
+        ];
+        return $map[$bizType] ?? [];
+    }
+
     protected function normalizeIdList($value)
     {
         if (is_string($value)) {
@@ -2145,7 +3375,17 @@ class CaseFund extends Common
         $where = $this->accountWhere();
         $where['fiscal_year'] = $this->currentYear();
         $where['voucher_status'] = 'UNGENERATED';
-        $fields = $bizType === 'PAYMENT' ? self::PAYMENT_FIELD : self::REFUND_FIELD;
+        if ($bizType === 'PAYMENT') {
+            $fields = self::PAYMENT_FIELD;
+        } elseif ($bizType === 'REFUND') {
+            $fields = self::REFUND_FIELD;
+        } elseif ($bizType === 'UNKNOWN_PAYMENT') {
+            $fields = self::UNKNOWN_PAYMENT_FIELD;
+        } elseif ($bizType === 'DISTRIBUTION') {
+            $fields = self::DISTRIBUTION_FIELD;
+        } else {
+            return $this->error('不支持删除该业务类型：' . $bizType);
+        }
         $rows = $this->getdb($table)
             ->where($where)
             ->where($idField, 'in', $ids)
@@ -2447,6 +3687,12 @@ class CaseFund extends Common
         if ($voucherBizType === 'REFUND') {
             return $this->allowedRefundOutTypes($bizType);
         }
+        if ($voucherBizType === 'UNKNOWN_PAYMENT') {
+            return $bizType === 'CASE_FUND' ? ['不明款'] : [];
+        }
+        if ($voucherBizType === 'DISTRIBUTION') {
+            return $this->allowedDistributionInvoiceTypes($bizType);
+        }
         return [];
     }
 
@@ -2462,7 +3708,7 @@ class CaseFund extends Common
     protected function normalizeVoucherBizType($value)
     {
         $value = strtoupper(trim((string)$value));
-        return in_array($value, ['PAYMENT', 'REFUND'], true) ? $value : '';
+        return in_array($value, ['PAYMENT', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION'], true) ? $value : '';
     }
 
     protected function validateVoucherSubjectCode($subjectCode, $label)
@@ -2739,6 +3985,34 @@ class CaseFund extends Common
         return hash('sha256', implode('|', $parts));
     }
 
+    protected function unknownPaymentFingerprint($row)
+    {
+        $parts = [
+            $row['transaction_time'] ?? '',
+            $row['unknown_amount'] ?? '',
+            $row['court_bank_account_no'] ?? '',
+            $row['payer_account_no'] ?? '',
+            $row['payer_name'] ?? '',
+            $row['bank_remark'] ?? '',
+            $row['bank_summary'] ?? '',
+        ];
+        return hash('sha256', implode('|', $parts));
+    }
+
+    protected function distributionFingerprint($row)
+    {
+        $parts = [
+            $row['distribution_no'] ?? '',
+            $row['in_case_no'] ?? '',
+            $row['out_case_no'] ?? '',
+            $row['invoice_type'] ?? '',
+            $row['receipt_no'] ?? '',
+            $row['distribution_amount'] ?? '',
+            $row['receive_date'] ?? '',
+        ];
+        return hash('sha256', implode('|', $parts));
+    }
+
     protected function yesNoFlagFromText($text)
     {
         $text = trim((string)$text);
@@ -2790,6 +4064,51 @@ class CaseFund extends Common
             return substr($text, 0, -2);
         }
         return $text;
+    }
+
+    protected function parseSpreadsheetRows($binary)
+    {
+        if (substr($binary, 0, 8) === hex2bin('d0cf11e0a1b11ae1')) {
+            $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
+            $rows = [];
+            foreach ($cells as $key => $value) {
+                list($row, $col) = array_map('intval', explode(':', $key));
+                if (!isset($rows[$row])) {
+                    $rows[$row] = [];
+                }
+                $rows[$row][$col] = $value;
+            }
+            ksort($rows);
+            return array_values($rows);
+        }
+
+        $xml = @simplexml_load_string($binary);
+        if ($xml === false) {
+            throw new \Exception('仅支持 Excel 97-2003 .xls 或 Excel XML 文件');
+        }
+        $ns = 'urn:schemas-microsoft-com:office:spreadsheet';
+        $xml->registerXPathNamespace('ss', $ns);
+        $rowNodes = $xml->xpath('//ss:Worksheet[1]/ss:Table/ss:Row');
+        if (!$rowNodes) {
+            throw new \Exception('文件中没有可识别的工作表数据');
+        }
+
+        $rows = [];
+        foreach ($rowNodes as $rowNode) {
+            $rowData = [];
+            $colIndex = 0;
+            foreach ($rowNode->children($ns)->Cell as $cellNode) {
+                $attrs = $cellNode->attributes($ns);
+                if (isset($attrs['Index'])) {
+                    $colIndex = max(0, (int)$attrs['Index'] - 1);
+                }
+                $dataNodes = $cellNode->children($ns)->Data;
+                $rowData[$colIndex] = isset($dataNodes[0]) ? (string)$dataNodes[0] : '';
+                $colIndex++;
+            }
+            $rows[] = $rowData;
+        }
+        return $rows;
     }
 
     protected function readOleWorkbookStream($binary)

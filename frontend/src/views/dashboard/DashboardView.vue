@@ -207,6 +207,8 @@ const businessEntries = computed(() => {
       { label: '缴费登记查询', desc: '登记到账和导入结果', path: '/case-fund/payments', icon: Money },
       { label: '出账查询', desc: '登记退付并生成凭证', path: '/case-fund/refunds', icon: CreditCard },
       { label: '银行对账单', desc: '导入流水并自动对账', path: '/case-fund/bank-statements', icon: Tickets },
+      { label: '不明款', desc: '导入待认领到账并生成凭证', path: '/case-fund/unknown-payments', icon: Tickets },
+      { label: '案款分配', desc: '按分配单号调整案号辅助核算', path: '/case-fund/distributions', icon: CreditCard },
       { label: '辅助核算余额表', desc: '按案号和收据号查未清', path: '/books/aux-balance', icon: Notebook }
     ]
   }

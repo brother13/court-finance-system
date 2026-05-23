@@ -47,6 +47,16 @@ if (strpos($source, 'subjectConfigPaymentBusinessTypes') === false) {
     exit(1);
 }
 
+if (strpos($source, "'UNKNOWN_PAYMENT'") === false || strpos($source, "['不明款']") === false) {
+    fwrite(STDERR, 'Subject config should expose unknown payment config item' . PHP_EOL);
+    exit(1);
+}
+
+if (strpos($source, "'DISTRIBUTION'") === false || strpos($source, 'allowedDistributionInvoiceTypes') === false) {
+    fwrite(STDERR, 'Subject config should expose distribution config items' . PHP_EOL);
+    exit(1);
+}
+
 if (
     strpos($source, "'CASE_FUND' => ['执行、调解款']") === false ||
     strpos($source, "'LITIGATION_FEE' => ['诉讼费预收']") === false

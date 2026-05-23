@@ -496,6 +496,95 @@ create index idx_case_fund_refund_case on fin_case_fund_refund (account_set_id, 
 create index idx_case_fund_refund_source_receipt on fin_case_fund_refund (account_set_id, source_receipt_no);
 create index idx_case_fund_refund_voucher on fin_case_fund_refund (account_set_id, voucher_status, voucher_period, voucher_id);
 
+create table fin_case_fund_distribution (
+    distribution_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    distribution_no varchar(80) not null default '',
+    in_case_no varchar(120) not null default '',
+    in_judge_name varchar(80) not null default '',
+    in_party_name varchar(200) not null default '',
+    out_case_no varchar(120) not null default '',
+    out_judge_name varchar(80) not null default '',
+    out_party_name varchar(200) not null default '',
+    invoice_type varchar(100) not null default '',
+    receipt_no varchar(80) not null default '',
+    distribution_amount decimal(18,2) not null default 0.00,
+    applicant_name varchar(80) not null default '',
+    apply_date date null,
+    receive_date date not null,
+    business_status varchar(50) not null default '',
+    description varchar(255) not null default '',
+    original_invoice_date date null,
+    source_file_name varchar(255) not null default '',
+    source_row_no int not null default 0,
+    source_fingerprint varchar(64) not null,
+    source_raw_json text,
+    voucher_status varchar(30) not null default 'UNGENERATED',
+    voucher_id varchar(36) null,
+    voucher_no int null,
+    voucher_period varchar(7) null,
+    voucher_generated_time datetime null,
+    created_by varchar(36) not null default '',
+    created_time datetime not null,
+    updated_by varchar(36) not null default '',
+    updated_time datetime not null,
+    del_flag tinyint not null default 0,
+    version int not null default 0,
+    remark varchar(255) not null default ''
+);
+create unique index uk_case_fund_distribution_source on fin_case_fund_distribution (account_set_id, source_fingerprint, del_flag);
+create index idx_case_fund_distribution_period on fin_case_fund_distribution (account_set_id, period, receive_date);
+create index idx_case_fund_distribution_no on fin_case_fund_distribution (account_set_id, distribution_no);
+create index idx_case_fund_distribution_in_case on fin_case_fund_distribution (account_set_id, in_case_no);
+create index idx_case_fund_distribution_out_case on fin_case_fund_distribution (account_set_id, out_case_no);
+create index idx_case_fund_distribution_receipt on fin_case_fund_distribution (account_set_id, receipt_no);
+create index idx_case_fund_distribution_voucher on fin_case_fund_distribution (account_set_id, voucher_status, voucher_period, voucher_id);
+
+create table fin_case_fund_unknown_payment (
+    unknown_payment_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    court_name varchar(100) not null default '',
+    claim_status varchar(30) not null default '',
+    payer_name varchar(100) not null default '',
+    unknown_amount decimal(18,2) not null default 0.00,
+    bank_summary varchar(255) not null default '',
+    bank_remark varchar(255) not null default '',
+    transaction_date date not null,
+    transaction_time datetime not null,
+    court_bank_account_no varchar(80) not null default '',
+    arrival_method varchar(50) not null default '',
+    payer_bank_name varchar(160) not null default '',
+    payer_account_no varchar(80) not null default '',
+    claim_user_name varchar(80) not null default '',
+    claim_date date null,
+    last_modified_time datetime null,
+    source_file_name varchar(255) not null default '',
+    source_row_no int not null default 0,
+    source_fingerprint varchar(64) not null,
+    source_raw_json text,
+    voucher_status varchar(30) not null default 'UNGENERATED',
+    voucher_id varchar(36) null,
+    voucher_no int null,
+    voucher_period varchar(7) null,
+    voucher_generated_time datetime null,
+    created_by varchar(36) not null default '',
+    created_time datetime not null,
+    updated_by varchar(36) not null default '',
+    updated_time datetime not null,
+    del_flag tinyint not null default 0,
+    version int not null default 0,
+    remark varchar(255) not null default ''
+);
+create unique index uk_case_fund_unknown_payment_source on fin_case_fund_unknown_payment (account_set_id, source_fingerprint, del_flag);
+create index idx_case_fund_unknown_payment_period on fin_case_fund_unknown_payment (account_set_id, period, transaction_date);
+create index idx_case_fund_unknown_payment_bank on fin_case_fund_unknown_payment (account_set_id, court_bank_account_no, transaction_date);
+create index idx_case_fund_unknown_payment_payer on fin_case_fund_unknown_payment (account_set_id, payer_name);
+create index idx_case_fund_unknown_payment_voucher on fin_case_fund_unknown_payment (account_set_id, voucher_status, voucher_period, voucher_id);
+
 create table fin_case_fund_bank_statement (
     statement_id varchar(36) primary key,
     account_set_id varchar(36) not null,

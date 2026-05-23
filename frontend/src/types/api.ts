@@ -309,6 +309,61 @@ export interface CaseFundRefund {
   voucher_generated_time?: string
 }
 
+export interface CaseFundUnknownPayment {
+  unknown_payment_id: string
+  account_set_id: string
+  fiscal_year: number
+  period: string
+  transaction_date: string
+  transaction_time: string
+  court_bank_account_no?: string
+  arrival_method?: string
+  unknown_amount: string | number
+  payer_bank_name?: string
+  payer_account_no?: string
+  payer_name?: string
+  bank_summary?: string
+  bank_remark?: string
+  claim_status?: 'UNCLAIMED' | 'CLAIMED' | string
+  source_file_name?: string
+  source_row_no?: number
+  voucher_status: 'UNGENERATED' | 'GENERATED' | 'VOIDED' | string
+  voucher_id?: string
+  voucher_no?: number
+  voucher_period?: string
+  voucher_generated_time?: string
+}
+
+export interface CaseFundDistribution {
+  distribution_id: string
+  account_set_id: string
+  fiscal_year: number
+  period: string
+  distribution_no: string
+  in_case_no: string
+  in_judge_name?: string
+  in_party_name?: string
+  out_case_no: string
+  out_judge_name?: string
+  out_party_name?: string
+  invoice_type: string
+  receipt_no: string
+  distribution_amount: string | number
+  applicant_name?: string
+  apply_date?: string
+  receive_date: string
+  business_status?: string
+  description?: string
+  original_invoice_date?: string
+  source_file_name?: string
+  source_row_no?: number
+  voucher_status: 'UNGENERATED' | 'GENERATED' | 'VOIDED' | string
+  voucher_id?: string
+  voucher_no?: number
+  voucher_period?: string
+  voucher_generated_time?: string
+}
+
 export interface CaseFundBankStatement {
   statement_id: string
   account_set_id?: string
@@ -360,7 +415,7 @@ export interface CaseFundSubjectConfig {
   config_id?: string
   account_set_id?: string
   biz_type?: string
-  voucher_biz_type?: 'PAYMENT' | 'REFUND'
+  voucher_biz_type?: 'PAYMENT' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
   business_item_type: string
   debit_subject_code: string
   debit_subject_name?: string
@@ -372,7 +427,7 @@ export interface CaseFundSubjectConfig {
 export interface CaseFundSubjectConfigResult {
   items: CaseFundSubjectConfig[]
   biz_type: string
-  voucher_biz_type: 'PAYMENT' | 'REFUND'
+  voucher_biz_type: 'PAYMENT' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
   generate_voucher_by_day_flag?: number
   generate_refund_voucher_by_out_order_no_flag?: number
 }

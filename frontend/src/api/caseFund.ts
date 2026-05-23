@@ -1,5 +1,7 @@
 import { apiAction } from './http'
-import type { CaseFundBankReconcile, CaseFundBankStatement, CaseFundPayment, CaseFundRefund, CaseFundSubjectConfig } from '../types/api'
+import type { CaseFundBankReconcile, CaseFundBankStatement, CaseFundDistribution, CaseFundPayment, CaseFundRefund, CaseFundSubjectConfig, CaseFundUnknownPayment } from '../types/api'
+
+type CaseFundVoucherBizType = 'PAYMENT' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
 
 export const caseFundApi = {
   paymentList(payload: Record<string, any> = {}) {
@@ -15,6 +17,40 @@ export const caseFundApi = {
   },
   deletePayments(paymentIds: string[]) {
     return apiAction('/caseFund/paymentDelete', { payment_ids: paymentIds }) as Promise<{ deleted_count: number }>
+  },
+  unknownPaymentList(payload: Record<string, any> = {}) {
+    return apiAction('/caseFund/unknownPaymentList', payload) as Promise<{
+      items: CaseFundUnknownPayment[]
+      total: number
+      total_amount?: string | number
+    }>
+  },
+  importUnknownPayments(filename: string, contentBase64: string) {
+    return apiAction('/caseFund/unknownPaymentImport', { filename, content_base64: contentBase64 }) as Promise<{
+      total: number
+      created: number
+      skipped: number
+    }>
+  },
+  deleteUnknownPayments(unknownPaymentIds: string[]) {
+    return apiAction('/caseFund/unknownPaymentDelete', { unknown_payment_ids: unknownPaymentIds }) as Promise<{ deleted_count: number }>
+  },
+  distributionList(payload: Record<string, any> = {}) {
+    return apiAction('/caseFund/distributionList', payload) as Promise<{
+      items: CaseFundDistribution[]
+      total: number
+      total_amount?: string | number
+    }>
+  },
+  importDistributions(filename: string, contentBase64: string) {
+    return apiAction('/caseFund/distributionImport', { filename, content_base64: contentBase64 }) as Promise<{
+      total: number
+      created: number
+      skipped: number
+    }>
+  },
+  deleteDistributions(distributionIds: string[]) {
+    return apiAction('/caseFund/distributionDelete', { distribution_ids: distributionIds }) as Promise<{ deleted_count: number }>
   },
   refundList(payload: Record<string, any> = {}) {
     return apiAction('/caseFund/refundList', payload) as Promise<{ items: CaseFundRefund[]; total: number; total_amount?: string | number }>
@@ -61,17 +97,17 @@ export const caseFundApi = {
       summary: Record<string, number>
     }>
   },
-  subjectConfigList(voucherBizType: 'PAYMENT' | 'REFUND') {
+  subjectConfigList(voucherBizType: CaseFundVoucherBizType) {
     return apiAction('/caseFund/subjectConfigList', { voucher_biz_type: voucherBizType }) as Promise<{
       items: CaseFundSubjectConfig[]
       biz_type: string
-      voucher_biz_type: 'PAYMENT' | 'REFUND'
+      voucher_biz_type: CaseFundVoucherBizType
       generate_voucher_by_day_flag: number
       generate_refund_voucher_by_out_order_no_flag: number
     }>
   },
   saveSubjectConfigs(
-    voucherBizType: 'PAYMENT' | 'REFUND',
+    voucherBizType: CaseFundVoucherBizType,
     items: CaseFundSubjectConfig[],
     generateVoucherByDayFlag = 1,
     generateRefundVoucherByOutOrderNoFlag?: number
@@ -97,6 +133,20 @@ export const caseFundApi = {
     return apiAction('/caseFund/refundGenerateVoucher', { refund_ids: refundIds }) as Promise<{
       generated_count: number
       refund_count: number
+      vouchers: { voucher_id: string; voucher_no: number; period: string }[]
+    }>
+  },
+  unknownPaymentGenerateVoucher(unknownPaymentIds: string[]) {
+    return apiAction('/caseFund/unknownPaymentGenerateVoucher', { unknown_payment_ids: unknownPaymentIds }) as Promise<{
+      generated_count: number
+      unknown_payment_count: number
+      vouchers: { voucher_id: string; voucher_no: number; period: string }[]
+    }>
+  },
+  distributionGenerateVoucher(distributionIds: string[]) {
+    return apiAction('/caseFund/distributionGenerateVoucher', { distribution_ids: distributionIds }) as Promise<{
+      generated_count: number
+      distribution_count: number
       vouchers: { voucher_id: string; voucher_no: number; period: string }[]
     }>
   }

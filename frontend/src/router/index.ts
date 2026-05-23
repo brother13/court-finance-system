@@ -11,6 +11,8 @@ const AuxBalanceView = () => import('../views/books/AuxBalanceView.vue')
 const PaymentRegisterView = () => import('../views/case-fund/PaymentRegisterView.vue')
 const RefundRegisterView = () => import('../views/case-fund/RefundRegisterView.vue')
 const BankStatementView = () => import('../views/case-fund/BankStatementView.vue')
+const UnknownPaymentView = () => import('../views/case-fund/UnknownPaymentView.vue')
+const DistributionView = () => import('../views/case-fund/DistributionView.vue')
 const PeriodCloseView = () => import('../views/period/PeriodCloseView.vue')
 const SubjectManageView = () => import('../views/base/SubjectManageView.vue')
 const OpeningBalanceView = () => import('../views/base/OpeningBalanceView.vue')
@@ -42,6 +44,8 @@ const router = createRouter({
     { path: '/case-fund/payments', component: PaymentRegisterView, meta: { permission: 'menu:case_fund:payment' } },
     { path: '/case-fund/refunds', component: RefundRegisterView, meta: { permission: 'menu:case_fund:refund' } },
     { path: '/case-fund/bank-statements', component: BankStatementView, meta: { permission: 'menu:case_fund:bank_statement' } },
+    { path: '/case-fund/unknown-payments', component: UnknownPaymentView, meta: { permission: 'menu:case_fund:unknown_payment' } },
+    { path: '/case-fund/distributions', component: DistributionView, meta: { permission: 'menu:case_fund:distribution' } },
     { path: '/period/close', component: PeriodCloseView, meta: { permission: 'period:close' } },
     { path: '/base/subjects', component: SubjectManageView, meta: { permission: 'menu:base:subject' } },
     { path: '/base/opening-balances', component: OpeningBalanceView, meta: { permission: 'menu:base:opening' } },

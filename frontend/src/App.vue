@@ -1,18 +1,33 @@
 <template>
   <router-view v-if="isAuthPage" />
   <el-container v-else class="app-shell">
-    <el-aside width="240px" class="sidebar">
+    <el-aside :width="sidebarWidth" class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed }">
       <div class="brand">
         <div class="brand-mark">
           <span class="brand-mark-core" />
         </div>
-        <div>
+        <div class="brand-info">
           <strong>法院专项账务</strong>
           <small>{{ context.accountSetName || context.unitName || '账套未选择' }}</small>
         </div>
+        <el-button
+          class="sidebar-toggle"
+          :icon="sidebarToggleIcon"
+          text
+          circle
+          :title="sidebarToggleTitle"
+          :aria-label="sidebarToggleTitle"
+          @click="toggleSidebar"
+        />
       </div>
 
-      <el-menu router :default-active="$route.path" :default-openeds="['/books', '/case-fund', '/base', '/system']" class="nav-menu">
+      <el-menu
+        router
+        :collapse="sidebarCollapsed"
+        :default-active="$route.path"
+        :default-openeds="['/books', '/case-fund', '/base', '/system']"
+        class="nav-menu"
+      >
         <el-menu-item v-if="context.hasPermission('menu:dashboard')" index="/dashboard">
           <el-icon><DataLine /></el-icon>
           <span>首页看板</span>
@@ -31,7 +46,7 @@
           <el-menu-item v-if="context.hasPermission('menu:book:subject_summary')" index="/books/subject-summary">科目汇总表</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:book:aux_balance')" index="/books/aux-balance">辅助核算余额表</el-menu-item>
         </el-sub-menu>
-        <el-sub-menu v-if="context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
+        <el-sub-menu v-if="context.bizType === 'CASE_FUND' && context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
           <template #title>
             <el-icon><Coin /></el-icon>
             <span>案款业务</span>
@@ -39,6 +54,8 @@
           <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">缴费登记查询</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">出账查询</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:unknown_payment')" index="/case-fund/unknown-payments">不明款</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:distribution')" index="/case-fund/distributions">案款分配</el-menu-item>
         </el-sub-menu>
         <el-menu-item v-if="context.hasPermission('period:close')" index="/period/close">
           <el-icon><Calendar /></el-icon>
@@ -123,7 +140,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Calendar, Close, Coin, DataLine, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
+import { Calendar, Close, Coin, DataLine, Expand, Fold, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
 
@@ -132,7 +149,7 @@ const router = useRouter()
 const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
 const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance']
-const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement']
+const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement', 'menu:case_fund:unknown_payment', 'menu:case_fund:distribution']
 const baseMenuPermissions = ['menu:base:subject', 'menu:base:opening', 'menu:base:aux', 'menu:base:carry_forward']
 const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:account_set', 'menu:system:audit_log']
 
@@ -154,6 +171,8 @@ const titleMap: Record<string, string> = {
   '/case-fund/payments': '缴费登记查询',
   '/case-fund/refunds': '出账查询',
   '/case-fund/bank-statements': '银行对账单',
+  '/case-fund/unknown-payments': '不明款',
+  '/case-fund/distributions': '案款分配',
   '/period/close': '期末结账',
   '/base/subjects': '科目',
   '/base/opening-balances': '期初',
@@ -171,6 +190,10 @@ const accountSetShort = computed(() => context.accountSetId ? context.accountSet
 const isAuthPage = computed(() => route.path === '/login' || route.path === '/select-account-set')
 const defaultTabs: PageTab[] = [{ path: '/dashboard', title: '首页看板', closable: false }]
 const openedTabs = ref<PageTab[]>(loadTabs())
+const sidebarCollapsed = ref(false)
+const sidebarWidth = computed(() => sidebarCollapsed.value ? '64px' : '200px')
+const sidebarToggleTitle = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
+const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
 const bizTypeLabel = computed(() => {
   const map: Record<string, string> = {
     CASE_FUND: '案款',
@@ -244,6 +267,10 @@ const switchAccountSet = () => {
   localStorage.removeItem(tabsStorageKey)
   openedTabs.value = [...defaultTabs]
   router.push({ path: '/select-account-set', query: { switch: '1' } })
+}
+
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
 watch(

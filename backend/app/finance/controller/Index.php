@@ -8,6 +8,7 @@ use app\finance\model\Auxiliary;
 use app\finance\model\Book;
 use app\finance\model\CaseFund;
 use app\finance\model\CarryForward;
+use app\finance\model\ExcelExport;
 use app\finance\model\Log;
 use app\finance\model\Opening;
 use app\finance\model\Permission;
@@ -17,6 +18,7 @@ use app\finance\model\Subject;
 use app\finance\model\User;
 use app\finance\model\Voucher;
 use think\Controller;
+use think\Request;
 use think\Response;
 
 class Index extends Controller
@@ -51,9 +53,23 @@ class Index extends Controller
 
         $param = input('param.');
         $postdata = isset($param['data']) ? $param['data'] : [];
+        if (isset($param['filename'], $param['header'], $param['data']) && is_array($param['header']) && is_array($param['data'])) {
+            $postdata = [
+                'filename' => $param['filename'],
+                'header' => $param['header'],
+                'data' => $param['data'],
+            ];
+        }
         if (is_string($postdata)) {
             $decoded = json_decode($postdata, true);
             $postdata = is_array($decoded) ? $decoded : [];
+        }
+        if (empty($postdata) && empty($param['data'])) {
+            $rawBody = Request::instance()->getInput();
+            $decodedBody = json_decode($rawBody, true);
+            if (is_array($decodedBody)) {
+                $postdata = $decodedBody;
+            }
         }
 
         $data = [];
@@ -87,6 +103,10 @@ class Index extends Controller
                 break;
             case 'caseFund':
                 $model = new CaseFund();
+                $data = $model->index($actionArr[2], $postdata);
+                break;
+            case 'excel':
+                $model = new ExcelExport();
                 $data = $model->index($actionArr[2], $postdata);
                 break;
             case 'carryForward':

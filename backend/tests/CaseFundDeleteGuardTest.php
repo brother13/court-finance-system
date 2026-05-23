@@ -6,6 +6,8 @@ $rbac = file_get_contents(__DIR__ . '/../database/migration_rbac.sql');
 $checks = [
     [$source, "case 'paymentDelete'", 'CaseFund should route paymentDelete'],
     [$source, "case 'refundDelete'", 'CaseFund should route refundDelete'],
+    [$source, "case 'unknownPaymentDelete'", 'CaseFund should route unknownPaymentDelete'],
+    [$source, "case 'distributionDelete'", 'CaseFund should route distributionDelete'],
     [$source, "case 'bankStatementDelete'", 'CaseFund should route bankStatementDelete'],
     [$source, "requirePermission('case_fund:delete')", 'Case fund delete should require delete permission'],
     [$source, "\$where['voucher_status'] = 'UNGENERATED'", 'Payment/refund delete should only load ungenerated rows'],
@@ -15,6 +17,10 @@ $checks = [
     [$source, "'del_flag' => 1", 'Delete should be a soft delete'],
     [$source, "'CASE_FUND_PAYMENT',", 'Payment delete should write audit log'],
     [$source, "'CASE_FUND_REFUND',", 'Refund delete should write audit log'],
+    [$source, "'CASE_FUND_UNKNOWN_PAYMENT',", 'Unknown payment delete should write audit log'],
+    [$source, "'UNKNOWN_PAYMENT',", 'Unknown payment delete should check reconciliation rows'],
+    [$source, "'CASE_FUND_DISTRIBUTION',", 'Distribution delete should write audit log'],
+    [$source, "'DISTRIBUTION',", 'Distribution delete should check reconciliation rows'],
     [$source, "logAudit('CASE_FUND_BANK_STATEMENT', 'DELETE'", 'Bank statement delete should write audit log'],
     [$rbac, "'case_fund:delete'", 'RBAC should define case fund delete permission'],
 ];

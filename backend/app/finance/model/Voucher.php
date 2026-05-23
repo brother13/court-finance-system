@@ -1016,7 +1016,7 @@ class Voucher extends Common
                 'margin_left' => 22,
                 'margin_right' => 16,
                 'margin_top' => 7,
-                'margin_bottom' => 7,
+                'margin_bottom' => 12,
                 'autoScriptToLang' => true,
                 'autoLangToFont' => true,
                 'useAdobeCJK' => true,
@@ -1142,7 +1142,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
     protected function voucherPrintTableHeightMm($accountSet)
     {
         $paperSize = strtoupper((string)($accountSet['paper_size'] ?? 'A5'));
-        return $paperSize === 'A4' ? 160 : 104;
+        return $paperSize === 'A4' ? 150 : 104;
     }
 
     protected function buildVoucherPrintPdfHtml($page, $accountSet, $lineCount)
