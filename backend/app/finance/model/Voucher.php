@@ -1503,11 +1503,33 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             }
 
             $voucherTable = self::TABLE;
+            $periodRows = $this->lockVoucherNoRowsForPeriod($period);
+            $usedNumbers = $this->voucherNoSet($periodRows);
+            $activeTempNumbers = $this->allocateNegativeVoucherNumbers(count($items), $usedNumbers);
             foreach ($items as $index => $item) {
                 $this->getdb($voucherTable)->where($this->voucherWhere($item['voucher_id'], $period))->update([
-                    'voucher_no' => -1 * ($index + 1),
+                    'voucher_no' => $activeTempNumbers[$index],
                     'updated_by' => $this->userid,
                     'updated_time' => $this->now(),
+                ]);
+            }
+
+            $finalNumbers = array_column($items, 'new_voucher_no');
+            $deletedConflicts = $this->deletedVoucherRenumberConflicts($periodRows, $finalNumbers);
+            $usedAfterActiveTemp = $this->voucherNoSetAfterActiveTemp($periodRows, $items, $activeTempNumbers, $deletedConflicts);
+            $deletedTempNumbers = $this->allocateNegativeVoucherNumbers(count($deletedConflicts), $usedAfterActiveTemp);
+            foreach ($deletedConflicts as $index => $row) {
+                $this->getdb($voucherTable)->where([
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $this->fiscalYear($period),
+                    'period' => $period,
+                    'voucher_id' => $row['voucher_id'],
+                    'del_flag' => 1,
+                ])->update([
+                    'voucher_no' => $deletedTempNumbers[$index],
+                    'updated_by' => $this->userid,
+                    'updated_time' => $this->now(),
+                    'remark' => trim((string)($row['remark'] ?? '') . ' 凭证号整理避让原号' . $row['voucher_no']),
                 ]);
             }
 
@@ -1711,6 +1733,84 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             return 2;
         }
         return 9;
+    }
+
+    protected function lockVoucherNoRowsForPeriod($period)
+    {
+        return $this->getdb(self::TABLE)->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+        ])->field('voucher_id,voucher_no,del_flag,remark')->lock(true)->select();
+    }
+
+    protected function voucherNoSet($rows)
+    {
+        $set = [];
+        foreach ($rows as $row) {
+            $set[(int)($row['voucher_no'] ?? 0)] = true;
+        }
+        return array_keys($set);
+    }
+
+    protected function allocateNegativeVoucherNumbers($count, $usedNumbers)
+    {
+        $used = [];
+        foreach ($usedNumbers as $number) {
+            $used[(int)$number] = true;
+        }
+        $numbers = [];
+        $next = -1;
+        while (count($numbers) < $count) {
+            if (!isset($used[$next])) {
+                $numbers[] = $next;
+                $used[$next] = true;
+            }
+            $next--;
+        }
+        return $numbers;
+    }
+
+    protected function deletedVoucherRenumberConflicts($rows, $finalNumbers)
+    {
+        $finalSet = [];
+        foreach ($finalNumbers as $number) {
+            $finalSet[(int)$number] = true;
+        }
+        $conflicts = [];
+        foreach ($rows as $row) {
+            if ((int)($row['del_flag'] ?? 0) !== 1) {
+                continue;
+            }
+            if (isset($finalSet[(int)($row['voucher_no'] ?? 0)])) {
+                $conflicts[] = $row;
+            }
+        }
+        return $conflicts;
+    }
+
+    protected function voucherNoSetAfterActiveTemp($periodRows, $items, $activeTempNumbers, $deletedConflicts)
+    {
+        $activeIds = [];
+        foreach ($items as $item) {
+            $activeIds[$item['voucher_id']] = true;
+        }
+        $conflictDeletedIds = [];
+        foreach ($deletedConflicts as $row) {
+            $conflictDeletedIds[$row['voucher_id']] = true;
+        }
+        $numbers = [];
+        foreach ($periodRows as $row) {
+            $voucherId = $row['voucher_id'] ?? '';
+            if (isset($activeIds[$voucherId]) || isset($conflictDeletedIds[$voucherId])) {
+                continue;
+            }
+            $numbers[] = (int)($row['voucher_no'] ?? 0);
+        }
+        foreach ($activeTempNumbers as $number) {
+            $numbers[] = (int)$number;
+        }
+        return $numbers;
     }
 
     public function peekVoucherNo($data = [])

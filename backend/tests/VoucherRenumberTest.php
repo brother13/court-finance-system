@@ -63,6 +63,16 @@ class VoucherRenumberProbe extends Voucher
     {
         return $this->voucherRenumberBusinessSort($voucher);
     }
+
+    public function negativeNumbers($count, $usedNumbers)
+    {
+        return $this->allocateNegativeVoucherNumbers($count, $usedNumbers);
+    }
+
+    public function deletedConflicts($rows, $finalNumbers)
+    {
+        return $this->deletedVoucherRenumberConflicts($rows, $finalNumbers);
+    }
 }
 
 $voucherSource = file_get_contents(__DIR__ . '/../app/finance/model/Voucher.php');
@@ -148,6 +158,15 @@ assertSameValue(true, $byId['refund-2026-05-01']['changed'], 'Refund voucher sho
 assertSameValue(1, $probe->businessSort(['summary' => '收 案号1 张三', 'source_type' => 'BUSINESS']), 'Payment summaries should sort first');
 assertSameValue(2, $probe->businessSort(['summary' => '付 案号1 张三', 'source_type' => 'BUSINESS']), 'Refund summaries should sort second');
 assertSameValue(9, $probe->businessSort(['summary' => '手工凭证', 'source_type' => 'MANUAL']), 'Unknown manual vouchers should sort last');
+assertSameValue([-2, -4, -5], $probe->negativeNumbers(3, [-1, -3, 1, 2]), 'Temporary negative voucher numbers should avoid numbers already held by soft-deleted vouchers');
+
+$deletedConflicts = $probe->deletedConflicts([
+    ['voucher_id' => 'deleted-2', 'voucher_no' => 2, 'del_flag' => 1],
+    ['voucher_id' => 'deleted-8', 'voucher_no' => 8, 'del_flag' => 1],
+    ['voucher_id' => 'active-3', 'voucher_no' => 3, 'del_flag' => 0],
+], [1, 2, 3]);
+assertSameValue(1, count($deletedConflicts), 'Only soft-deleted vouchers occupying final numbers should be evacuated');
+assertSameValue('deleted-2', $deletedConflicts[0]['voucher_id'], 'Soft-deleted voucher number 2 should be detected as a final-number conflict');
 
 assertSameValue('', $probe->blockReason(['status' => 'SUBMITTED', 'printed_flag' => '0', 'void_flag' => '0'], 'OPEN'), 'Submitted unprinted vouchers in open period should be renumberable');
 assertTrue($probe->blockReason(['status' => 'POSTED', 'printed_flag' => '0', 'void_flag' => '0'], 'OPEN') !== '', 'Posted vouchers should block renumber');
