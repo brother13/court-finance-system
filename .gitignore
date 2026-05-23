@@ -44,6 +44,12 @@ backend/thinkphp/composer.lock
 
 # Local Composer launcher
 backend/composer.phar
+
+# Local spreadsheet imports/exports
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
 不明款查询 (4).xls
 .gitignore
 fpqd.json
