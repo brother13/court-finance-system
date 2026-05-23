@@ -1127,8 +1127,8 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 .meta td { border: 0; padding: 0; }
 .meta-center { text-align: center; }
 .meta-right { text-align: right; }
-.voucher-table { width: 100%; border-collapse: collapse; }
-.voucher-table th, .voucher-table td { border: 1px solid #111; padding: 4px 5px; vertical-align: top; }
+.voucher-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.voucher-table th, .voucher-table td { border: 1px solid #111; padding: 4px 5px; vertical-align: top; overflow-wrap: break-word; }
 .voucher-table th { text-align: center; font-weight: bold; background: #f2f2f2; }
 .summary { width: 48%; }
 .subject { width: 22%; }
@@ -1137,6 +1137,12 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 .footer { width: 100%; margin-top: 10px; font-size: 9pt; }
 .footer td { border: 0; padding: 0; }
 </style>';
+    }
+
+    protected function voucherPrintTableHeightMm($accountSet)
+    {
+        $paperSize = strtoupper((string)($accountSet['paper_size'] ?? 'A5'));
+        return $paperSize === 'A4' ? 160 : 104;
     }
 
     protected function buildVoucherPrintPdfHtml($page, $accountSet, $lineCount)
@@ -1161,17 +1167,24 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             $rows[] = [];
         }
 
+        $tableHeightMm = $this->voucherPrintTableHeightMm($accountSet);
+        $headerHeightMm = 8;
+        $totalRowHeightMm = 8;
+        $detailRowHeightMm = round(max(4, ($tableHeightMm - $headerHeightMm - $totalRowHeightMm) / max(1, (int)$lineCount)), 2);
+        $detailCellStyle = ' style="height: ' . $detailRowHeightMm . 'mm"';
+        $totalCellStyle = ' style="height: ' . $totalRowHeightMm . 'mm"';
+
         $body = '';
         foreach ($rows as $detail) {
             $subjectText = trim((string)($detail['subject_code'] ?? '') . ' ' . (string)($detail['subject_name'] ?? ''));
             if (!empty($detail['aux_desc'])) {
                 $subjectText .= ' ' . $this->formatVoucherPrintAuxDesc($detail['aux_desc']);
             }
-            $body .= '<tr>';
-            $body .= '<td class="summary">' . $escape($detail['summary'] ?? '') . '</td>';
-            $body .= '<td class="subject">' . $escape(trim($subjectText)) . '</td>';
-            $body .= '<td class="amount">' . $escape($money($detail['debit_amount'] ?? 0)) . '</td>';
-            $body .= '<td class="amount">' . $escape($money($detail['credit_amount'] ?? 0)) . '</td>';
+            $body .= '<tr class="detail-row">';
+            $body .= '<td class="summary"' . $detailCellStyle . '>' . $escape($detail['summary'] ?? '') . '</td>';
+            $body .= '<td class="subject"' . $detailCellStyle . '>' . $escape(trim($subjectText)) . '</td>';
+            $body .= '<td class="amount"' . $detailCellStyle . '>' . $escape($money($detail['debit_amount'] ?? 0)) . '</td>';
+            $body .= '<td class="amount"' . $detailCellStyle . '>' . $escape($money($detail['credit_amount'] ?? 0)) . '</td>';
             $body .= '</tr>';
         }
 
@@ -1194,21 +1207,21 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
       <td class="meta-right"></td>
     </tr>
   </table>
-  <table class="voucher-table" border="1" cellpadding="4" cellspacing="0">
+  <table class="voucher-table" border="1" cellpadding="4" cellspacing="0" style="height: ' . $tableHeightMm . 'mm; table-layout: fixed;">
     <thead>
       <tr>
-        <th class="summary">摘要</th>
-        <th class="subject">科目</th>
-        <th class="amount">借方金额</th>
-        <th class="amount">贷方金额</th>
+        <th class="summary" style="height: ' . $headerHeightMm . 'mm">摘要</th>
+        <th class="subject" style="height: ' . $headerHeightMm . 'mm">科目</th>
+        <th class="amount" style="height: ' . $headerHeightMm . 'mm">借方金额</th>
+        <th class="amount" style="height: ' . $headerHeightMm . 'mm">贷方金额</th>
       </tr>
     </thead>
     <tbody>' . $body . '
       <tr class="total-row">
-        <td class="summary">合计：</td>
-        <td class="subject"></td>
-        <td class="amount">' . $escape(number_format($debitCents / 100, 2, '.', ',')) . '</td>
-        <td class="amount">' . $escape(number_format($creditCents / 100, 2, '.', ',')) . '</td>
+        <td class="summary"' . $totalCellStyle . '>合计：</td>
+        <td class="subject"' . $totalCellStyle . '></td>
+        <td class="amount"' . $totalCellStyle . '>' . $escape(number_format($debitCents / 100, 2, '.', ',')) . '</td>
+        <td class="amount"' . $totalCellStyle . '>' . $escape(number_format($creditCents / 100, 2, '.', ',')) . '</td>
       </tr>
     </tbody>
   </table>

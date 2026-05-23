@@ -1,0 +1,6 @@
+package=court-finance-system-prod-20260521-085916
+created_at=2026-05-21 08:59:22 +0800
+git_commit=49a5b6d
+php=7.4.33
+includes_backend_vendor=yes
+includes_frontend_dist=yes

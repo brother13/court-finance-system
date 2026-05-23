@@ -1,0 +1,8 @@
+{
+    "config": {
+        "autoloader-suffix": "CourtFinancePdf"
+    },
+    "require": {
+        "mpdf/mpdf": "^8.0.4"
+    }
+}

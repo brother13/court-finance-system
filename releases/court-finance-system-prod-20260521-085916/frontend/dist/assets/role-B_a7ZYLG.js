@@ -1,0 +1,1 @@
+import{a0 as r}from"./index-B4mJvfR0.js";const s={list(e={}){return r("/role/list",e)},info(e){return r("/role/info",{role_id:e})},add(e){return r("/role/add",e)},edit(e){return r("/role/edit",e)},delete(e){return r("/role/delete",{role_id:e})},assignPermissions(e,i){return r("/role/assignPermissions",{role_id:e,permission_codes:i})}};export{s as r};

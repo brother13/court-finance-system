@@ -144,13 +144,13 @@
         <el-table-column prop="source_type" label="来源" width="110" align="center">
           <template #default="{ row }">{{ sourceTypeText(row.source_type) }}</template>
         </el-table-column>
-        <el-table-column prop="prepared_by_name" label="制单人" width="120" align="center">
+        <el-table-column prop="prepared_by_name" label="制单人" width="76" align="center" show-overflow-tooltip>
           <template #default="{ row }">{{ row.prepared_by_name || row.prepared_by || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="audit_by_name" label="审核人" width="120" align="center">
+        <el-table-column prop="audit_by_name" label="审核人" width="76" align="center" show-overflow-tooltip>
           <template #default="{ row }">{{ row.audit_by_name || row.audit_by || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="posted_by_name" label="记账人" width="120" align="center">
+        <el-table-column prop="posted_by_name" label="记账人" width="76" align="center" show-overflow-tooltip>
           <template #default="{ row }">{{ row.posted_by_name || row.posted_by || '-' }}</template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="110" align="center">
