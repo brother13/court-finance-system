@@ -33,6 +33,9 @@
             <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
               批量导入
             </el-dropdown-item>
+            <el-dropdown-item v-if="context.hasPermission('voucher:renumber')" command="renumber">
+              凭证号整理
+            </el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -250,6 +253,71 @@
     </template>
   </el-dialog>
 
+  <el-dialog
+    v-model="renumberVisible"
+    title="凭证号整理"
+    width="820px"
+    class="finance-dialog"
+    :close-on-click-modal="false"
+    @close="closeRenumberDialog"
+  >
+    <div class="renumber-dialog-content">
+      <el-alert
+        title="整理将按制单日期重排本期间凭证号，同一天缴款凭证在前、退款凭证在后。已记账、已作废、已打印凭证不参与第一版整理。"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
+      <div class="renumber-form-row">
+        <label class="query-field">
+          <span>整理期间</span>
+          <el-select v-model="renumberForm.period" placeholder="期间" style="width: 130px">
+            <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
+          </el-select>
+        </label>
+        <label class="query-field">
+          <span>起始号</span>
+          <el-input-number v-model="renumberForm.startNo" :min="1" :step="1" controls-position="right" style="width: 130px" />
+        </label>
+        <el-button type="primary" :loading="renumberChecking" @click="checkRenumber">检查</el-button>
+      </div>
+      <div v-if="renumberPreviewRows.length > 0" class="renumber-summary">
+        <span>凭证 {{ renumberPreview?.voucher_count || 0 }} 张</span>
+        <span>变更 {{ renumberPreview?.change_count || 0 }} 张</span>
+        <span>{{ renumberPreview?.has_gap ? '存在断号' : '无断号' }}</span>
+      </div>
+      <el-table v-if="renumberPreviewRows.length > 0" :data="renumberPreviewRows" max-height="340" size="small" border>
+        <el-table-column label="原凭证号" width="100" align="center">
+          <template #default="{ row }">{{ row.voucher_word || '记' }}-{{ String(row.old_voucher_no).padStart(4, '0') }}</template>
+        </el-table-column>
+        <el-table-column label="新凭证号" width="100" align="center">
+          <template #default="{ row }">
+            <span :class="{ 'amount-debit': row.changed }">{{ row.voucher_word || '记' }}-{{ String(row.new_voucher_no).padStart(4, '0') }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="voucher_date" label="制单日期" width="110" align="center" />
+        <el-table-column prop="summary" label="摘要" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="source_type" label="来源" width="90" align="center">
+          <template #default="{ row }">{{ sourceTypeText(row.source_type) }}</template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="90" align="center">
+          <template #default="{ row }">{{ statusText(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="是否变更" width="86" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.changed" type="warning" size="small">变更</el-tag>
+            <span v-else class="muted">不变</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else-if="renumberChecked" description="本期间暂无需要展示的凭证整理结果" />
+    </div>
+    <template #footer>
+      <el-button @click="closeRenumberDialog">取消</el-button>
+      <el-button type="primary" :loading="renumberSubmitting" :disabled="!renumberChecked" @click="confirmRenumber">确认整理</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 批量导入凭证对话框 -->
   <el-dialog
     v-model="importVisible"
@@ -367,6 +435,16 @@ const importPreview = ref<{ voucherCount: number; detailCount: number; periodRan
 const importErrorList = ref<string[]>([])
 const importInputRef = ref<HTMLInputElement | null>(null)
 const importVouchers = ref<any[]>([])
+const renumberVisible = ref(false)
+const renumberChecking = ref(false)
+const renumberSubmitting = ref(false)
+const renumberChecked = ref(false)
+const renumberPreview = ref<any | null>(null)
+const renumberPreviewRows = ref<any[]>([])
+const renumberForm = reactive({
+  period: context.period,
+  startNo: 1
+})
 
 const defaultYear = context.period.slice(0, 4)
 const topFilter = reactive<TopFilter>({
@@ -415,7 +493,8 @@ const showFundAuxFilters = computed(() => ['CASE_FUND', 'LITIGATION_FEE'].includ
 const hasBatchActions = computed(() =>
   context.hasPermission('voucher:post') ||
   context.hasPermission('voucher:delete') ||
-  context.hasPermission('voucher:import')
+  context.hasPermission('voucher:import') ||
+  context.hasPermission('voucher:renumber')
 )
 
 const cleanFilter = (filter: Record<string, any>) =>
@@ -624,6 +703,75 @@ const handleBatchCommand = (command: string | number | object) => {
     case 'import':
       openImportDialog()
       break
+    case 'renumber':
+      openRenumberDialog()
+      break
+  }
+}
+
+const openRenumberDialog = () => {
+  renumberForm.period = topFilter.period_start === topFilter.period_end ? topFilter.period_start : context.period
+  renumberForm.startNo = 1
+  renumberPreview.value = null
+  renumberPreviewRows.value = []
+  renumberChecked.value = false
+  renumberVisible.value = true
+}
+
+const closeRenumberDialog = () => {
+  renumberVisible.value = false
+  renumberPreview.value = null
+  renumberPreviewRows.value = []
+  renumberChecked.value = false
+}
+
+const checkRenumber = async () => {
+  if (!renumberForm.period) {
+    ElMessage.warning('请选择整理期间')
+    return
+  }
+  renumberChecking.value = true
+  try {
+    const result: any = await voucherApi.renumberPreview({
+      period: renumberForm.period,
+      start_no: renumberForm.startNo
+    })
+    renumberPreview.value = result
+    renumberPreviewRows.value = result.items || []
+    renumberChecked.value = true
+    ElMessage.success('凭证号整理检查完成')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '凭证号整理检查失败')
+  } finally {
+    renumberChecking.value = false
+  }
+}
+
+const confirmRenumber = async () => {
+  if (!renumberChecked.value) {
+    ElMessage.warning('请先检查凭证号整理结果')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认按制单日期整理 ${renumberForm.period} 的凭证号？`, '确认凭证号整理', {
+      type: 'warning',
+      confirmButtonText: '确认整理',
+      cancelButtonText: '取消'
+    })
+    renumberSubmitting.value = true
+    const result: any = await voucherApi.renumber({
+      period: renumberForm.period,
+      start_no: renumberForm.startNo
+    })
+    ElMessage.success(`凭证号整理完成，变更 ${result.renumbered_count || 0} 张`)
+    closeRenumberDialog()
+    await load()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error(error?.message || '凭证号整理失败')
+    }
+  } finally {
+    renumberSubmitting.value = false
   }
 }
 
@@ -940,6 +1088,26 @@ onMounted(load)
 <style scoped>
 .import-file-input {
   display: none;
+}
+
+.renumber-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.renumber-form-row {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.renumber-summary {
+  display: flex;
+  gap: 16px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .status-tags {

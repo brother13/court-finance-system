@@ -706,6 +706,28 @@ create table if not exists fin_case_fund_subject_config (
     key idx_case_fund_subject_config_subject (account_set_id, debit_subject_code, credit_subject_code)
 );
 
+create table if not exists fin_voucher_no_adjust_log (
+    adjust_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    voucher_id varchar(36) not null,
+    voucher_date date not null,
+    voucher_word varchar(10) not null,
+    old_voucher_no int not null,
+    new_voucher_no int not null,
+    reason varchar(200),
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    key idx_voucher_no_adjust_period (account_set_id, fiscal_year, period, created_time),
+    key idx_voucher_no_adjust_voucher (account_set_id, voucher_id)
+);
+
 insert into fin_subject (
     subject_id, account_set_id, subject_code, subject_name, parent_code,
     direction, subject_type, level_no, leaf_flag, voucher_entry_flag, status,

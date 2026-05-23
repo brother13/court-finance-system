@@ -65,5 +65,18 @@ export const voucherApi = {
   },
   import(payload: { vouchers: any[] }) {
     return apiAction('/voucher/import', payload, {}, { timeout: 120000 }) as Promise<{ success: number; failed: number; errors: string[] }>
+  },
+  renumberPreview(payload: { period: string; start_no?: number }) {
+    return apiAction('/voucher/renumberPreview', payload) as Promise<{
+      period: string
+      start_no: number
+      voucher_count: number
+      change_count: number
+      has_gap: boolean
+      items: any[]
+    }>
+  },
+  renumber(payload: { period: string; start_no?: number }) {
+    return apiAction('/voucher/renumber', payload) as Promise<{ period: string; renumbered_count: number; items: any[] }>
   }
 }

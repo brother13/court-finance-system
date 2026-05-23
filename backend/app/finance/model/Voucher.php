@@ -56,6 +56,10 @@ class Voucher extends Common
                 return $this->printData($data);
             case 'import':
                 return $this->importVouchers($data);
+            case 'renumberPreview':
+                return $this->renumberPreview($data);
+            case 'renumber':
+                return $this->renumber($data);
             default:
                 return $this->error('操作【/' . self::ACTION . '/' . $action . '】并不存在！');
         }
@@ -1456,6 +1460,259 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         return $this->ok();
     }
 
+    public function renumberPreview($data = [])
+    {
+        $auth = $this->requirePermission('voucher:renumber');
+        if ($auth) {
+            return $auth;
+        }
+        $period = trim((string)($data['period'] ?? ''));
+        $startNo = $this->normalizeVoucherRenumberStartNo($data['start_no'] ?? 1);
+        return $this->buildVoucherRenumberPlan($period, $startNo, false);
+    }
+
+    public function renumber($data = [])
+    {
+        $auth = $this->requirePermission('voucher:renumber');
+        if ($auth) {
+            return $auth;
+        }
+        $period = trim((string)($data['period'] ?? ''));
+        $startNo = $this->normalizeVoucherRenumberStartNo($data['start_no'] ?? 1);
+        if ($period === '') {
+            return $this->error('会计期间不能为空');
+        }
+
+        Db::startTrans();
+        try {
+            $planResult = $this->buildVoucherRenumberPlan($period, $startNo, true);
+            if ($planResult['code'] !== self::CODE_SUCCESS) {
+                Db::rollback();
+                return $planResult;
+            }
+
+            $plan = $planResult['data'];
+            $items = $plan['items'];
+            if (empty($items) || (int)($plan['change_count'] ?? 0) === 0) {
+                Db::commit();
+                return $this->ok([
+                    'period' => $period,
+                    'renumbered_count' => 0,
+                    'items' => [],
+                ], '没有需要整理的凭证', 0);
+            }
+
+            $voucherTable = self::TABLE;
+            foreach ($items as $index => $item) {
+                $this->getdb($voucherTable)->where($this->voucherWhere($item['voucher_id'], $period))->update([
+                    'voucher_no' => -1 * ($index + 1),
+                    'updated_by' => $this->userid,
+                    'updated_time' => $this->now(),
+                ]);
+            }
+
+            $changedItems = [];
+            foreach ($items as $item) {
+                $this->getdb($voucherTable)->where($this->voucherWhere($item['voucher_id'], $period))->update([
+                    'voucher_no' => $item['new_voucher_no'],
+                    'updated_by' => $this->userid,
+                    'updated_time' => $this->now(),
+                ]);
+                if (!empty($item['changed'])) {
+                    $changedItems[] = $item;
+                    $logRow = [
+                        'adjust_id' => uuid(),
+                        'account_set_id' => $this->accountSetId,
+                        'fiscal_year' => $this->fiscalYear($period),
+                        'period' => $period,
+                        'voucher_id' => $item['voucher_id'],
+                        'voucher_date' => $item['voucher_date'],
+                        'voucher_word' => $item['voucher_word'],
+                        'old_voucher_no' => $item['old_voucher_no'],
+                        'new_voucher_no' => $item['new_voucher_no'],
+                        'reason' => '按制单日期整理凭证号',
+                        'remark' => $data['remark'] ?? '',
+                    ];
+                    $this->fillCreate($logRow);
+                    $this->getdb('fin_voucher_no_adjust_log')->insert($logRow);
+                }
+            }
+
+            $maxNo = empty($items) ? 0 : max(array_column($items, 'new_voucher_no'));
+            $this->updateVoucherNoSequenceExact($period, $maxNo);
+            $this->logAudit('VOUCHER_RENUMBER', $period, 'RENUMBER', null, [
+                'period' => $period,
+                'start_no' => $startNo,
+                'change_count' => count($changedItems),
+                'items' => $changedItems,
+            ]);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('凭证号整理失败：' . $e->getMessage());
+        }
+
+        return $this->ok([
+            'period' => $period,
+            'renumbered_count' => count($changedItems),
+            'items' => $changedItems,
+        ], '凭证号整理成功', count($changedItems));
+    }
+
+    protected function normalizeVoucherRenumberStartNo($startNo)
+    {
+        $startNo = (int)$startNo;
+        return $startNo > 0 ? $startNo : 1;
+    }
+
+    protected function buildVoucherRenumberPlan($period, $startNo = 1, $lock = false)
+    {
+        if ($period === '') {
+            return $this->error('会计期间不能为空');
+        }
+        if (!preg_match('/^\d{4}-\d{2}$/', $period)) {
+            return $this->error('会计期间格式不正确');
+        }
+
+        $periodStatus = $this->fiscalPeriodStatus($period);
+        $query = $this->getdb(self::TABLE)->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'del_flag' => 0,
+        ])->field('voucher_id,period,voucher_date,voucher_word,voucher_no,summary,source_type,status,printed_flag,void_flag,created_time,del_flag');
+        if ($lock) {
+            $query->lock(true);
+        }
+        $rows = $query->select();
+
+        foreach ($rows as $row) {
+            $reason = $this->voucherRenumberBlockReason($row, $periodStatus);
+            if ($reason !== '') {
+                return $this->error(($row['voucher_word'] ?? '记') . '-' . ($row['voucher_no'] ?? '') . '：' . $reason);
+            }
+        }
+
+        $items = $this->buildVoucherRenumberItems($rows, $startNo);
+        $changeCount = 0;
+        foreach ($items as $item) {
+            if (!empty($item['changed'])) {
+                $changeCount++;
+            }
+        }
+
+        return $this->ok([
+            'period' => $period,
+            'start_no' => $startNo,
+            'voucher_count' => count($items),
+            'change_count' => $changeCount,
+            'has_gap' => $this->voucherRenumberHasGap($rows, $startNo),
+            'items' => $items,
+        ], 'OK', count($items));
+    }
+
+    protected function buildVoucherRenumberItems($rows, $startNo = 1)
+    {
+        $activeRows = [];
+        foreach ($rows as $row) {
+            if ((int)($row['del_flag'] ?? 0) === 1) {
+                continue;
+            }
+            $row['business_sort'] = $this->voucherRenumberBusinessSort($row);
+            $activeRows[] = $row;
+        }
+
+        usort($activeRows, function ($a, $b) {
+            $dateCompare = strcmp((string)($a['voucher_date'] ?? ''), (string)($b['voucher_date'] ?? ''));
+            if ($dateCompare !== 0) {
+                return $dateCompare;
+            }
+            $businessCompare = (int)$a['business_sort'] <=> (int)$b['business_sort'];
+            if ($businessCompare !== 0) {
+                return $businessCompare;
+            }
+            $noCompare = (int)($a['voucher_no'] ?? 0) <=> (int)($b['voucher_no'] ?? 0);
+            if ($noCompare !== 0) {
+                return $noCompare;
+            }
+            $timeCompare = strcmp((string)($a['created_time'] ?? ''), (string)($b['created_time'] ?? ''));
+            if ($timeCompare !== 0) {
+                return $timeCompare;
+            }
+            return strcmp((string)($a['voucher_id'] ?? ''), (string)($b['voucher_id'] ?? ''));
+        });
+
+        $items = [];
+        $nextNo = $startNo;
+        foreach ($activeRows as $row) {
+            $oldNo = (int)($row['voucher_no'] ?? 0);
+            $items[] = [
+                'voucher_id' => $row['voucher_id'] ?? '',
+                'period' => $row['period'] ?? '',
+                'voucher_date' => $row['voucher_date'] ?? '',
+                'voucher_word' => $row['voucher_word'] ?? '记',
+                'old_voucher_no' => $oldNo,
+                'new_voucher_no' => $nextNo,
+                'summary' => $row['summary'] ?? '',
+                'source_type' => $row['source_type'] ?? '',
+                'status' => $row['status'] ?? '',
+                'printed_flag' => $row['printed_flag'] ?? '0',
+                'business_sort' => (int)($row['business_sort'] ?? 9),
+                'changed' => $oldNo !== $nextNo,
+            ];
+            $nextNo++;
+        }
+        return $items;
+    }
+
+    protected function voucherRenumberHasGap($rows, $startNo = 1)
+    {
+        $numbers = [];
+        foreach ($rows as $row) {
+            if ((int)($row['del_flag'] ?? 0) === 1) {
+                continue;
+            }
+            $numbers[] = (int)($row['voucher_no'] ?? 0);
+        }
+        sort($numbers);
+        foreach ($numbers as $index => $number) {
+            if ($number !== $startNo + $index) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function voucherRenumberBlockReason($voucher, $periodStatus)
+    {
+        if ($periodStatus !== 'OPEN') {
+            return '会计期间已结账，不允许整理凭证号';
+        }
+        if (($voucher['void_flag'] ?? '0') === '1' || ($voucher['status'] ?? '') === 'VOIDED') {
+            return '已作废凭证不允许整理凭证号';
+        }
+        if (($voucher['status'] ?? '') === 'POSTED') {
+            return '已记账凭证不允许整理凭证号';
+        }
+        if (($voucher['printed_flag'] ?? '0') === '1' || ($voucher['status'] ?? '') === 'PRINTED') {
+            return '已打印凭证不参与第一版凭证号整理';
+        }
+        return '';
+    }
+
+    protected function voucherRenumberBusinessSort($voucher)
+    {
+        $summary = trim((string)($voucher['summary'] ?? ''));
+        $sourceType = strtoupper(trim((string)($voucher['source_type'] ?? '')));
+        if (preg_match('/^\s*收/u', $summary) || strpos($summary, '缴款') !== false || strpos($summary, '缴费') !== false || strpos($summary, '收款') !== false || strpos($sourceType, 'PAYMENT') !== false || strpos($sourceType, 'RECEIPT') !== false || strpos($sourceType, 'COLLECTION') !== false) {
+            return 1;
+        }
+        if (preg_match('/^\s*付/u', $summary) || strpos($summary, '退款') !== false || strpos($summary, '退付') !== false || strpos($summary, '出账') !== false || strpos($sourceType, 'REFUND') !== false || strpos($sourceType, 'PAYOUT') !== false) {
+            return 2;
+        }
+        return 9;
+    }
+
     public function peekVoucherNo($data = [])
     {
         $period = $data['period'] ?? input('param.period', '');
@@ -1726,5 +1983,32 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             $this->fillUpdate($update);
             $this->getdb(self::TABLE_NO)->where(['sequence_id' => $row['sequence_id']])->update($update);
         }
+    }
+
+    protected function updateVoucherNoSequenceExact($period, $maxNo)
+    {
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'del_flag' => 0,
+        ];
+        $row = $this->getdb(self::TABLE_NO)->where($where)->lock(true)->find();
+        $maxNo = (int)$maxNo;
+        if (!$row) {
+            $data = [
+                'sequence_id' => uuid(),
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'period' => $period,
+                'current_no' => $maxNo,
+            ];
+            $this->fillCreate($data);
+            $this->getdb(self::TABLE_NO)->insert($data);
+            return;
+        }
+        $update = ['current_no' => $maxNo];
+        $this->fillUpdate($update);
+        $this->getdb(self::TABLE_NO)->where(['sequence_id' => $row['sequence_id']])->update($update);
     }
 }

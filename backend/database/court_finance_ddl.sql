@@ -292,6 +292,29 @@ create table fin_voucher_no_sequence (
 
 create unique index uk_voucher_no_sequence on fin_voucher_no_sequence (account_set_id, fiscal_year, period);
 
+create table fin_voucher_no_adjust_log (
+    adjust_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    voucher_id varchar(36) not null,
+    voucher_date date not null,
+    voucher_word varchar(10) not null,
+    old_voucher_no int not null,
+    new_voucher_no int not null,
+    reason varchar(200),
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create index idx_voucher_no_adjust_period on fin_voucher_no_adjust_log (account_set_id, fiscal_year, period, created_time);
+create index idx_voucher_no_adjust_voucher on fin_voucher_no_adjust_log (account_set_id, voucher_id);
+
 create table fin_voucher (
     voucher_id varchar(36) primary key,
     account_set_id varchar(36) not null,
