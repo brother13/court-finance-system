@@ -1,0 +1,298 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 6,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "docs/superpowers/plans/2026-05-04-subject-code-rule.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 104,
+      "nonEmptyLines": 58,
+      "sections": [
+        {
+          "heading": "Subject Code Rule Implementation Plan",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "Task 1: Backend Rule Helpers",
+          "level": 3,
+          "line": 13
+        },
+        {
+          "heading": "Task 2: Backend Endpoints And Persistence",
+          "level": 3,
+          "line": 39
+        },
+        {
+          "heading": "Task 3: Frontend Subject Page",
+          "level": 3,
+          "line": 66
+        },
+        {
+          "heading": "Task 4: Verification",
+          "level": 3,
+          "line": 87
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 5
+      }
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-04-voucher-edit-delete.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 89,
+      "nonEmptyLines": 52,
+      "sections": [
+        {
+          "heading": "Voucher Edit And Delete Implementation Plan",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "Task 1: Backend Delete Rules",
+          "level": 3,
+          "line": 13
+        },
+        {
+          "heading": "Task 2: Frontend Edit And Delete Controls",
+          "level": 3,
+          "line": 45
+        },
+        {
+          "heading": "Task 3: Verification",
+          "level": 3,
+          "line": 69
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 4
+      }
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-04-voucher-header-amounts.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 71,
+      "nonEmptyLines": 39,
+      "sections": [
+        {
+          "heading": "Voucher Header Amounts Implementation Plan",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "Task 1: Backend Amount Summary",
+          "level": 3,
+          "line": 13
+        },
+        {
+          "heading": "Task 2: Database Fields",
+          "level": 3,
+          "line": 39
+        },
+        {
+          "heading": "Task 3: Voucher List Display",
+          "level": 3,
+          "line": 53
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 4
+      }
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-22-case-fund-unknown-payment.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 1481,
+      "nonEmptyLines": 1244,
+      "sections": [
+        {
+          "heading": "案款不明款功能 Implementation Plan",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "File Structure",
+          "level": 2,
+          "line": 13
+        },
+        {
+          "heading": "Task 1: Backend Import Parsing Test",
+          "level": 3,
+          "line": 50
+        },
+        {
+          "heading": "Task 2: Database Schema and RBAC",
+          "level": 3,
+          "line": 325
+        },
+        {
+          "heading": "Task 3: Backend List and Import APIs",
+          "level": 3,
+          "line": 484
+        },
+        {
+          "heading": "Task 4: Backend Subject Config and Voucher Generation",
+          "level": 3,
+          "line": 648
+        },
+        {
+          "heading": "Task 5: Backend Delete API",
+          "level": 3,
+          "line": 944
+        },
+        {
+          "heading": "Task 6: Frontend API and Types",
+          "level": 3,
+          "line": 1044
+        },
+        {
+          "heading": "Task 7: Frontend Unknown Payment View",
+          "level": 3,
+          "line": 1203
+        },
+        {
+          "heading": "Task 8: Frontend Route, Menu, Dashboard, Subject Config Tests",
+          "level": 3,
+          "line": 1327
+        },
+        {
+          "heading": "Task 9: Full Verification",
+          "level": 3,
+          "line": 1411
+        },
+        {
+          "heading": "Self-Review Notes",
+          "level": 2,
+          "line": 1476
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 12
+      }
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-23-case-fund-distribution.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 293,
+      "nonEmptyLines": 210,
+      "sections": [
+        {
+          "heading": "案款分配 Implementation Plan",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "File Map",
+          "level": 2,
+          "line": 13
+        },
+        {
+          "heading": "Task 1: Backend DDL and Import Parser",
+          "level": 2,
+          "line": 50
+        },
+        {
+          "heading": "Task 2: Backend List, Import, Delete, and Subject Config",
+          "level": 2,
+          "line": 96
+        },
+        {
+          "heading": "Task 3: Backend Voucher Generation",
+          "level": 2,
+          "line": 134
+        },
+        {
+          "heading": "Task 4: Frontend API, Types, Menu, and Route",
+          "level": 2,
+          "line": 185
+        },
+        {
+          "heading": "Task 5: Frontend Distribution Page",
+          "level": 2,
+          "line": 222
+        },
+        {
+          "heading": "Task 6: Final Verification",
+          "level": 2,
+          "line": 258
+        },
+        {
+          "heading": "Self-Review",
+          "level": 2,
+          "line": 289
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 9
+      }
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-23-voucher-renumber.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 142,
+      "nonEmptyLines": 82,
+      "sections": [
+        {
+          "heading": "Voucher Renumber Implementation Plan",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "Task 1: Backend Renumber Rules",
+          "level": 3,
+          "line": 13
+        },
+        {
+          "heading": "Task 2: Database And Permission Scripts",
+          "level": 3,
+          "line": 54
+        },
+        {
+          "heading": "Task 3: Frontend API And Dialog",
+          "level": 3,
+          "line": 82
+        },
+        {
+          "heading": "Task 4: Verification",
+          "level": 3,
+          "line": 111
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 5
+      }
+    }
+  ]
+}

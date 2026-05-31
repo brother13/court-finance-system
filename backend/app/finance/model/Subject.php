@@ -327,6 +327,9 @@ class Subject extends Common
 
                 $this->saveImportedAuxConfig($code, $row['aux_names'], $auxMap);
             }
+            foreach ($this->importBranchSubjectCodes($rows, $segments) as $branchCode) {
+                $this->markParentAsBranch($branchCode);
+            }
             Db::commit();
         } catch (\Exception $e) {
             Db::rollback();
@@ -766,6 +769,21 @@ class Subject extends Common
             }
         }
         return $codes;
+    }
+
+    protected function importBranchSubjectCodes($importRows, $segments)
+    {
+        $codes = [];
+        foreach ($importRows as $row) {
+            $parentCode = $this->parentCodeFromRule($row['subject_code'] ?? '', $segments);
+            while ($parentCode !== '') {
+                if (!isset($codes[$parentCode])) {
+                    $codes[$parentCode] = true;
+                }
+                $parentCode = $this->parentCodeFromRule($parentCode, $segments);
+            }
+        }
+        return array_map('strval', array_keys($codes));
     }
 
     protected function codeHasChild($code, $allCodes)

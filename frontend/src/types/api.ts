@@ -158,6 +158,7 @@ export interface Subject {
   level_no?: number
   leafFlag?: number
   leaf_flag?: number
+  voucherEntryFlag?: number
   voucher_entry_flag?: number
   status?: number
   remark?: string

@@ -16,6 +16,8 @@ const distributionViewPath = resolve(__dirname, '../src/views/case-fund/Distribu
 assert(app.includes('menu:case_fund:payment'), 'sidebar should check payment register menu permission')
 assert(app.includes('index="/case-fund/payments"'), 'sidebar should route to case fund payment register')
 assert(app.includes('案款业务'), 'sidebar should show case fund business menu')
+assert(app.includes('fundBusinessMenuBizTypes.includes(context.bizType)'), 'sidebar should show fund business menu for case-fund and litigation-fee account sets')
+assert(app.includes("'CASE_FUND', 'LITIGATION_FEE'"), 'fund business menu should include litigation-fee account sets')
 assert(app.includes('缴费登记查询'), 'sidebar should show payment query menu item')
 assert(app.includes('出账查询'), 'sidebar should show refund payment query menu item')
 assert(app.includes("context.bizType === 'CASE_FUND'"), 'unknown payment menu should be gated to case-fund account sets')

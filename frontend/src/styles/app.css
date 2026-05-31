@@ -616,7 +616,7 @@ body {
 }
 
 .login-status-grid div {
-  min-height: 96px;
+  min-height: 160px;
   padding: 18px;
   border: 1px solid rgba(174, 190, 224, 0.2);
   border-radius: 12px;
@@ -641,8 +641,16 @@ body {
 .login-status-grid strong {
   display: block;
   margin-top: 10px;
-  font-size: 18px;
+  font-size: 16px;
+  line-height: 1.45;
   color: #ffffff;
+}
+
+.login-status-grid p {
+  margin: 10px 0 0;
+  color: rgba(211, 224, 245, 0.66);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .login-form-panel {
@@ -803,36 +811,6 @@ body {
   margin-left: 8px;
 }
 
-.login-footnote {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 28px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border-light);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.login-footnote span {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border-radius: 7px;
-  background: #f8fafc;
-}
-
-.login-footnote .el-icon {
-  color: #8aa0bd;
-}
-
-.login-footnote strong {
-  color: var(--text-main);
-  font-weight: 800;
-}
-
 .account-select-page {
   min-height: 100vh;
   padding: 46px;
@@ -980,13 +958,6 @@ body {
     min-height: 0;
   }
 
-  .login-footnote {
-    flex-direction: column;
-  }
-
-  .login-footnote span {
-    justify-content: center;
-  }
 }
 
 /* ============================================================

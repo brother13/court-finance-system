@@ -1,0 +1,52 @@
+{
+  "filesAnalyzed": 189,
+  "filteredByIgnore": 796,
+  "byCategory": {
+    "docs": 21,
+    "code": 154,
+    "config": 3,
+    "data": 8,
+    "markup": 2,
+    "script": 1
+  },
+  "byLanguage": {
+    "markdown": 21,
+    "php": 68,
+    "json": 3,
+    "sql": 8,
+    "unknown": 1,
+    "html": 1,
+    "typescript": 21,
+    "vue": 26,
+    "css": 1,
+    "javascript": 38,
+    "shell": 1
+  },
+  "nodes": 993,
+  "edges": 1048,
+  "nodeTypes": {
+    "document": 21,
+    "file": 156,
+    "config": 3,
+    "schema": 79,
+    "pipeline": 1,
+    "table": 50,
+    "function": 657,
+    "class": 26
+  },
+  "edgeTypes": {
+    "contains": 804,
+    "reads_from": 52,
+    "imports": 101,
+    "routes": 21,
+    "tested_by": 70
+  },
+  "layers": [
+    "项目规则与设计文档",
+    "后端财务内核",
+    "数据库与预置脚本",
+    "前端应用与页面",
+    "测试与工程配置"
+  ],
+  "tourSteps": 6
+}

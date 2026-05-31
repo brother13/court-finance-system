@@ -1,0 +1,1166 @@
+{
+  "scriptCompleted": true,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "sizeLines": 525,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "backend/app/common.php",
+      "language": "php",
+      "sizeLines": 23,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/config.php",
+      "language": "php",
+      "sizeLines": 36,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/database.php",
+      "language": "php",
+      "sizeLines": 25,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/config.php",
+      "language": "php",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/controller/Error.php",
+      "language": "php",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/controller/Index.php",
+      "language": "php",
+      "sizeLines": 175,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/AccountSet.php",
+      "language": "php",
+      "sizeLines": 246,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Auth.php",
+      "language": "php",
+      "sizeLines": 190,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Auxiliary.php",
+      "language": "php",
+      "sizeLines": 528,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Book.php",
+      "language": "php",
+      "sizeLines": 1643,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/CarryForward.php",
+      "language": "php",
+      "sizeLines": 187,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/CaseFund.php",
+      "language": "php",
+      "sizeLines": 4385,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Common.php",
+      "language": "php",
+      "sizeLines": 332,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/ExcelExport.php",
+      "language": "php",
+      "sizeLines": 164,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Log.php",
+      "language": "php",
+      "sizeLines": 60,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Opening.php",
+      "language": "php",
+      "sizeLines": 283,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Period.php",
+      "language": "php",
+      "sizeLines": 717,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Permission.php",
+      "language": "php",
+      "sizeLines": 50,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Role.php",
+      "language": "php",
+      "sizeLines": 216,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Subject.php",
+      "language": "php",
+      "sizeLines": 1043,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/User.php",
+      "language": "php",
+      "sizeLines": 387,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/finance/model/Voucher.php",
+      "language": "php",
+      "sizeLines": 2142,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/app/route.php",
+      "language": "php",
+      "sizeLines": 7,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/composer.json",
+      "language": "json",
+      "sizeLines": 8,
+      "fileCategory": "config"
+    },
+    {
+      "path": "backend/database/account_sets_preset.sql",
+      "language": "sql",
+      "sizeLines": 21,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/auth_user_unit.sql",
+      "language": "sql",
+      "sizeLines": 95,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/court_finance_ddl.sql",
+      "language": "sql",
+      "sizeLines": 704,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/finance_standard_patch.sql",
+      "language": "sql",
+      "sizeLines": 752,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/migrate_voucher_year_tables.php",
+      "language": "php",
+      "sizeLines": 164,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/database/migration_rbac.sql",
+      "language": "sql",
+      "sizeLines": 339,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/opening_balance.sql",
+      "language": "sql",
+      "sizeLines": 16,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/preset_case_fund_template.sql",
+      "language": "sql",
+      "sizeLines": 71,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/database/standard_aux_types.sql",
+      "language": "sql",
+      "sizeLines": 18,
+      "fileCategory": "data"
+    },
+    {
+      "path": "backend/index.php",
+      "language": "php",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/public/.htaccess",
+      "language": "unknown",
+      "sizeLines": 8,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/public/index.php",
+      "language": "php",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/README.md",
+      "language": "markdown",
+      "sizeLines": 82,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "backend/tests/AccountSetHelperTest.php",
+      "language": "php",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/AuditLogLargePayloadTest.php",
+      "language": "php",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/AuthAccountSetPeriodFieldsTest.php",
+      "language": "php",
+      "sizeLines": 21,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/AuxDeleteGuardTest.php",
+      "language": "php",
+      "sizeLines": 36,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BookAuxBalanceTest.php",
+      "language": "php",
+      "sizeLines": 80,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BookDetailLedgerPdfTest.php",
+      "language": "php",
+      "sizeLines": 67,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BookDetailLedgerPerformanceIndexTest.php",
+      "language": "php",
+      "sizeLines": 29,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BookSubjectBalancePdfTest.php",
+      "language": "php",
+      "sizeLines": 74,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BookSubjectBalanceStandardTest.php",
+      "language": "php",
+      "sizeLines": 156,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BookSubjectSummaryTest.php",
+      "language": "php",
+      "sizeLines": 130,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/BrowserExcelExportTest.php",
+      "language": "php",
+      "sizeLines": 92,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundBankStatementTest.php",
+      "language": "php",
+      "sizeLines": 59,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundDeleteGuardTest.php",
+      "language": "php",
+      "sizeLines": 35,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundDistributionGenerateVoucherTest.php",
+      "language": "php",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundDistributionImportTest.php",
+      "language": "php",
+      "sizeLines": 157,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundPaymentGenerateVoucherTest.php",
+      "language": "php",
+      "sizeLines": 130,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundPaymentImportTest.php",
+      "language": "php",
+      "sizeLines": 227,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundRefundGenerateVoucherTest.php",
+      "language": "php",
+      "sizeLines": 246,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundRefundImportTest.php",
+      "language": "php",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundSubjectConfigTest.php",
+      "language": "php",
+      "sizeLines": 105,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundUnknownPaymentGenerateVoucherTest.php",
+      "language": "php",
+      "sizeLines": 101,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/CaseFundUnknownPaymentImportTest.php",
+      "language": "php",
+      "sizeLines": 236,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/check_subject_200301.php",
+      "language": "php",
+      "sizeLines": 39,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/ListDefaultDateSortTest.php",
+      "language": "php",
+      "sizeLines": 27,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/PeriodCloseRulesTest.php",
+      "language": "php",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/SubjectCodeRuleTest.php",
+      "language": "php",
+      "sizeLines": 73,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/SubjectDeleteGuardTest.php",
+      "language": "php",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/SubjectListAuxNamesTest.php",
+      "language": "php",
+      "sizeLines": 21,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/SubjectXlsImportExportTest.php",
+      "language": "php",
+      "sizeLines": 115,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/UserAccountSetOptionsTest.php",
+      "language": "php",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherAmountSummaryTest.php",
+      "language": "php",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherClosedPeriodGuardTest.php",
+      "language": "php",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherDeleteEligibilityTest.php",
+      "language": "php",
+      "sizeLines": 80,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherImportTest.php",
+      "language": "php",
+      "sizeLines": 330,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherPeriodRangeListTest.php",
+      "language": "php",
+      "sizeLines": 23,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherPostedImmutableTest.php",
+      "language": "php",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherPostUnpostEligibilityTest.php",
+      "language": "php",
+      "sizeLines": 106,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherPrintDataTest.php",
+      "language": "php",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherPrintStatusTest.php",
+      "language": "php",
+      "sizeLines": 29,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherRenumberTest.php",
+      "language": "php",
+      "sizeLines": 176,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/VoucherUnifiedTableArchitectureTest.php",
+      "language": "php",
+      "sizeLines": 61,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend/tests/WindowsReservedFilenameTest.php",
+      "language": "php",
+      "sizeLines": 38,
+      "fileCategory": "code"
+    },
+    {
+      "path": "CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 523,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/deployment/new-unit-database-init.md",
+      "language": "markdown",
+      "sizeLines": 377,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/design/2026-05-03-rbac-user-management-design.md",
+      "language": "markdown",
+      "sizeLines": 503,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/design/2026-05-20-backend-pdf-printing-notes.md",
+      "language": "markdown",
+      "sizeLines": 282,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/design/phase1-implementation.md",
+      "language": "markdown",
+      "sizeLines": 95,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/requirements.md",
+      "language": "markdown",
+      "sizeLines": 168,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-04-subject-code-rule.md",
+      "language": "markdown",
+      "sizeLines": 104,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-04-voucher-edit-delete.md",
+      "language": "markdown",
+      "sizeLines": 89,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-04-voucher-header-amounts.md",
+      "language": "markdown",
+      "sizeLines": 71,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-22-case-fund-unknown-payment.md",
+      "language": "markdown",
+      "sizeLines": 1481,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-23-case-fund-distribution.md",
+      "language": "markdown",
+      "sizeLines": 293,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-23-voucher-renumber.md",
+      "language": "markdown",
+      "sizeLines": 142,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-04-subject-code-rule-design.md",
+      "language": "markdown",
+      "sizeLines": 26,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-04-voucher-edit-delete-design.md",
+      "language": "markdown",
+      "sizeLines": 52,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-04-voucher-header-amounts-design.md",
+      "language": "markdown",
+      "sizeLines": 41,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-22-case-fund-unknown-payment-design.md",
+      "language": "markdown",
+      "sizeLines": 263,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-23-case-fund-distribution-design.md",
+      "language": "markdown",
+      "sizeLines": 309,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-23-voucher-renumber-design.md",
+      "language": "markdown",
+      "sizeLines": 178,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "frontend/index.html",
+      "language": "html",
+      "sizeLines": 12,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "frontend/package.json",
+      "language": "json",
+      "sizeLines": 29,
+      "fileCategory": "config"
+    },
+    {
+      "path": "frontend/src/api/accountSet.ts",
+      "language": "typescript",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/auth.ts",
+      "language": "typescript",
+      "sizeLines": 14,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/base.ts",
+      "language": "typescript",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/books.ts",
+      "language": "typescript",
+      "sizeLines": 134,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/caseFund.ts",
+      "language": "typescript",
+      "sizeLines": 153,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/http.ts",
+      "language": "typescript",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/period.ts",
+      "language": "typescript",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/permission.ts",
+      "language": "typescript",
+      "sizeLines": 15,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/role.ts",
+      "language": "typescript",
+      "sizeLines": 23,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/user.ts",
+      "language": "typescript",
+      "sizeLines": 38,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/api/voucher.ts",
+      "language": "typescript",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/App.vue",
+      "language": "vue",
+      "sizeLines": 291,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/components/ForceChangePasswordDialog.vue",
+      "language": "vue",
+      "sizeLines": 113,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/directives/permission.ts",
+      "language": "typescript",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/main.ts",
+      "language": "typescript",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/router/index.ts",
+      "language": "typescript",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/stores/context.ts",
+      "language": "typescript",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/styles/app.css",
+      "language": "css",
+      "sizeLines": 2740,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "frontend/src/types/api.ts",
+      "language": "typescript",
+      "sizeLines": 434,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/utils/reportPrintPdf.ts",
+      "language": "typescript",
+      "sizeLines": 204,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/utils/subjectTree.ts",
+      "language": "typescript",
+      "sizeLines": 57,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/utils/voucherPrintPdf.ts",
+      "language": "typescript",
+      "sizeLines": 286,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/auth/AccountSetSelectView.vue",
+      "language": "vue",
+      "sizeLines": 264,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/auth/LoginView.vue",
+      "language": "vue",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/base/AuxItemManageView.vue",
+      "language": "vue",
+      "sizeLines": 540,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/base/CarryForwardSchemeView.vue",
+      "language": "vue",
+      "sizeLines": 201,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/base/OpeningBalanceView.vue",
+      "language": "vue",
+      "sizeLines": 296,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/base/SubjectManageView.vue",
+      "language": "vue",
+      "sizeLines": 710,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/books/AuxBalanceView.vue",
+      "language": "vue",
+      "sizeLines": 227,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/books/DetailLedgerView.vue",
+      "language": "vue",
+      "sizeLines": 443,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/books/SubjectBalanceView.vue",
+      "language": "vue",
+      "sizeLines": 607,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/books/SubjectSummaryView.vue",
+      "language": "vue",
+      "sizeLines": 509,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/case-fund/BankStatementView.vue",
+      "language": "vue",
+      "sizeLines": 575,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/case-fund/DistributionView.vue",
+      "language": "vue",
+      "sizeLines": 559,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/case-fund/PaymentRegisterView.vue",
+      "language": "vue",
+      "sizeLines": 575,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/case-fund/RefundRegisterView.vue",
+      "language": "vue",
+      "sizeLines": 591,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/case-fund/UnknownPaymentView.vue",
+      "language": "vue",
+      "sizeLines": 585,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/dashboard/DashboardView.vue",
+      "language": "vue",
+      "sizeLines": 264,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/period/PeriodCloseView.vue",
+      "language": "vue",
+      "sizeLines": 466,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/system/AccountSetManageView.vue",
+      "language": "vue",
+      "sizeLines": 208,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/system/AuditLogView.vue",
+      "language": "vue",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/system/RoleManageView.vue",
+      "language": "vue",
+      "sizeLines": 203,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/system/RolePermissionView.vue",
+      "language": "vue",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/system/UserManageView.vue",
+      "language": "vue",
+      "sizeLines": 264,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/voucher/VoucherEditorView.vue",
+      "language": "vue",
+      "sizeLines": 675,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/views/voucher/VoucherListView.vue",
+      "language": "vue",
+      "sizeLines": 1214,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/src/vite-env.d.ts",
+      "language": "typescript",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/AccountSetManagePrintLineCountTest.mjs",
+      "language": "javascript",
+      "sizeLines": 16,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/AppChangePasswordEntryTest.mjs",
+      "language": "javascript",
+      "sizeLines": 21,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/AppSidebarCollapseTest.mjs",
+      "language": "javascript",
+      "sizeLines": 21,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/AuxItemManageDeleteTest.mjs",
+      "language": "javascript",
+      "sizeLines": 20,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/BookAuxBalanceViewTest.mjs",
+      "language": "javascript",
+      "sizeLines": 48,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/BookDetailLedgerDrilldownTest.mjs",
+      "language": "javascript",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/BookSubjectBalanceHeaderTest.mjs",
+      "language": "javascript",
+      "sizeLines": 12,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/BookSubjectBalanceQueryTest.mjs",
+      "language": "javascript",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/BookSubjectSummaryViewTest.mjs",
+      "language": "javascript",
+      "sizeLines": 85,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CarryForwardSchemeMenuTest.mjs",
+      "language": "javascript",
+      "sizeLines": 49,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundBankStatementTest.mjs",
+      "language": "javascript",
+      "sizeLines": 50,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundDeleteActionsTest.mjs",
+      "language": "javascript",
+      "sizeLines": 46,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundMenuTest.mjs",
+      "language": "javascript",
+      "sizeLines": 110,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundMoreActionsTest.mjs",
+      "language": "javascript",
+      "sizeLines": 25,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundRefundColumnsTest.mjs",
+      "language": "javascript",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundRegenerateSelectionTest.mjs",
+      "language": "javascript",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundSubjectConfigTest.mjs",
+      "language": "javascript",
+      "sizeLines": 38,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/CaseFundSubjectTreeSelectTest.mjs",
+      "language": "javascript",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/ContextPeriodSelectionTest.mjs",
+      "language": "javascript",
+      "sizeLines": 23,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/DashboardWorkstationTest.mjs",
+      "language": "javascript",
+      "sizeLines": 33,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/ElementPlusLocaleTest.mjs",
+      "language": "javascript",
+      "sizeLines": 13,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/LoginFeatureIntroTest.mjs",
+      "language": "javascript",
+      "sizeLines": 16,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/OpeningBalanceSavePermissionTest.mjs",
+      "language": "javascript",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/PeriodCloseViewTest.mjs",
+      "language": "javascript",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/ReviewCommentUxTest.mjs",
+      "language": "javascript",
+      "sizeLines": 29,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/RouteLazyLoadTest.mjs",
+      "language": "javascript",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/SingleSiteDeployTest.mjs",
+      "language": "javascript",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/SubjectManageActionsTest.mjs",
+      "language": "javascript",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherEditorReviewTest.mjs",
+      "language": "javascript",
+      "sizeLines": 26,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherImportAuxMappingTest.mjs",
+      "language": "javascript",
+      "sizeLines": 14,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherImportTimeoutTest.mjs",
+      "language": "javascript",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherListOperationColumnTest.mjs",
+      "language": "javascript",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherListPaginationTest.mjs",
+      "language": "javascript",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherListPostUnpostTest.mjs",
+      "language": "javascript",
+      "sizeLines": 29,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherListUnauditTest.mjs",
+      "language": "javascript",
+      "sizeLines": 16,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherPeriodRangeFilterTest.mjs",
+      "language": "javascript",
+      "sizeLines": 20,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherPrintPdfTest.mjs",
+      "language": "javascript",
+      "sizeLines": 21,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tests/VoucherRenumberDialogTest.mjs",
+      "language": "javascript",
+      "sizeLines": 22,
+      "fileCategory": "code"
+    },
+    {
+      "path": "frontend/tsconfig.json",
+      "language": "json",
+      "sizeLines": 21,
+      "fileCategory": "config"
+    },
+    {
+      "path": "frontend/vite.config.ts",
+      "language": "typescript",
+      "sizeLines": 16,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/build_offline_release.sh",
+      "language": "shell",
+      "sizeLines": 237,
+      "fileCategory": "script"
+    },
+    {
+      "path": "update.md",
+      "language": "markdown",
+      "sizeLines": 139,
+      "fileCategory": "docs"
+    }
+  ],
+  "totalFiles": 189,
+  "filteredByIgnore": 796,
+  "estimatedComplexity": "large",
+  "stats": {
+    "filesScanned": 189,
+    "byCategory": {
+      "docs": 21,
+      "code": 154,
+      "config": 3,
+      "data": 8,
+      "markup": 2,
+      "script": 1
+    },
+    "byLanguage": {
+      "markdown": 21,
+      "php": 68,
+      "json": 3,
+      "sql": 8,
+      "unknown": 1,
+      "html": 1,
+      "typescript": 21,
+      "vue": 26,
+      "css": 1,
+      "javascript": 38,
+      "shell": 1
+    }
+  }
+}

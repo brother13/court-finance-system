@@ -1135,6 +1135,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 .voucher-table th, .voucher-table td { border: 1px solid #111; padding: 4px 5px; vertical-align: top; overflow-wrap: break-word; }
 .voucher-table th { text-align: center; font-weight: bold; background: #f2f2f2; }
 .summary { width: 48%; }
+.summary-text { display: block; }
 .subject { width: 22%; }
 .amount { width: 15%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
 .total-row td { font-weight: bold; background: #f7f7f7; }
@@ -1180,12 +1181,14 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 
         $body = '';
         foreach ($rows as $detail) {
+            $summaryText = (string)($detail['summary'] ?? '');
+            $summaryStyle = $this->voucherPrintSummaryStyle($summaryText);
             $subjectText = trim((string)($detail['subject_code'] ?? '') . ' ' . (string)($detail['subject_name'] ?? ''));
             if (!empty($detail['aux_desc'])) {
                 $subjectText .= ' ' . $this->formatVoucherPrintAuxDesc($detail['aux_desc']);
             }
             $body .= '<tr class="detail-row">';
-            $body .= '<td class="summary"' . $detailCellStyle . '>' . $escape($detail['summary'] ?? '') . '</td>';
+            $body .= '<td class="summary"' . $detailCellStyle . '><span class="summary-text"' . $summaryStyle . '>' . $escape($summaryText) . '</span></td>';
             $body .= '<td class="subject"' . $detailCellStyle . '>' . $escape(trim($subjectText)) . '</td>';
             $body .= '<td class="amount"' . $detailCellStyle . '>' . $escape($money($detail['debit_amount'] ?? 0)) . '</td>';
             $body .= '<td class="amount"' . $detailCellStyle . '>' . $escape($money($detail['credit_amount'] ?? 0)) . '</td>';
@@ -1237,6 +1240,31 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
     </tr>
   </table>
 </div>';
+    }
+
+    protected function voucherPrintSummaryStyle($summary)
+    {
+        $length = $this->utf8Length($summary);
+        if ($length <= 30) {
+            return '';
+        }
+        $fontSize = max(4.0, min(10.0, round(10 * 30 / max(1, $length), 2)));
+        return ' style="font-size: ' . $fontSize . 'pt; line-height: 1; white-space: nowrap; word-break: keep-all;"';
+    }
+
+    protected function utf8Length($value)
+    {
+        $text = (string)$value;
+        if ($text === '') {
+            return 0;
+        }
+        if (function_exists('mb_strlen')) {
+            return mb_strlen($text, 'UTF-8');
+        }
+        if (preg_match_all('/./us', $text, $matches)) {
+            return count($matches[0]);
+        }
+        return strlen($text);
     }
 
     protected function formatVoucherPrintAuxDesc($auxDesc)

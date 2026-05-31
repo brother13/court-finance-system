@@ -6,8 +6,8 @@
           <span class="brand-mark-core" />
         </div>
         <div>
-          <strong>法院专项账务</strong>
-          <small>Court Special Accounting System</small>
+          <strong>树莓法衡专项账务系统</strong>
+          <small>法院专项资金核算与凭证管理平台</small>
         </div>
       </div>
 
@@ -25,19 +25,22 @@
 
       <div class="login-status-grid">
         <div>
-          <el-icon><Coin /></el-icon>
-          <span>账务引擎</span>
-          <strong>双分录</strong>
-        </div>
-        <div>
-          <el-icon><Calendar /></el-icon>
-          <span>期间</span>
-          <strong>{{ context.period }}</strong>
-        </div>
-        <div>
           <el-icon><Connection /></el-icon>
-          <span>部署</span>
-          <strong>内网独立</strong>
+          <span>一张网对接</span>
+          <strong>案款收退数据一键导入并一键生成凭证</strong>
+          <p>对接法院“一张网”业务系统，减少手工录入和重复制单。</p>
+        </div>
+        <div>
+          <el-icon><Coin /></el-icon>
+          <span>辅助核算</span>
+          <strong>执行款支持案号+单据号辅助核算</strong>
+          <p>生成凭证时可同步生成并设置辅助核算项。</p>
+        </div>
+        <div>
+          <el-icon><CircleCheck /></el-icon>
+          <span>案款扩展业务</span>
+          <strong>支持不明款与案款分配生成凭证</strong>
+          <p>不明款、案款分配数据可纳入统一凭证生成流程。</p>
         </div>
       </div>
     </section>
@@ -112,17 +115,6 @@
             <el-icon class="login-submit-icon"><Right /></el-icon>
           </el-button>
         </el-form>
-
-        <div class="login-footnote">
-          <span>
-            <el-icon><InfoFilled /></el-icon>
-            初始账号: <strong>admin</strong>
-          </span>
-          <span>
-            <el-icon><Key /></el-icon>
-            初始密码: <strong>123456</strong>
-          </span>
-        </div>
       </div>
     </section>
   </main>
@@ -132,7 +124,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Calendar, CircleCheck, Coin, Connection, InfoFilled, Key, Lock, OfficeBuilding, Right, User } from '@element-plus/icons-vue'
+import { CircleCheck, Coin, Connection, Key, Lock, OfficeBuilding, Right, User } from '@element-plus/icons-vue'
 import { authApi } from '../../api/auth'
 import { useContextStore } from '../../stores/context'
 import type { Unit } from '../../types/api'
@@ -147,7 +139,7 @@ const submitting = ref(false)
 const units = ref<Unit[]>([])
 const form = reactive({
   unit_id: '',
-  username: 'admin',
+  username: '',
   password: ''
 })
 

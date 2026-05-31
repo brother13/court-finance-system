@@ -1,0 +1,237 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 25,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "frontend/src/views/base/SubjectManageView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 710,
+      "nonEmptyLines": 643,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/books/AuxBalanceView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 227,
+      "nonEmptyLines": 209,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/books/DetailLedgerView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 443,
+      "nonEmptyLines": 406,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/books/SubjectBalanceView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 607,
+      "nonEmptyLines": 548,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/books/SubjectSummaryView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 509,
+      "nonEmptyLines": 458,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/case-fund/BankStatementView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 575,
+      "nonEmptyLines": 524,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/case-fund/DistributionView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 559,
+      "nonEmptyLines": 512,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/case-fund/PaymentRegisterView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 575,
+      "nonEmptyLines": 525,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/case-fund/RefundRegisterView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 591,
+      "nonEmptyLines": 541,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/case-fund/UnknownPaymentView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 585,
+      "nonEmptyLines": 534,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/dashboard/DashboardView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 264,
+      "nonEmptyLines": 245,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/period/PeriodCloseView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 466,
+      "nonEmptyLines": 411,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/system/AccountSetManageView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 208,
+      "nonEmptyLines": 196,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/system/AuditLogView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 32,
+      "nonEmptyLines": 28,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/system/RoleManageView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 203,
+      "nonEmptyLines": 188,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/system/RolePermissionView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 144,
+      "nonEmptyLines": 131,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/system/UserManageView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 264,
+      "nonEmptyLines": 247,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/voucher/VoucherEditorView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 675,
+      "nonEmptyLines": 629,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/views/voucher/VoucherListView.vue",
+      "language": "vue",
+      "fileCategory": "code",
+      "totalLines": 1214,
+      "nonEmptyLines": 1112,
+      "metrics": {}
+    },
+    {
+      "path": "frontend/src/vite-env.d.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 1,
+      "nonEmptyLines": 1,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "frontend/tests/AccountSetManagePrintLineCountTest.mjs",
+      "language": "javascript",
+      "fileCategory": "code",
+      "totalLines": 16,
+      "nonEmptyLines": 13,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "frontend/tests/AppChangePasswordEntryTest.mjs",
+      "language": "javascript",
+      "fileCategory": "code",
+      "totalLines": 21,
+      "nonEmptyLines": 17,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "frontend/tests/AppSidebarCollapseTest.mjs",
+      "language": "javascript",
+      "fileCategory": "code",
+      "totalLines": 21,
+      "nonEmptyLines": 18,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "frontend/tests/AuxItemManageDeleteTest.mjs",
+      "language": "javascript",
+      "fileCategory": "code",
+      "totalLines": 20,
+      "nonEmptyLines": 17,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "frontend/tests/BookAuxBalanceViewTest.mjs",
+      "language": "javascript",
+      "fileCategory": "code",
+      "totalLines": 48,
+      "nonEmptyLines": 41,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    }
+  ]
+}

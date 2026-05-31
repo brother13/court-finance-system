@@ -3329,8 +3329,8 @@ class CaseFund extends Common
     protected function allowedPaymentBusinessTypes($bizType)
     {
         $map = [
-            'CASE_FUND' => ['执行、调解款', '执行、调节款'],
-            'LITIGATION_FEE' => ['预收诉讼费', '诉讼费预收'],
+            'CASE_FUND' => ['执行、调解款'],
+            'LITIGATION_FEE' => ['诉讼费直接结算', '诉讼费预收'],
         ];
         return $map[$bizType] ?? [];
     }

@@ -83,6 +83,17 @@ if ($hierarchyCodes !== ['3001' => true, '1002' => true, '100201' => true]) {
     exit(1);
 }
 
+$branchMethod = new ReflectionMethod(Subject::class, 'importBranchSubjectCodes');
+$branchMethod->setAccessible(true);
+$branchCodes = $branchMethod->invoke($subject, [
+    ['subject_code' => '10020101'],
+    ['subject_code' => '220301'],
+], [4, 2, 2, 2]);
+if ($branchCodes !== ['100201', '1002', '2203']) {
+    fwrite(STDERR, 'Expected import to identify existing parent subjects that must become non-leaf' . PHP_EOL);
+    exit(1);
+}
+
 $source = file_get_contents(__DIR__ . '/../app/finance/model/Subject.php');
 if (strpos($source, "\$existingSubjectWhere = ['account_set_id' => \$this->accountSetId];") === false) {
     fwrite(STDERR, 'Expected import to query active and soft-deleted subjects before deciding insert/update' . PHP_EOL);
@@ -94,6 +105,10 @@ if (strpos($source, "'del_flag' => 0,") === false) {
 }
 if (strpos($source, 'saveSubjectAuxConfigRows') === false) {
     fwrite(STDERR, 'Expected import to reuse duplicate-safe auxiliary config saving' . PHP_EOL);
+    exit(1);
+}
+if (strpos($source, '$this->markParentAsBranch($branchCode);') === false) {
+    fwrite(STDERR, 'Expected import to set existing parent subjects leaf_flag=0 and voucher_entry_flag=0' . PHP_EOL);
     exit(1);
 }
 

@@ -119,26 +119,30 @@
         <el-table-column prop="business_item_type" label="业务类型" min-width="160" />
         <el-table-column label="借方科目" min-width="240">
           <template #default="{ row }">
-            <el-select v-model="row.debit_subject_code" filterable clearable placeholder="借方科目" style="width: 100%">
-              <el-option
-                v-for="subject in subjectOptions"
-                :key="`debit-${subjectCode(subject)}`"
-                :label="subjectLabel(subject)"
-                :value="subjectCode(subject)"
-              />
-            </el-select>
+            <el-tree-select
+              v-model="row.debit_subject_code"
+              :data="subjectTreeOptions"
+              filterable
+              clearable
+              check-strictly
+              default-expand-all
+              placeholder="借方科目"
+              style="width: 100%"
+            />
           </template>
         </el-table-column>
         <el-table-column label="贷方科目" min-width="240">
           <template #default="{ row }">
-            <el-select v-model="row.credit_subject_code" filterable clearable placeholder="贷方科目" style="width: 100%">
-              <el-option
-                v-for="subject in subjectOptions"
-                :key="`credit-${subjectCode(subject)}`"
-                :label="subjectLabel(subject)"
-                :value="subjectCode(subject)"
-              />
-            </el-select>
+            <el-tree-select
+              v-model="row.credit_subject_code"
+              :data="subjectTreeOptions"
+              filterable
+              clearable
+              check-strictly
+              default-expand-all
+              placeholder="贷方科目"
+              style="width: 100%"
+            />
           </template>
         </el-table-column>
       </el-table>
@@ -157,6 +161,7 @@ import { ArrowDown, Delete, DocumentChecked, MoreFilled, Search, Setting, Upload
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
+import { buildSubjectTreeOptions } from '../../utils/subjectTree'
 import type { CaseFundSubjectConfig, CaseFundUnknownPayment, Subject } from '../../types/api'
 
 const context = useContextStore()
@@ -195,11 +200,7 @@ const pageAmountText = computed(() => {
 
 const ungeneratedCount = computed(() => rows.value.filter((row) => row.voucher_status === 'UNGENERATED').length)
 const canUseMoreActions = computed(() => context.hasAnyPermission(['case_fund:delete', 'case_fund:subject_config', 'case_fund:import']))
-const subjectOptions = computed(() => subjects.value.filter((subject: any) => {
-  return Number(subject.leaf_flag ?? subject.leafFlag) === 1
-    && Number(subject.voucher_entry_flag ?? 1) === 1
-    && Number(subject.status ?? 1) === 1
-}))
+const subjectTreeOptions = computed(() => buildSubjectTreeOptions(subjects.value))
 
 const load = async () => {
   loading.value = true
@@ -392,10 +393,6 @@ const voucherStatusType = (status: string) => {
 const claimStatusType = (status: string) => {
   return status === '已认领' || status === 'CLAIMED' ? 'success' : 'info'
 }
-
-const subjectCode = (subject: Subject) => subject.subject_code || subject.subjectCode
-
-const subjectLabel = (subject: Subject) => `${subjectCode(subject)} ${subject.subject_name || subject.subjectName}`
 
 const isRowSelectable = (row: CaseFundUnknownPayment) => {
   return row.voucher_status === 'UNGENERATED' || row.voucher_status === 'GENERATED'

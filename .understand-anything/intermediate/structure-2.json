@@ -1,0 +1,1953 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 8,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "backend/database/account_sets_preset.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 21,
+      "nonEmptyLines": 21,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 0
+      }
+    },
+    {
+      "path": "backend/database/auth_user_unit.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 95,
+      "nonEmptyLines": 90,
+      "definitions": [
+        {
+          "name": "sys_unit",
+          "kind": "table",
+          "fields": [
+            "unit_id",
+            "unit_code",
+            "unit_name",
+            "sort_no",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 1,
+          "endLine": 15
+        },
+        {
+          "name": "sys_user",
+          "kind": "table",
+          "fields": [
+            "user_id",
+            "unit_id",
+            "username",
+            "password_hash",
+            "real_name",
+            "mobile",
+            "email",
+            "status",
+            "must_change_password",
+            "last_login_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 17,
+          "endLine": 37
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 2
+      }
+    },
+    {
+      "path": "backend/database/court_finance_ddl.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 704,
+      "nonEmptyLines": 653,
+      "definitions": [
+        {
+          "name": "sys_audit_log",
+          "kind": "table",
+          "fields": [
+            "log_id",
+            "account_set_id",
+            "biz_type",
+            "biz_id",
+            "operation",
+            "before_json",
+            "after_json",
+            "operator_id",
+            "operator_ip",
+            "created_time"
+          ],
+          "startLine": 1,
+          "endLine": 12
+        },
+        {
+          "name": "sys_unit",
+          "kind": "table",
+          "fields": [
+            "unit_id",
+            "unit_code",
+            "unit_name",
+            "sort_no",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 16,
+          "endLine": 29
+        },
+        {
+          "name": "sys_user",
+          "kind": "table",
+          "fields": [
+            "user_id",
+            "unit_id",
+            "username",
+            "password_hash",
+            "real_name",
+            "mobile",
+            "email",
+            "status",
+            "must_change_password",
+            "last_login_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 33,
+          "endLine": 51
+        },
+        {
+          "name": "fin_permission",
+          "kind": "table",
+          "fields": [
+            "permission_code",
+            "permission_name",
+            "permission_type",
+            "module_code",
+            "description",
+            "sort_order"
+          ],
+          "startLine": 56,
+          "endLine": 63
+        },
+        {
+          "name": "fin_role",
+          "kind": "table",
+          "fields": [
+            "role_id",
+            "role_code",
+            "role_name",
+            "description",
+            "is_system",
+            "view_scope",
+            "status",
+            "created_at",
+            "updated_at"
+          ],
+          "startLine": 65,
+          "endLine": 75
+        },
+        {
+          "name": "fin_role_permission",
+          "kind": "table",
+          "fields": [
+            "role_id",
+            "permission_code"
+          ],
+          "startLine": 79,
+          "endLine": 83
+        },
+        {
+          "name": "fin_user_role",
+          "kind": "table",
+          "fields": [
+            "user_id",
+            "role_id"
+          ],
+          "startLine": 85,
+          "endLine": 89
+        },
+        {
+          "name": "fin_user_account_set",
+          "kind": "table",
+          "fields": [
+            "user_id",
+            "account_set_id"
+          ],
+          "startLine": 91,
+          "endLine": 95
+        },
+        {
+          "name": "fin_account_set",
+          "kind": "table",
+          "fields": [
+            "account_set_id",
+            "set_code",
+            "set_name",
+            "biz_type",
+            "enabled_year",
+            "enabled_period",
+            "finance_manager",
+            "paper_size",
+            "voucher_import_auto_no",
+            "voucher_print_line_count",
+            "generate_voucher_by_day_flag",
+            "generate_refund_voucher_by_out_order_no_flag",
+            "subject_code_rule",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 97,
+          "endLine": 119
+        },
+        {
+          "name": "fin_fiscal_period",
+          "kind": "table",
+          "fields": [
+            "period_id",
+            "account_set_id",
+            "period",
+            "start_date",
+            "end_date",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 123,
+          "endLine": 137
+        },
+        {
+          "name": "fin_subject",
+          "kind": "table",
+          "fields": [
+            "subject_id",
+            "account_set_id",
+            "subject_code",
+            "subject_name",
+            "parent_code",
+            "direction",
+            "subject_type",
+            "level_no",
+            "leaf_flag",
+            "voucher_entry_flag",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 141,
+          "endLine": 160
+        },
+        {
+          "name": "fin_aux_type",
+          "kind": "table",
+          "fields": [
+            "aux_type_id",
+            "account_set_id",
+            "aux_type_code",
+            "aux_type_name",
+            "value_source",
+            "required_flag",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 164,
+          "endLine": 179
+        },
+        {
+          "name": "fin_aux_archive",
+          "kind": "table",
+          "fields": [
+            "archive_id",
+            "account_set_id",
+            "aux_type_code",
+            "archive_code",
+            "archive_name",
+            "extra_json",
+            "status",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 183,
+          "endLine": 198
+        },
+        {
+          "name": "fin_subject_aux_config",
+          "kind": "table",
+          "fields": [
+            "config_id",
+            "account_set_id",
+            "subject_code",
+            "aux_type_code",
+            "required_flag",
+            "verification_flag",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 202,
+          "endLine": 216
+        },
+        {
+          "name": "fin_opening_balance",
+          "kind": "table",
+          "fields": [
+            "balance_id",
+            "account_set_id",
+            "period",
+            "subject_code",
+            "debit_amount",
+            "credit_amount",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 220,
+          "endLine": 234
+        },
+        {
+          "name": "fin_carry_forward_scheme",
+          "kind": "table",
+          "fields": [
+            "scheme_id",
+            "account_set_id",
+            "scheme_name",
+            "carry_mode",
+            "target_subject_code",
+            "summary_template",
+            "rules_json",
+            "enabled_flag",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 238,
+          "endLine": 254
+        },
+        {
+          "name": "fin_aux_opening_balance",
+          "kind": "table",
+          "fields": [
+            "balance_id",
+            "account_set_id",
+            "period",
+            "subject_code",
+            "aux_values_json",
+            "aux_desc",
+            "debit_amount",
+            "credit_amount",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 258,
+          "endLine": 274
+        },
+        {
+          "name": "fin_voucher_no_sequence",
+          "kind": "table",
+          "fields": [
+            "sequence_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "current_no",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 278,
+          "endLine": 291
+        },
+        {
+          "name": "fin_voucher_no_adjust_log",
+          "kind": "table",
+          "fields": [
+            "adjust_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_id",
+            "voucher_date",
+            "voucher_word",
+            "old_voucher_no",
+            "new_voucher_no",
+            "reason",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 295,
+          "endLine": 313
+        },
+        {
+          "name": "fin_voucher",
+          "kind": "table",
+          "fields": [
+            "voucher_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_date",
+            "voucher_word",
+            "voucher_no",
+            "summary",
+            "debit_amount",
+            "credit_amount",
+            "attachment_count",
+            "status",
+            "source_type",
+            "printed_flag",
+            "prepared_by",
+            "prepared_time",
+            "audit_by",
+            "audit_time",
+            "posted_by",
+            "posted_time",
+            "void_flag",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 318,
+          "endLine": 347
+        },
+        {
+          "name": "fin_voucher_detail",
+          "kind": "table",
+          "fields": [
+            "detail_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_id",
+            "line_no",
+            "subject_code",
+            "summary",
+            "debit_amount",
+            "credit_amount",
+            "verification_status",
+            "aux_desc",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 355,
+          "endLine": 375
+        },
+        {
+          "name": "fin_voucher_aux_value",
+          "kind": "table",
+          "fields": [
+            "id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_id",
+            "detail_id",
+            "aux_type_code",
+            "aux_value",
+            "aux_label",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 384,
+          "endLine": 401
+        },
+        {
+          "name": "fin_case_fund_payment",
+          "kind": "table",
+          "fields": [
+            "payment_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "case_no",
+            "confirmed_flag",
+            "available_flag",
+            "business_type",
+            "payer_name",
+            "party_name",
+            "invoice_title",
+            "payment_amount",
+            "register_type",
+            "trial_case_no",
+            "payment_date",
+            "payment_time",
+            "receipt_no",
+            "invoice_date",
+            "invoice_operator",
+            "payment_method",
+            "cashier_name",
+            "judge_name",
+            "clerk_name",
+            "department_name",
+            "bank_account_no",
+            "bank_serial_no",
+            "payment_order_no",
+            "internal_transfer_ticket_no",
+            "deposit_revoke_flag",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 410,
+          "endLine": 456
+        },
+        {
+          "name": "fin_case_fund_refund",
+          "kind": "table",
+          "fields": [
+            "refund_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "case_no",
+            "handler_name",
+            "clerk_name",
+            "receipt_no",
+            "invoice_date",
+            "refund_date",
+            "source_receipt_no",
+            "source_receipt_date",
+            "out_order_no",
+            "out_status",
+            "out_type",
+            "litigation_position",
+            "party_name",
+            "refund_amount",
+            "total_refund_amount",
+            "payee_party_relation",
+            "payment_method",
+            "actual_payee_name",
+            "payee_identity_no",
+            "payee_bank_account_name",
+            "payee_bank_account_no",
+            "payee_bank_name",
+            "unionpay_no",
+            "same_bank_flag",
+            "handler_note",
+            "applicant_name",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 465,
+          "endLine": 512
+        },
+        {
+          "name": "fin_case_fund_distribution",
+          "kind": "table",
+          "fields": [
+            "distribution_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "distribution_no",
+            "in_case_no",
+            "in_judge_name",
+            "in_party_name",
+            "out_case_no",
+            "out_judge_name",
+            "out_party_name",
+            "invoice_type",
+            "receipt_no",
+            "distribution_amount",
+            "applicant_name",
+            "apply_date",
+            "receive_date",
+            "business_status",
+            "description",
+            "original_invoice_date",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 522,
+          "endLine": 559
+        },
+        {
+          "name": "fin_case_fund_unknown_payment",
+          "kind": "table",
+          "fields": [
+            "unknown_payment_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "court_name",
+            "claim_status",
+            "payer_name",
+            "unknown_amount",
+            "bank_summary",
+            "bank_remark",
+            "transaction_date",
+            "transaction_time",
+            "court_bank_account_no",
+            "arrival_method",
+            "payer_bank_name",
+            "payer_account_no",
+            "claim_user_name",
+            "claim_date",
+            "last_modified_time",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 568,
+          "endLine": 604
+        },
+        {
+          "name": "fin_case_fund_bank_statement",
+          "kind": "table",
+          "fields": [
+            "statement_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "bank_code",
+            "bank_name",
+            "transaction_date",
+            "transaction_time",
+            "direction",
+            "debit_amount",
+            "credit_amount",
+            "balance_amount",
+            "counterparty_account_no",
+            "counterparty_account_name",
+            "counterparty_bank_name",
+            "purpose",
+            "postscript",
+            "bank_serial_no",
+            "reconcile_status",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 611,
+          "endLine": 642
+        },
+        {
+          "name": "fin_case_fund_bank_reconcile",
+          "kind": "table",
+          "fields": [
+            "reconcile_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "reconcile_date",
+            "statement_id",
+            "biz_type",
+            "biz_id",
+            "biz_no",
+            "bank_serial_no",
+            "bank_amount",
+            "biz_amount",
+            "diff_amount",
+            "match_status",
+            "match_rule",
+            "matched_by",
+            "matched_time",
+            "bank_direction",
+            "bank_summary",
+            "biz_summary",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 650,
+          "endLine": 678
+        },
+        {
+          "name": "fin_case_fund_subject_config",
+          "kind": "table",
+          "fields": [
+            "config_id",
+            "account_set_id",
+            "biz_type",
+            "voucher_biz_type",
+            "business_item_type",
+            "debit_subject_code",
+            "credit_subject_code",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 686,
+          "endLine": 701
+        },
+        {
+          "name": "idx_audit_set_time",
+          "kind": "index",
+          "fields": [],
+          "startLine": 14,
+          "endLine": 14
+        },
+        {
+          "name": "uk_sys_unit_code",
+          "kind": "index",
+          "fields": [],
+          "startLine": 31,
+          "endLine": 31
+        },
+        {
+          "name": "uk_sys_user_unit_name",
+          "kind": "index",
+          "fields": [],
+          "startLine": 53,
+          "endLine": 53
+        },
+        {
+          "name": "idx_sys_user_unit",
+          "kind": "index",
+          "fields": [],
+          "startLine": 54,
+          "endLine": 54
+        },
+        {
+          "name": "uk_fin_role_code",
+          "kind": "index",
+          "fields": [],
+          "startLine": 77,
+          "endLine": 77
+        },
+        {
+          "name": "uk_account_set_code",
+          "kind": "index",
+          "fields": [],
+          "startLine": 121,
+          "endLine": 121
+        },
+        {
+          "name": "uk_fiscal_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 139,
+          "endLine": 139
+        },
+        {
+          "name": "uk_subject_code",
+          "kind": "index",
+          "fields": [],
+          "startLine": 162,
+          "endLine": 162
+        },
+        {
+          "name": "uk_aux_type_code",
+          "kind": "index",
+          "fields": [],
+          "startLine": 181,
+          "endLine": 181
+        },
+        {
+          "name": "idx_aux_archive_type_value",
+          "kind": "index",
+          "fields": [],
+          "startLine": 200,
+          "endLine": 200
+        },
+        {
+          "name": "uk_subject_aux",
+          "kind": "index",
+          "fields": [],
+          "startLine": 218,
+          "endLine": 218
+        },
+        {
+          "name": "uk_opening_subject",
+          "kind": "index",
+          "fields": [],
+          "startLine": 236,
+          "endLine": 236
+        },
+        {
+          "name": "idx_carry_forward_account",
+          "kind": "index",
+          "fields": [],
+          "startLine": 256,
+          "endLine": 256
+        },
+        {
+          "name": "idx_aux_opening_subject",
+          "kind": "index",
+          "fields": [],
+          "startLine": 276,
+          "endLine": 276
+        },
+        {
+          "name": "uk_voucher_no_sequence",
+          "kind": "index",
+          "fields": [],
+          "startLine": 293,
+          "endLine": 293
+        },
+        {
+          "name": "idx_voucher_no_adjust_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 315,
+          "endLine": 315
+        },
+        {
+          "name": "idx_voucher_no_adjust_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 316,
+          "endLine": 316
+        },
+        {
+          "name": "idx_voucher_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 349,
+          "endLine": 349
+        },
+        {
+          "name": "uk_voucher_no",
+          "kind": "index",
+          "fields": [],
+          "startLine": 350,
+          "endLine": 350
+        },
+        {
+          "name": "idx_voucher_date",
+          "kind": "index",
+          "fields": [],
+          "startLine": 351,
+          "endLine": 351
+        },
+        {
+          "name": "idx_voucher_del",
+          "kind": "index",
+          "fields": [],
+          "startLine": 352,
+          "endLine": 352
+        },
+        {
+          "name": "idx_voucher_ledger_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 353,
+          "endLine": 353
+        },
+        {
+          "name": "idx_voucher_detail_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 377,
+          "endLine": 377
+        },
+        {
+          "name": "idx_voucher_detail_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 378,
+          "endLine": 378
+        },
+        {
+          "name": "idx_voucher_detail_id",
+          "kind": "index",
+          "fields": [],
+          "startLine": 379,
+          "endLine": 379
+        },
+        {
+          "name": "idx_voucher_detail_subject",
+          "kind": "index",
+          "fields": [],
+          "startLine": 380,
+          "endLine": 380
+        },
+        {
+          "name": "idx_voucher_detail_del",
+          "kind": "index",
+          "fields": [],
+          "startLine": 381,
+          "endLine": 381
+        },
+        {
+          "name": "idx_voucher_detail_ledger_subject",
+          "kind": "index",
+          "fields": [],
+          "startLine": 382,
+          "endLine": 382
+        },
+        {
+          "name": "idx_voucher_aux_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 403,
+          "endLine": 403
+        },
+        {
+          "name": "idx_voucher_aux_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 404,
+          "endLine": 404
+        },
+        {
+          "name": "idx_voucher_aux_detail",
+          "kind": "index",
+          "fields": [],
+          "startLine": 405,
+          "endLine": 405
+        },
+        {
+          "name": "idx_voucher_aux_detail_id",
+          "kind": "index",
+          "fields": [],
+          "startLine": 406,
+          "endLine": 406
+        },
+        {
+          "name": "idx_voucher_aux_value",
+          "kind": "index",
+          "fields": [],
+          "startLine": 407,
+          "endLine": 407
+        },
+        {
+          "name": "idx_voucher_aux_del",
+          "kind": "index",
+          "fields": [],
+          "startLine": 408,
+          "endLine": 408
+        },
+        {
+          "name": "uk_case_fund_payment_source",
+          "kind": "index",
+          "fields": [],
+          "startLine": 458,
+          "endLine": 458
+        },
+        {
+          "name": "idx_case_fund_payment_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 459,
+          "endLine": 459
+        },
+        {
+          "name": "idx_case_fund_payment_case",
+          "kind": "index",
+          "fields": [],
+          "startLine": 460,
+          "endLine": 460
+        },
+        {
+          "name": "idx_case_fund_payment_receipt",
+          "kind": "index",
+          "fields": [],
+          "startLine": 461,
+          "endLine": 461
+        },
+        {
+          "name": "idx_case_fund_payment_bank_serial",
+          "kind": "index",
+          "fields": [],
+          "startLine": 462,
+          "endLine": 462
+        },
+        {
+          "name": "idx_case_fund_payment_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 463,
+          "endLine": 463
+        },
+        {
+          "name": "uk_refund_fingerprint",
+          "kind": "index",
+          "fields": [],
+          "startLine": 514,
+          "endLine": 514
+        },
+        {
+          "name": "idx_case_fund_refund_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 515,
+          "endLine": 515
+        },
+        {
+          "name": "idx_case_fund_refund_date",
+          "kind": "index",
+          "fields": [],
+          "startLine": 516,
+          "endLine": 516
+        },
+        {
+          "name": "idx_case_fund_refund_out_type",
+          "kind": "index",
+          "fields": [],
+          "startLine": 517,
+          "endLine": 517
+        },
+        {
+          "name": "idx_case_fund_refund_case",
+          "kind": "index",
+          "fields": [],
+          "startLine": 518,
+          "endLine": 518
+        },
+        {
+          "name": "idx_case_fund_refund_source_receipt",
+          "kind": "index",
+          "fields": [],
+          "startLine": 519,
+          "endLine": 519
+        },
+        {
+          "name": "idx_case_fund_refund_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 520,
+          "endLine": 520
+        },
+        {
+          "name": "uk_case_fund_distribution_source",
+          "kind": "index",
+          "fields": [],
+          "startLine": 560,
+          "endLine": 560
+        },
+        {
+          "name": "idx_case_fund_distribution_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 561,
+          "endLine": 561
+        },
+        {
+          "name": "idx_case_fund_distribution_no",
+          "kind": "index",
+          "fields": [],
+          "startLine": 562,
+          "endLine": 562
+        },
+        {
+          "name": "idx_case_fund_distribution_in_case",
+          "kind": "index",
+          "fields": [],
+          "startLine": 563,
+          "endLine": 563
+        },
+        {
+          "name": "idx_case_fund_distribution_out_case",
+          "kind": "index",
+          "fields": [],
+          "startLine": 564,
+          "endLine": 564
+        },
+        {
+          "name": "idx_case_fund_distribution_receipt",
+          "kind": "index",
+          "fields": [],
+          "startLine": 565,
+          "endLine": 565
+        },
+        {
+          "name": "idx_case_fund_distribution_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 566,
+          "endLine": 566
+        },
+        {
+          "name": "uk_case_fund_unknown_payment_source",
+          "kind": "index",
+          "fields": [],
+          "startLine": 605,
+          "endLine": 605
+        },
+        {
+          "name": "idx_case_fund_unknown_payment_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 606,
+          "endLine": 606
+        },
+        {
+          "name": "idx_case_fund_unknown_payment_bank",
+          "kind": "index",
+          "fields": [],
+          "startLine": 607,
+          "endLine": 607
+        },
+        {
+          "name": "idx_case_fund_unknown_payment_payer",
+          "kind": "index",
+          "fields": [],
+          "startLine": 608,
+          "endLine": 608
+        },
+        {
+          "name": "idx_case_fund_unknown_payment_voucher",
+          "kind": "index",
+          "fields": [],
+          "startLine": 609,
+          "endLine": 609
+        },
+        {
+          "name": "uk_case_fund_bank_statement_source",
+          "kind": "index",
+          "fields": [],
+          "startLine": 644,
+          "endLine": 644
+        },
+        {
+          "name": "idx_case_fund_bank_statement_period",
+          "kind": "index",
+          "fields": [],
+          "startLine": 645,
+          "endLine": 645
+        },
+        {
+          "name": "idx_case_fund_bank_statement_bank",
+          "kind": "index",
+          "fields": [],
+          "startLine": 646,
+          "endLine": 646
+        },
+        {
+          "name": "idx_case_fund_bank_statement_serial",
+          "kind": "index",
+          "fields": [],
+          "startLine": 647,
+          "endLine": 647
+        },
+        {
+          "name": "idx_case_fund_bank_statement_reconcile",
+          "kind": "index",
+          "fields": [],
+          "startLine": 648,
+          "endLine": 648
+        },
+        {
+          "name": "idx_case_fund_bank_reconcile_date",
+          "kind": "index",
+          "fields": [],
+          "startLine": 680,
+          "endLine": 680
+        },
+        {
+          "name": "idx_case_fund_bank_reconcile_status",
+          "kind": "index",
+          "fields": [],
+          "startLine": 681,
+          "endLine": 681
+        },
+        {
+          "name": "idx_case_fund_bank_reconcile_statement",
+          "kind": "index",
+          "fields": [],
+          "startLine": 682,
+          "endLine": 682
+        },
+        {
+          "name": "idx_case_fund_bank_reconcile_biz",
+          "kind": "index",
+          "fields": [],
+          "startLine": 683,
+          "endLine": 683
+        },
+        {
+          "name": "idx_case_fund_bank_reconcile_serial",
+          "kind": "index",
+          "fields": [],
+          "startLine": 684,
+          "endLine": 684
+        },
+        {
+          "name": "uk_case_fund_subject_config",
+          "kind": "index",
+          "fields": [],
+          "startLine": 703,
+          "endLine": 703
+        },
+        {
+          "name": "idx_case_fund_subject_config_subject",
+          "kind": "index",
+          "fields": [],
+          "startLine": 704,
+          "endLine": 704
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 100
+      }
+    },
+    {
+      "path": "backend/database/finance_standard_patch.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 752,
+      "nonEmptyLines": 715,
+      "definitions": [
+        {
+          "name": "fin_aux_opening_balance",
+          "kind": "table",
+          "fields": [
+            "balance_id",
+            "account_set_id",
+            "period",
+            "subject_code",
+            "aux_values_json",
+            "aux_desc",
+            "debit_amount",
+            "credit_amount",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 176,
+          "endLine": 194
+        },
+        {
+          "name": "fin_carry_forward_scheme",
+          "kind": "table",
+          "fields": [
+            "scheme_id",
+            "account_set_id",
+            "scheme_name",
+            "carry_mode",
+            "target_subject_code",
+            "summary_template",
+            "rules_json",
+            "enabled_flag",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 196,
+          "endLine": 213
+        },
+        {
+          "name": "fin_voucher",
+          "kind": "table",
+          "fields": [
+            "voucher_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_date",
+            "voucher_word",
+            "voucher_no",
+            "summary",
+            "debit_amount",
+            "credit_amount",
+            "attachment_count",
+            "status",
+            "source_type",
+            "printed_flag",
+            "prepared_by",
+            "prepared_time",
+            "audit_by",
+            "audit_time",
+            "posted_by",
+            "posted_time",
+            "void_flag",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 215,
+          "endLine": 249
+        },
+        {
+          "name": "fin_voucher_detail",
+          "kind": "table",
+          "fields": [
+            "detail_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_id",
+            "line_no",
+            "subject_code",
+            "summary",
+            "debit_amount",
+            "credit_amount",
+            "verification_status",
+            "aux_desc",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 251,
+          "endLine": 277
+        },
+        {
+          "name": "fin_voucher_aux_value",
+          "kind": "table",
+          "fields": [
+            "id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_id",
+            "detail_id",
+            "aux_type_code",
+            "aux_value",
+            "aux_label",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 309,
+          "endLine": 332
+        },
+        {
+          "name": "fin_case_fund_payment",
+          "kind": "table",
+          "fields": [
+            "payment_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "case_no",
+            "confirmed_flag",
+            "available_flag",
+            "business_type",
+            "payer_name",
+            "party_name",
+            "invoice_title",
+            "payment_amount",
+            "register_type",
+            "trial_case_no",
+            "payment_date",
+            "payment_time",
+            "receipt_no",
+            "invoice_date",
+            "invoice_operator",
+            "payment_method",
+            "cashier_name",
+            "judge_name",
+            "clerk_name",
+            "department_name",
+            "bank_account_no",
+            "bank_serial_no",
+            "payment_order_no",
+            "internal_transfer_ticket_no",
+            "deposit_revoke_flag",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 358,
+          "endLine": 410
+        },
+        {
+          "name": "fin_case_fund_refund",
+          "kind": "table",
+          "fields": [
+            "refund_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "case_no",
+            "handler_name",
+            "clerk_name",
+            "receipt_no",
+            "invoice_date",
+            "refund_date",
+            "source_receipt_no",
+            "source_receipt_date",
+            "out_order_no",
+            "out_status",
+            "out_type",
+            "litigation_position",
+            "party_name",
+            "refund_amount",
+            "total_refund_amount",
+            "payee_party_relation",
+            "payment_method",
+            "actual_payee_name",
+            "payee_identity_no",
+            "payee_bank_account_name",
+            "payee_bank_account_no",
+            "payee_bank_name",
+            "unionpay_no",
+            "same_bank_flag",
+            "handler_note",
+            "applicant_name",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 412,
+          "endLine": 466
+        },
+        {
+          "name": "fin_case_fund_unknown_payment",
+          "kind": "table",
+          "fields": [
+            "unknown_payment_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "court_name",
+            "claim_status",
+            "payer_name",
+            "unknown_amount",
+            "bank_summary",
+            "bank_remark",
+            "transaction_date",
+            "transaction_time",
+            "court_bank_account_no",
+            "arrival_method",
+            "payer_bank_name",
+            "payer_account_no",
+            "claim_user_name",
+            "claim_date",
+            "last_modified_time",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 468,
+          "endLine": 509
+        },
+        {
+          "name": "fin_case_fund_distribution",
+          "kind": "table",
+          "fields": [
+            "distribution_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "distribution_no",
+            "in_case_no",
+            "in_judge_name",
+            "in_party_name",
+            "out_case_no",
+            "out_judge_name",
+            "out_party_name",
+            "invoice_type",
+            "receipt_no",
+            "distribution_amount",
+            "applicant_name",
+            "apply_date",
+            "receive_date",
+            "business_status",
+            "description",
+            "original_invoice_date",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "voucher_status",
+            "voucher_id",
+            "voucher_no",
+            "voucher_period",
+            "voucher_generated_time",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 541,
+          "endLine": 585
+        },
+        {
+          "name": "fin_case_fund_bank_statement",
+          "kind": "table",
+          "fields": [
+            "statement_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "bank_code",
+            "bank_name",
+            "transaction_date",
+            "transaction_time",
+            "direction",
+            "debit_amount",
+            "credit_amount",
+            "balance_amount",
+            "counterparty_account_no",
+            "counterparty_account_name",
+            "counterparty_bank_name",
+            "purpose",
+            "postscript",
+            "bank_serial_no",
+            "reconcile_status",
+            "source_file_name",
+            "source_row_no",
+            "source_fingerprint",
+            "source_raw_json",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 617,
+          "endLine": 653
+        },
+        {
+          "name": "fin_case_fund_bank_reconcile",
+          "kind": "table",
+          "fields": [
+            "reconcile_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "reconcile_date",
+            "statement_id",
+            "biz_type",
+            "biz_id",
+            "biz_no",
+            "bank_serial_no",
+            "bank_amount",
+            "biz_amount",
+            "diff_amount",
+            "match_status",
+            "match_rule",
+            "matched_by",
+            "matched_time",
+            "bank_direction",
+            "bank_summary",
+            "biz_summary",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 655,
+          "endLine": 688
+        },
+        {
+          "name": "fin_case_fund_subject_config",
+          "kind": "table",
+          "fields": [
+            "config_id",
+            "account_set_id",
+            "biz_type",
+            "voucher_biz_type",
+            "business_item_type",
+            "debit_subject_code",
+            "credit_subject_code",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 690,
+          "endLine": 707
+        },
+        {
+          "name": "fin_voucher_no_adjust_log",
+          "kind": "table",
+          "fields": [
+            "adjust_id",
+            "account_set_id",
+            "fiscal_year",
+            "period",
+            "voucher_id",
+            "voucher_date",
+            "voucher_word",
+            "old_voucher_no",
+            "new_voucher_no",
+            "reason",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 709,
+          "endLine": 729
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 13
+      }
+    },
+    {
+      "path": "backend/database/migration_rbac.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 339,
+      "nonEmptyLines": 324,
+      "definitions": [
+        {
+          "name": "fin_permission",
+          "kind": "table",
+          "fields": [
+            "permission_code",
+            "permission_name",
+            "permission_type",
+            "module_code",
+            "description",
+            "sort_order"
+          ],
+          "startLine": 4,
+          "endLine": 11
+        },
+        {
+          "name": "fin_role",
+          "kind": "table",
+          "fields": [
+            "role_id",
+            "role_code",
+            "role_name",
+            "description",
+            "is_system",
+            "view_scope",
+            "status",
+            "created_at",
+            "updated_at"
+          ],
+          "startLine": 13,
+          "endLine": 24
+        },
+        {
+          "name": "fin_role_permission",
+          "kind": "table",
+          "fields": [
+            "role_id",
+            "permission_code"
+          ],
+          "startLine": 26,
+          "endLine": 30
+        },
+        {
+          "name": "fin_user_role",
+          "kind": "table",
+          "fields": [
+            "user_id",
+            "role_id"
+          ],
+          "startLine": 32,
+          "endLine": 36
+        },
+        {
+          "name": "fin_user_account_set",
+          "kind": "table",
+          "fields": [
+            "user_id",
+            "account_set_id"
+          ],
+          "startLine": 38,
+          "endLine": 42
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 5
+      }
+    },
+    {
+      "path": "backend/database/opening_balance.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 16,
+      "nonEmptyLines": 16,
+      "definitions": [
+        {
+          "name": "fin_opening_balance",
+          "kind": "table",
+          "fields": [
+            "balance_id",
+            "account_set_id",
+            "period",
+            "subject_code",
+            "debit_amount",
+            "credit_amount",
+            "created_by",
+            "created_time",
+            "updated_by",
+            "updated_time",
+            "del_flag",
+            "version",
+            "remark"
+          ],
+          "startLine": 1,
+          "endLine": 16
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 1
+      }
+    },
+    {
+      "path": "backend/database/preset_case_fund_template.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 71,
+      "nonEmptyLines": 66,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 0
+      }
+    },
+    {
+      "path": "backend/database/standard_aux_types.sql",
+      "language": "sql",
+      "fileCategory": "data",
+      "totalLines": 18,
+      "nonEmptyLines": 18,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "definitionCount": 0
+      }
+    }
+  ]
+}

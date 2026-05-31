@@ -7,7 +7,7 @@
           <span class="brand-mark-core" />
         </div>
         <div class="brand-info">
-          <strong>法院专项账务</strong>
+          <strong>树莓法衡</strong>
           <small>{{ context.accountSetName || context.unitName || '账套未选择' }}</small>
         </div>
         <el-button
@@ -46,7 +46,7 @@
           <el-menu-item v-if="context.hasPermission('menu:book:subject_summary')" index="/books/subject-summary">科目汇总表</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:book:aux_balance')" index="/books/aux-balance">辅助核算余额表</el-menu-item>
         </el-sub-menu>
-        <el-sub-menu v-if="context.bizType === 'CASE_FUND' && context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
+        <el-sub-menu v-if="fundBusinessMenuBizTypes.includes(context.bizType) && context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
           <template #title>
             <el-icon><Coin /></el-icon>
             <span>案款业务</span>
@@ -54,8 +54,8 @@
           <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">缴费登记查询</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">出账查询</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:unknown_payment')" index="/case-fund/unknown-payments">不明款</el-menu-item>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:distribution')" index="/case-fund/distributions">案款分配</el-menu-item>
+          <el-menu-item v-if="context.bizType === 'CASE_FUND' && context.hasPermission('menu:case_fund:unknown_payment')" index="/case-fund/unknown-payments">不明款</el-menu-item>
+          <el-menu-item v-if="context.bizType === 'CASE_FUND' && context.hasPermission('menu:case_fund:distribution')" index="/case-fund/distributions">案款分配</el-menu-item>
         </el-sub-menu>
         <el-menu-item v-if="context.hasPermission('period:close')" index="/period/close">
           <el-icon><Calendar /></el-icon>
@@ -111,6 +111,7 @@
           </div>
           <span class="topbar-divider" />
           <el-button type="primary" plain @click="switchAccountSet">切换账套</el-button>
+          <el-button :icon="Key" plain title="修改密码" @click="openChangePasswordDialog">修改密码</el-button>
           <el-button :icon="SwitchButton" circle title="退出登录" @click="handleLogout" />
         </div>
       </el-header>
@@ -134,13 +135,16 @@
       </el-main>
     </el-container>
   </el-container>
-  <ForceChangePasswordDialog />
+  <ForceChangePasswordDialog
+    :manual-visible="changePasswordDialogVisible"
+    @update:manual-visible="changePasswordDialogVisible = $event"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Calendar, Close, Coin, DataLine, Expand, Fold, Grid, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
+import { Calendar, Close, Coin, DataLine, Expand, Fold, Grid, Key, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
 
@@ -150,6 +154,7 @@ const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
 const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance']
 const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement', 'menu:case_fund:unknown_payment', 'menu:case_fund:distribution']
+const fundBusinessMenuBizTypes = ['CASE_FUND', 'LITIGATION_FEE']
 const baseMenuPermissions = ['menu:base:subject', 'menu:base:opening', 'menu:base:aux', 'menu:base:carry_forward']
 const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:account_set', 'menu:system:audit_log']
 
@@ -191,6 +196,7 @@ const isAuthPage = computed(() => route.path === '/login' || route.path === '/se
 const defaultTabs: PageTab[] = [{ path: '/dashboard', title: '首页看板', closable: false }]
 const openedTabs = ref<PageTab[]>(loadTabs())
 const sidebarCollapsed = ref(false)
+const changePasswordDialogVisible = ref(false)
 const sidebarWidth = computed(() => sidebarCollapsed.value ? '64px' : '200px')
 const sidebarToggleTitle = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
@@ -267,6 +273,10 @@ const switchAccountSet = () => {
   localStorage.removeItem(tabsStorageKey)
   openedTabs.value = [...defaultTabs]
   router.push({ path: '/select-account-set', query: { switch: '1' } })
+}
+
+const openChangePasswordDialog = () => {
+  changePasswordDialogVisible.value = true
 }
 
 const toggleSidebar = () => {
