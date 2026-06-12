@@ -24,7 +24,10 @@ http.interceptors.response.use((response) => {
   const result = response.data
   if (result && result.code !== 20000) {
     ElMessage.error(result.message || '请求失败')
-    return Promise.reject(new Error(result.message))
+    const error = new Error(result.message || '请求失败')
+    ;(error as any).data = result.data
+    ;(error as any).result = result
+    return Promise.reject(error)
   }
   return result.data
 })

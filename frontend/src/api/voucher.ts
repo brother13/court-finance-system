@@ -30,6 +30,9 @@ export const voucherApi = {
   audit(period: string, voucherId: string) {
     return apiAction('/voucher/audit', { period, voucher_id: voucherId }) as Promise<void>
   },
+  batchAudit(period: string, voucherIds: string[]) {
+    return apiAction('/voucher/batchAudit', { period, voucher_ids: voucherIds }) as Promise<{ audited_count: number }>
+  },
   unaudit(period: string, voucherId: string) {
     return apiAction('/voucher/unaudit', { period, voucher_id: voucherId }) as Promise<void>
   },

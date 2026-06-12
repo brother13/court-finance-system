@@ -95,6 +95,19 @@ if (empty($first['source_fingerprint']) || strlen($first['source_fingerprint']) 
     exit(1);
 }
 
+$source = file_get_contents($modelPath);
+foreach ([
+    'updateExistingRefundFromImport' => 'Refund import should overwrite existing inactive generated rows',
+    'canOverwriteGeneratedBusinessRow' => 'Refund import should allow overwriting generated rows only when original voucher is deleted or missing',
+    'hasActiveGeneratedVoucher($row)' => 'Refund import should keep active generated voucher rows from being overwritten',
+    "'updated' => \$updated" => 'Refund import result should report updated rows',
+] as $needle => $message) {
+    if (strpos($source, $needle) === false) {
+        fwrite(STDERR, $message . PHP_EOL);
+        exit(1);
+    }
+}
+
 $allowedMethod = new ReflectionMethod(CaseFund::class, 'allowedRefundOutTypes');
 $allowedMethod->setAccessible(true);
 $caseFundTypes = $allowedMethod->invoke($caseFund, 'CASE_FUND');

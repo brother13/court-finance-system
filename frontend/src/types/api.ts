@@ -46,6 +46,10 @@ export interface AccountSet {
   current_period?: string
   current_period_label?: string
   finance_manager?: string
+  bank_account_name?: string
+  bank_account_no?: string
+  bank_name?: string
+  bank_branch_name?: string
   paper_size?: string
   voucher_import_auto_no?: number
   voucher_print_line_count?: number
@@ -416,8 +420,9 @@ export interface CaseFundSubjectConfig {
   config_id?: string
   account_set_id?: string
   biz_type?: string
-  voucher_biz_type?: 'PAYMENT' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
+  voucher_biz_type?: 'PAYMENT' | 'PAYMENT_METHOD' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
   business_item_type: string
+  business_item_label?: string
   debit_subject_code: string
   debit_subject_name?: string
   credit_subject_code: string
@@ -428,7 +433,9 @@ export interface CaseFundSubjectConfig {
 export interface CaseFundSubjectConfigResult {
   items: CaseFundSubjectConfig[]
   biz_type: string
-  voucher_biz_type: 'PAYMENT' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
+  voucher_biz_type: 'PAYMENT' | 'PAYMENT_METHOD' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
   generate_voucher_by_day_flag?: number
+  generate_payment_voucher_by_method_flag?: number
   generate_refund_voucher_by_out_order_no_flag?: number
+  payment_method_items?: CaseFundSubjectConfig[]
 }

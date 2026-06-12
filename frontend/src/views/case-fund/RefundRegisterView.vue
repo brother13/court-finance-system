@@ -22,7 +22,6 @@
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handleRefundImportFile" />
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
         <el-dropdown v-if="canUseMoreActions" trigger="click" @command="handleMoreAction">
           <el-button :icon="MoreFilled">
             更多功能
@@ -51,6 +50,10 @@
       <div>
         <span>未制证</span>
         <strong>{{ ungeneratedCount }}</strong>
+      </div>
+      <div class="case-fund-summary-actions">
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" plain :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
       </div>
     </div>
 
@@ -359,9 +362,29 @@ const handleRefundImportFile = async (event: Event) => {
     ElMessage.success(`导入完成：新增${result.created}条，跳过重复${result.skipped}条`)
     page.value = 1
     await load()
+  } catch (error: any) {
+    await showRefundImportError(error)
   } finally {
     importing.value = false
   }
+}
+
+const showRefundImportError = async (error: any) => {
+  const details = Array.isArray(error?.data) ? error.data.filter(Boolean).map(String) : []
+  if (details.length === 0) {
+    return
+  }
+  const visibleDetails = details.slice(0, 80)
+  const moreText = details.length > visibleDetails.length ? `\n还有 ${details.length - visibleDetails.length} 条错误未显示，请先处理前面错误后重新导入。` : ''
+  await ElMessageBox.alert(
+    `${visibleDetails.join('\n')}${moreText}`,
+    '校验明细',
+    {
+      type: 'error',
+      confirmButtonText: '知道了',
+      customClass: 'import-validation-dialog'
+    }
+  ).catch(() => {})
 }
 
 const readFileBase64 = (file: File) => {
@@ -408,6 +431,13 @@ const handleSelectionChange = (selection: CaseFundRefund[]) => {
   selectedRefundIds.value = selection.map((row) => row.refund_id)
 }
 
+const buildGenerateVoucherQueryPayload = () => ({
+  date_start: filters.date_start,
+  date_end: filters.date_end,
+  voucher_status: 'UNGENERATED',
+  keyword: filters.keyword
+})
+
 const handleGenerateVoucher = async () => {
   if (selectedRefundIds.value.length === 0) {
     ElMessage.warning('请选择要生成凭证的退付记录')
@@ -435,18 +465,38 @@ const handleGenerateVoucher = async () => {
   }
 }
 
+const handleGenerateVoucherByQuery = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定按当前查询条件生成全部未制证出账记录的凭证吗？该操作不受当前分页限制。',
+      '按查询条件生成凭证',
+      { confirmButtonText: '按查询生成', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  generating.value = true
+  try {
+    const result = await caseFundApi.refundGenerateVoucherByQuery(buildGenerateVoucherQueryPayload())
+    ElMessage.success(`成功生成 ${result.generated_count} 张凭证，处理 ${result.refund_count} 条出账记录`)
+    selectedRefundIds.value = []
+    selectedRefundRows.value = []
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成凭证失败')
+  } finally {
+    generating.value = false
+  }
+}
+
 const handleDeleteRefunds = async () => {
   if (selectedRefundIds.value.length === 0) {
     ElMessage.warning('请选择要删除的未制证退付记录')
     return
   }
-  if (selectedRefundRows.value.some((row) => row.voucher_status !== 'UNGENERATED')) {
-    ElMessage.warning('已制证退付记录不能删除；如原凭证已删除，请使用生成凭证重新制证')
-    return
-  }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedRefundIds.value.length} 条退付记录吗？已制证或已对账的数据不能删除。`,
+      `确定要删除选中的 ${selectedRefundIds.value.length} 条退付记录吗？已制证且原凭证仍有效、或已对账的数据不能删除。`,
       '确认删除退付记录',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -523,12 +573,13 @@ onMounted(load)
 
 .case-fund-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(112px, 150px)) minmax(260px, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 
 .case-fund-summary > div {
-  padding: 14px 16px;
+  padding: 8px 12px;
   background: var(--card-bg);
   border: 1px solid var(--border-light);
   border-radius: 8px;
@@ -537,15 +588,24 @@ onMounted(load)
 .case-fund-summary span {
   display: block;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .case-fund-summary strong {
   display: block;
-  margin-top: 6px;
+  margin-top: 2px;
   color: var(--text-main);
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1.2;
+}
+
+.case-fund-summary-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
 }
 
 .case-fund-table-shell {
@@ -582,6 +642,15 @@ onMounted(load)
 
   .case-fund-filters {
     flex-wrap: wrap;
+  }
+
+  .case-fund-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .case-fund-summary-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .case-fund-search {

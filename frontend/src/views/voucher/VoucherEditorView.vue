@@ -32,7 +32,14 @@
       </label>
       <label>
         <span>日期</span>
-        <el-date-picker v-model="form.voucherDate" type="date" value-format="YYYY-MM-DD" :disabled="isReadonly" style="width: 150px" />
+        <el-date-picker
+          v-model="form.voucherDate"
+          type="date"
+          value-format="YYYY-MM-DD"
+          :disabled="isReadonly"
+          style="width: 150px"
+          @change="handleVoucherDateChange"
+        />
       </label>
       <label>
         <span>附单据数</span>
@@ -210,10 +217,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, CircleCheck, DocumentChecked, Plus, Refresh, WarningFilled } from '@element-plus/icons-vue'
+import { authApi } from '../../api/auth'
 import { baseApi } from '../../api/base'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
@@ -241,6 +249,9 @@ const currentLine = ref<VoucherLine | null>(null)
 const saving = ref(false)
 const voucherWords = ['记', '收', '付', '转']
 const DEFAULT_VOUCHER_LINE_COUNT = 6
+const VOUCHER_DRAFT_STORAGE_PREFIX = 'court-finance-voucher-new-draft'
+const draftReady = ref(false)
+const suppressDraftPersist = ref(false)
 
 const todayInPeriod = () => {
   const today = new Date()
@@ -249,6 +260,11 @@ const todayInPeriod = () => {
   const d = `${today.getDate()}`.padStart(2, '0')
   const text = `${y}-${m}-${d}`
   return text.startsWith(context.period) ? text : `${context.period}-01`
+}
+
+const periodFromVoucherDate = (voucherDate: string) => {
+  const text = String(voucherDate || '')
+  return /^\d{4}-(0[1-9]|1[0-2])-\d{2}$/.test(text) ? text.slice(0, 7) : ''
 }
 
 const createLine = (): VoucherLine => ({
@@ -279,6 +295,7 @@ const form = reactive({
 })
 
 const pageMode = computed(() => String(route.meta.mode || (route.params.voucherId ? 'view' : 'new')))
+const isNewMode = computed(() => pageMode.value === 'new')
 const isViewMode = computed(() => pageMode.value === 'view')
 const isEditMode = computed(() => pageMode.value === 'edit')
 const editableStatuses = ['DRAFT', 'SUBMITTED']
@@ -312,6 +329,27 @@ const difference = computed(() => Number((totalDebit.value - totalCredit.value).
 const isBalanced = computed(() => difference.value === 0)
 const validLineCount = computed(() => form.details.filter((line) => line.subjectCode || line.summary || parseAmount(line.debitText) || parseAmount(line.creditText)).length)
 const uppercaseAmount = computed(() => toChineseAmount(Math.max(totalDebit.value, totalCredit.value)))
+const draftStorageKey = computed(() => [
+  VOUCHER_DRAFT_STORAGE_PREFIX,
+  context.accountSetId || 'no-account-set',
+  context.period || form.period || 'no-period',
+  context.userId || 'no-user'
+].map(encodeURIComponent).join(':'))
+const formSnapshot = computed(() => ({
+  voucherWord: form.voucherWord,
+  voucherNo: form.voucherNo,
+  period: form.period,
+  voucherDate: form.voucherDate,
+  attachmentCount: form.attachmentCount,
+  details: form.details.map((line) => ({
+    summary: line.summary,
+    subjectCode: line.subjectCode,
+    debitText: line.debitText,
+    creditText: line.creditText,
+    auxValues: { ...line.auxValues },
+    auxLabels: { ...line.auxLabels }
+  }))
+}))
 
 const parseAmount = (value: string) => {
   const normalized = String(value || '').replace(/,/g, '').trim()
@@ -327,11 +365,47 @@ const loadNextNo = async () => {
   form.voucherNo = result.voucher_no
 }
 
+const applyVoucherPeriod = async (period: string) => {
+  if (!period || period === form.period) return
+  form.period = period
+  context.setPeriod(period)
+  await loadNextNo()
+}
+
+const handleVoucherDateChange = async () => {
+  if (isReadonly.value) return
+  const datePeriod = periodFromVoucherDate(form.voucherDate)
+  if (!datePeriod) return
+  await applyVoucherPeriod(datePeriod)
+}
+
+const syncCurrentAccountSetPeriod = async () => {
+  if (!isNewMode.value || !context.accountSetId) return
+  try {
+    const accountSets = await authApi.accountSets()
+    const currentAccountSet = accountSets.find((item) => item.account_set_id === context.accountSetId)
+    if (!currentAccountSet) return
+    const nextPeriod = currentAccountSet.current_period || currentAccountSet.enabled_period || context.period
+    if (nextPeriod && nextPeriod !== context.period) {
+      context.selectAccountSet(currentAccountSet, Number(nextPeriod.slice(0, 4)) || context.year)
+      form.period = context.period
+      form.voucherDate = todayInPeriod()
+    }
+  } catch {
+    // Keep the cached period if the refresh fails; backend validation remains authoritative.
+  }
+}
+
 const loadSubjectConfig = async (subjectCode: string) => {
   if (!subjectCode || auxConfigMap[subjectCode]) return
   const configs = await baseApi.subjectConfig(subjectCode)
   auxConfigMap[subjectCode] = configs
   await Promise.all(configs.map((config) => loadAuxArchives(config.aux_type_code)))
+}
+
+const loadSubjectConfigsForLines = async (lines: VoucherLine[]) => {
+  const subjectCodes = Array.from(new Set(lines.map((line) => line.subjectCode).filter(Boolean)))
+  await Promise.all(subjectCodes.map((subjectCode) => loadSubjectConfig(subjectCode)))
 }
 
 const loadAuxArchives = async (code: string) => {
@@ -498,6 +572,7 @@ const fillBalanceForLastLine = () => {
 }
 
 const resetVoucher = async () => {
+  suppressDraftPersist.value = true
   form.voucherWord = '记'
   form.period = context.period
   form.voucherDate = todayInPeriod()
@@ -507,11 +582,16 @@ const resetVoucher = async () => {
   form.postedBy = ''
   form.status = 'SUBMITTED'
   form.details = createVoucherLines()
-  await loadNextNo()
+  clearCachedNewVoucherDraft()
+  try {
+    await loadNextNo()
+  } finally {
+    suppressDraftPersist.value = false
+  }
 }
 
 const validateBeforeSave = () => {
-  if (!form.voucherDate.startsWith(form.period)) return '凭证日期必须在当前会计期间内'
+  if (!periodFromVoucherDate(form.voucherDate)) return '凭证日期格式不正确'
   const validRows = form.details.filter((line) => line.summary || line.subjectCode || parseAmount(line.debitText) || parseAmount(line.creditText))
   if (validRows.length < 2) return '凭证明细至少两行'
   for (let i = 0; i < validRows.length; i++) {
@@ -532,8 +612,9 @@ const validateBeforeSave = () => {
 
 const toPayload = (): Voucher => {
   const validRows = form.details.filter((line) => line.summary || line.subjectCode || parseAmount(line.debitText) || parseAmount(line.creditText))
+  const payloadPeriod = periodFromVoucherDate(form.voucherDate) || form.period
   const payload = {
-    period: form.period,
+    period: payloadPeriod,
     voucher_date: form.voucherDate,
     voucher_word: form.voucherWord,
     attachment_count: form.attachmentCount,
@@ -573,6 +654,7 @@ const submit = async () => {
       await voucherApi.save(payload)
     } else {
       await voucherApi.submit(payload)
+      clearCachedNewVoucherDraft()
     }
     ElMessage.success(isEditMode.value ? '凭证修改已保存' : '凭证已保存，状态：未审核')
     await router.push('/vouchers')
@@ -616,15 +698,103 @@ const toChineseAmount = (amount: number) => {
 }
 
 onMounted(async () => {
+  await syncCurrentAccountSetPeriod()
   subjects.value = await baseApi.subjects()
   const voucherId = route.params.voucherId as string | undefined
   const period = (route.params.period as string | undefined) || form.period
   if (voucherId) {
     await loadVoucherDetail(period, voucherId)
   } else {
-    await loadNextNo()
+    const restored = restoreCachedNewVoucherDraft()
+    if (restored) {
+      await loadDraftSubjectConfigs()
+    } else {
+      await loadNextNo()
+    }
+    draftReady.value = true
   }
 })
+
+const hasNewVoucherDraftContent = () => {
+  if (form.voucherWord !== '记') return true
+  if (form.voucherDate !== todayInPeriod()) return true
+  if (Number(form.attachmentCount || 0) > 0) return true
+  return form.details.some((line) => {
+    return Boolean(
+      line.summary ||
+      line.subjectCode ||
+      line.debitText ||
+      line.creditText ||
+      Object.values(line.auxValues || {}).some((value) => value) ||
+      Object.values(line.auxLabels || {}).some((value) => value)
+    )
+  })
+}
+
+const clearCachedNewVoucherDraft = () => {
+  try {
+    sessionStorage.removeItem(draftStorageKey.value)
+  } catch {
+    // Ignore storage failures; the editor should still behave normally.
+  }
+}
+
+const persistNewVoucherDraft = () => {
+  if (!isNewMode.value || !draftReady.value || suppressDraftPersist.value) return
+  try {
+    if (!hasNewVoucherDraftContent()) {
+      sessionStorage.removeItem(draftStorageKey.value)
+      return
+    }
+    sessionStorage.setItem(draftStorageKey.value, JSON.stringify(formSnapshot.value))
+  } catch {
+    // Browser storage can be unavailable or full; saving the voucher remains the source of truth.
+  }
+}
+
+const restoreCachedNewVoucherDraft = () => {
+  if (!isNewMode.value) return false
+  try {
+    const raw = sessionStorage.getItem(draftStorageKey.value)
+    if (!raw) return false
+    const draft = JSON.parse(raw) as Partial<typeof formSnapshot.value>
+    form.voucherWord = String(draft.voucherWord || '记')
+    form.voucherNo = Number(draft.voucherNo || 0)
+    form.voucherDate = String(draft.voucherDate || todayInPeriod())
+    form.period = periodFromVoucherDate(form.voucherDate) || String(draft.period || context.period)
+    form.attachmentCount = Number(draft.attachmentCount || 0)
+    form.preparedBy = ''
+    form.auditBy = ''
+    form.postedBy = ''
+    form.status = 'SUBMITTED'
+    const details = Array.isArray(draft.details) ? draft.details : []
+    form.details = details.length
+      ? details.map((line) => ({
+          uid: createLine().uid,
+          summary: String(line?.summary || ''),
+          subjectCode: String(line?.subjectCode || ''),
+          debitText: String(line?.debitText || ''),
+          creditText: String(line?.creditText || ''),
+          auxValues: { ...(line?.auxValues || {}) },
+          auxLabels: { ...(line?.auxLabels || {}) }
+        }))
+      : createVoucherLines()
+    return true
+  } catch {
+    clearCachedNewVoucherDraft()
+    return false
+  }
+}
+
+const loadDraftSubjectConfigs = async () => {
+  await loadSubjectConfigsForLines(form.details)
+}
+
+watch(
+  formSnapshot,
+  () => persistNewVoucherDraft(),
+  { deep: true }
+)
 
 async function loadVoucherDetail(period: string, voucherId: string) {
   const data = (await voucherApi.detail(period, voucherId)) as any
@@ -640,6 +810,7 @@ async function loadVoucherDetail(period: string, voucherId: string) {
 
   const detailRows = (data.details || []) as any[]
   const lines: VoucherLine[] = []
+  const selectedAuxEntries: Array<{ code: string; value: string; label: string }> = []
   for (const item of detailRows) {
     const subjectCode = item.subject_code || item.subjectCode || ''
     const debit = Number(item.debit_amount || item.debitAmount || 0)
@@ -647,7 +818,6 @@ async function loadVoucherDetail(period: string, voucherId: string) {
     const auxArr = (item.aux_values || item.auxValues || []) as any[]
     const auxValues: Record<string, string> = {}
     const auxLabels: Record<string, string> = {}
-    const selectedAuxEntries: Array<{ code: string; value: string; label: string }> = []
     auxArr.forEach((aux: any) => {
       const code = aux.aux_type_code || aux.auxTypeCode
       const value = aux.aux_value || aux.auxValue
@@ -656,10 +826,6 @@ async function loadVoucherDetail(period: string, voucherId: string) {
       if (code) auxLabels[code] = label || ''
       if (code && value) selectedAuxEntries.push({ code, value, label: label || value })
     })
-    if (subjectCode) {
-      await loadSubjectConfig(subjectCode)
-    }
-    selectedAuxEntries.forEach(({ code, value, label }) => ensureSelectedAuxArchive(code, value, label))
     lines.push({
       uid: `${item.detail_id || item.detailId || Date.now()}-${Math.random()}`,
       summary: item.summary || '',
@@ -671,5 +837,7 @@ async function loadVoucherDetail(period: string, voucherId: string) {
     })
   }
   form.details = lines.length > 0 ? lines : [createLine(), createLine()]
+  await loadSubjectConfigsForLines(form.details)
+  selectedAuxEntries.forEach(({ code, value, label }) => ensureSelectedAuxArchive(code, value, label))
 }
 </script>

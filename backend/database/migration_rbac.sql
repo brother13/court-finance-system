@@ -64,7 +64,7 @@ insert into fin_permission (permission_code, permission_name, permission_type, m
 ('menu:book:subject_summary', '科目汇总表', 1, 'book', '/books/subject-summary', 33),
 ('menu:book:aux_balance', '辅助核算余额表', 1, 'book', '/books/aux-balance', 34),
 ('menu:case_fund', '案款业务', 1, 'case_fund', '/case-fund/*', 35),
-('menu:case_fund:payment', '缴费登记查询', 1, 'case_fund', '/case-fund/payments', 36),
+('menu:case_fund:payment', '缴费登记', 1, 'case_fund', '/case-fund/payments', 36),
 ('menu:case_fund:refund', '出账查询', 1, 'case_fund', '/case-fund/refunds', 37),
 ('menu:case_fund:bank_statement', '银行对账单', 1, 'case_fund', '/case-fund/bank-statements', 38),
 ('menu:case_fund:unknown_payment', '不明款', 1, 'case_fund', '/case-fund/unknown-payments', 39),

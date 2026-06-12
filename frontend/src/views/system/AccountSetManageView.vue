@@ -31,6 +31,12 @@
         <el-table-column prop="finance_manager" label="财务主管" width="150">
           <template #default="{ row }">{{ row.finance_manager || '-' }}</template>
         </el-table-column>
+        <el-table-column prop="bank_account_no" label="绑定银行账号" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.bank_account_no || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="bank_name" label="开户银行" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.bank_name || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="paper_size" label="纸张大小" width="130" />
         <el-table-column label="操作" width="120" fixed="right" align="center">
           <template #default="{ row }">
@@ -75,6 +81,29 @@
         <el-col :span="12">
           <el-form-item label="会计主管">
             <el-input v-model.trim="form.finance_manager" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="24">
+          <div class="form-section-title">账户设置</div>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="账户户名">
+            <el-input v-model.trim="form.bank_account_name" placeholder="如 沈阳市苏家屯区人民法院" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="银行账号" prop="bank_account_no">
+            <el-input v-model.trim="form.bank_account_no" placeholder="用于后续导入数据匹配账套" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="开户银行">
+            <el-input v-model.trim="form.bank_name" placeholder="如 盛京银行" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="开户支行">
+            <el-input v-model.trim="form.bank_branch_name" />
           </el-form-item>
         </el-col>
         <el-col :span="12">
@@ -133,6 +162,10 @@ const form = reactive({
   biz_type: 'CASE_FUND',
   enabled_period: '',
   finance_manager: '',
+  bank_account_name: '',
+  bank_account_no: '',
+  bank_name: '',
+  bank_branch_name: '',
   paper_size: 'A5',
   voucher_import_auto_no: 1,
   voucher_print_line_count: 8
@@ -141,7 +174,8 @@ const form = reactive({
 const rules = computed<FormRules>(() => ({
   set_name: [{ required: true, message: '请输入单位名称', trigger: 'blur' }],
   biz_type: [{ required: true, message: '请选择业务类型', trigger: 'change' }],
-  enabled_period: [{ required: true, message: '请选择账套启用年月', trigger: 'change' }]
+  enabled_period: [{ required: true, message: '请选择账套启用年月', trigger: 'change' }],
+  bank_account_no: [{ required: true, message: '请输入绑定银行账号', trigger: 'blur' }]
 }))
 
 const load = async () => {
@@ -161,6 +195,10 @@ const resetForm = () => {
     biz_type: 'CASE_FUND',
     enabled_period: '',
     finance_manager: '',
+    bank_account_name: '',
+    bank_account_no: '',
+    bank_name: '',
+    bank_branch_name: '',
     paper_size: 'A5',
     voucher_import_auto_no: 1,
     voucher_print_line_count: 8
@@ -180,6 +218,10 @@ const openEdit = (row: AccountSet) => {
     biz_type: row.biz_type,
     enabled_period: row.enabled_period,
     finance_manager: row.finance_manager || '',
+    bank_account_name: row.bank_account_name || '',
+    bank_account_no: row.bank_account_no || '',
+    bank_name: row.bank_name || '',
+    bank_branch_name: row.bank_branch_name || '',
     paper_size: row.paper_size || 'A5',
     voucher_import_auto_no: Number(row.voucher_import_auto_no ?? 1),
     voucher_print_line_count: Number(row.voucher_print_line_count || 8)
@@ -206,3 +248,15 @@ const save = async () => {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.form-section-title {
+  margin: 4px 0 14px;
+  padding-left: 10px;
+  border-left: 3px solid var(--el-color-primary);
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+</style>

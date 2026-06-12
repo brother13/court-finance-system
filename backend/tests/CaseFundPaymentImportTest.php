@@ -37,6 +37,52 @@ require_once $modelPath;
 
 use app\finance\model\CaseFund;
 
+class CaseFundPaymentImportFakeQuery
+{
+    private $rows;
+    private $count;
+
+    public function __construct($rows, $count = 0)
+    {
+        $this->rows = $rows;
+        $this->count = $count;
+    }
+
+    public function where()
+    {
+        return $this;
+    }
+
+    public function field()
+    {
+        return $this;
+    }
+
+    public function select()
+    {
+        return $this->rows;
+    }
+
+    public function count()
+    {
+        return $this->count;
+    }
+}
+
+class CaseFundPaymentImportDuplicateProbe extends CaseFund
+{
+    public static $existingPaymentRows = [];
+    public static $activeVoucherCount = 0;
+
+    public static function getdb($table = '')
+    {
+        if ($table === 'fin_voucher') {
+            return new CaseFundPaymentImportFakeQuery([], self::$activeVoucherCount);
+        }
+        return new CaseFundPaymentImportFakeQuery(self::$existingPaymentRows);
+    }
+}
+
 $xlsPath = '/Users/apple/Documents/缴费登记.xls';
 if (!file_exists($xlsPath)) {
     fwrite(STDERR, 'Sample payment xls file does not exist' . PHP_EOL);
@@ -48,7 +94,7 @@ if (!file_exists($litigationXlsPath)) {
     exit(1);
 }
 
-$caseFund = new CaseFund();
+$caseFund = new CaseFundPaymentImportDuplicateProbe();
 $parseMethod = new ReflectionMethod(CaseFund::class, 'parsePaymentImportRowsFromXls');
 $parseMethod->setAccessible(true);
 $rows = $parseMethod->invoke($caseFund, file_get_contents($xlsPath));
@@ -115,8 +161,11 @@ if ($accountAmountKey !== 'account_amount:0334210102000370000717900|551788.00') 
 $source = file_get_contents($modelPath);
 foreach ([
     'loadExistingPaymentsForImport' => 'Payment import should load existing rows by duplicate key',
+    "'source_fingerprint', 'in'" => 'Payment import should load existing rows by source fingerprint to avoid uk_case_fund_payment_source conflicts',
     'updateExistingPaymentFromImport' => 'Payment import should overwrite ungenerated existing rows',
-    "'voucher_status'] !== 'UNGENERATED'" => 'Payment import should skip generated existing rows',
+    "\$update['del_flag'] = 0" => 'Payment import should restore legacy soft-deleted rows when reimporting the same source fingerprint',
+    'canOverwriteGeneratedBusinessRow' => 'Payment import should allow overwriting generated rows only when original voucher is deleted or missing',
+    'hasActiveGeneratedVoucher($row)' => 'Payment import should keep active generated voucher rows from being overwritten',
     "'updated' => \$updated" => 'Payment import result should report updated rows',
 ] as $needle => $message) {
     if (strpos($source, $needle) === false) {
@@ -129,22 +178,22 @@ $allowedMethod = new ReflectionMethod(CaseFund::class, 'allowedPaymentBusinessTy
 $allowedMethod->setAccessible(true);
 $caseFundTypes = $allowedMethod->invoke($caseFund, 'CASE_FUND');
 $litigationFeeTypes = $allowedMethod->invoke($caseFund, 'LITIGATION_FEE');
-if (!in_array('执行、调解款', $caseFundTypes, true) || !in_array('执行、调节款', $caseFundTypes, true)) {
-    fwrite(STDERR, 'CASE_FUND should allow execution mediation payment types' . PHP_EOL);
+if ($caseFundTypes !== ['执行、调解款']) {
+    fwrite(STDERR, 'CASE_FUND should only allow execution mediation payment type' . PHP_EOL);
     exit(1);
 }
-if (!in_array('预收诉讼费', $litigationFeeTypes, true) || !in_array('诉讼费预收', $litigationFeeTypes, true)) {
-    fwrite(STDERR, 'LITIGATION_FEE should allow prepaid litigation fee payment type aliases' . PHP_EOL);
+if ($litigationFeeTypes !== ['诉讼费直接结算', '诉讼费预收']) {
+    fwrite(STDERR, 'LITIGATION_FEE should only allow litigation fee direct settlement and prepaid payment types' . PHP_EOL);
     exit(1);
 }
 
 $validateMethod = new ReflectionMethod(CaseFund::class, 'validatePaymentRows');
 $validateMethod->setAccessible(true);
 $wrongBizRows = [$rows[0]];
-$wrongBizRows[0]['business_type'] = '预收诉讼费';
+$wrongBizRows[0]['business_type'] = '执行、调节款';
 $wrongBizErrors = $validateMethod->invoke($caseFund, $wrongBizRows, 'CASE_FUND');
 if (empty($wrongBizErrors) || strpos(implode("\n", $wrongBizErrors), '当前账套不允许导入业务类型') === false) {
-    fwrite(STDERR, 'CASE_FUND validation should reject prepaid litigation fee rows' . PHP_EOL);
+    fwrite(STDERR, 'CASE_FUND validation should reject non-standard execution mediation payment rows' . PHP_EOL);
     exit(1);
 }
 
@@ -159,6 +208,53 @@ if (!empty($errors)) {
     exit(1);
 }
 
+$duplicateFileRows = [$rows[0], $rows[1]];
+$duplicateFileRows[1]['receipt_no'] = $duplicateFileRows[0]['receipt_no'];
+$duplicateFileErrors = $validateMethod->invoke($caseFund, $duplicateFileRows, 'CASE_FUND');
+if (empty($duplicateFileErrors) || strpos(implode("\n", $duplicateFileErrors), '与第' . $duplicateFileRows[0]['source_row_no'] . '行重复') === false) {
+    fwrite(STDERR, 'Payment import validation should report duplicate receipt numbers inside the same file' . PHP_EOL);
+    exit(1);
+}
+
+$duplicateProbe = new CaseFundPaymentImportDuplicateProbe();
+CaseFundPaymentImportDuplicateProbe::$existingPaymentRows = [[
+    'payment_id' => 'existing-payment-id',
+    'receipt_no' => $rows[0]['receipt_no'],
+    'case_no' => '（2026）辽0111执1号',
+    'payer_name' => '已存在缴费人',
+    'party_name' => '',
+    'payment_amount' => '88.00',
+    'payment_date' => '2026-05-01',
+    'payment_time' => '2026-05-01 09:00:00',
+    'source_file_name' => '历史缴费登记.xls',
+    'source_row_no' => 12,
+    'voucher_status' => 'UNGENERATED',
+    'voucher_no' => '',
+]];
+$databaseDuplicateErrors = $validateMethod->invoke($duplicateProbe, [$rows[0]], 'CASE_FUND');
+$databaseDuplicateText = implode("\n", $databaseDuplicateErrors);
+if (!empty($databaseDuplicateErrors)) {
+    fwrite(STDERR, 'Payment import validation should allow overwriting ungenerated existing database rows' . PHP_EOL);
+    exit(1);
+}
+CaseFundPaymentImportDuplicateProbe::$existingPaymentRows[0]['voucher_status'] = 'GENERATED';
+CaseFundPaymentImportDuplicateProbe::$existingPaymentRows[0]['voucher_id'] = 'active-voucher-id';
+CaseFundPaymentImportDuplicateProbe::$existingPaymentRows[0]['voucher_period'] = '2026-05';
+CaseFundPaymentImportDuplicateProbe::$existingPaymentRows[0]['voucher_no'] = 9;
+CaseFundPaymentImportDuplicateProbe::$activeVoucherCount = 1;
+$databaseDuplicateErrors = $validateMethod->invoke($duplicateProbe, [$rows[0]], 'CASE_FUND');
+$databaseDuplicateText = implode("\n", $databaseDuplicateErrors);
+if (empty($databaseDuplicateErrors)
+    || strpos($databaseDuplicateText, '票据号码【' . $rows[0]['receipt_no'] . '】已存在') === false
+    || strpos($databaseDuplicateText, '历史缴费登记.xls') === false
+    || strpos($databaseDuplicateText, '原导入第12行') === false
+) {
+    fwrite(STDERR, 'Payment import validation should report active generated database receipt-number duplicates with source detail' . PHP_EOL);
+    exit(1);
+}
+CaseFundPaymentImportDuplicateProbe::$existingPaymentRows = [];
+CaseFundPaymentImportDuplicateProbe::$activeVoucherCount = 0;
+
 $messageMethod = new ReflectionMethod(CaseFund::class, 'paymentImportErrorMessage');
 $messageMethod->setAccessible(true);
 if ($messageMethod->invoke($caseFund, $wrongBizErrors, 'CASE_FUND') !== '导入的不是案款数据') {
@@ -169,8 +265,8 @@ if ($messageMethod->invoke($caseFund, $wrongBizErrors, 'CASE_FUND') !== '导入�
 $litigationRows = [$rows[0]];
 $litigationRows[0]['business_type'] = '预收诉讼费';
 $errors = $validateMethod->invoke($caseFund, $litigationRows, 'LITIGATION_FEE');
-if (!empty($errors)) {
-    fwrite(STDERR, 'LITIGATION_FEE validation should accept prepaid litigation fee rows' . PHP_EOL);
+if (empty($errors) || strpos(implode("\n", $errors), '当前账套不允许导入业务类型') === false) {
+    fwrite(STDERR, 'LITIGATION_FEE validation should reject non-standard prepaid litigation fee alias rows' . PHP_EOL);
     exit(1);
 }
 

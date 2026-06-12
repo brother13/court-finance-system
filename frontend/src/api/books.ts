@@ -30,6 +30,7 @@ export const booksApi = {
     subjectCode?: string
     startDate: string
     endDate: string
+    disposition?: 'inline' | 'attachment'
   }) {
     return apiBlobAction('/book/detailLedgerPdf', {
       period: params.period,
@@ -37,8 +38,53 @@ export const booksApi = {
       end_period: params.endPeriod,
       subject_code: params.subjectCode,
       start_date: params.startDate,
-      end_date: params.endDate
-    }, {}, { timeout: 60000 })
+      end_date: params.endDate,
+      disposition: params.disposition
+    }, {}, { timeout: 300000 })
+  },
+  startDetailLedgerPdfJob(params: {
+    period: string
+    startPeriod?: string
+    endPeriod?: string
+    subjectCode?: string
+    startDate: string
+    endDate: string
+  }) {
+    return apiAction('/book/detailLedgerPdfJob', {
+      period: params.period,
+      start_period: params.startPeriod,
+      end_period: params.endPeriod,
+      subject_code: params.subjectCode,
+      start_date: params.startDate,
+      end_date: params.endDate,
+      disposition: 'attachment'
+    }) as Promise<{
+      job_id: string
+      status: string
+      message?: string
+      error?: string
+      file_size?: number
+      progress?: number
+      total_rows?: number
+      generated_pages?: number
+      total_pages?: number
+    }>
+  },
+  detailLedgerPdfJobStatus(jobId: string) {
+    return apiAction('/book/detailLedgerPdfJobStatus', { job_id: jobId }) as Promise<{
+      job_id: string
+      status: 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED'
+      message?: string
+      error?: string
+      file_size?: number
+      progress?: number
+      total_rows?: number
+      generated_pages?: number
+      total_pages?: number
+    }>
+  },
+  detailLedgerPdfJobDownload(jobId: string) {
+    return apiBlobAction('/book/detailLedgerPdfJobDownload', { job_id: jobId }, {}, { timeout: 120000 })
   },
   subjectBalance(params: string | {
     period?: string
@@ -120,12 +166,14 @@ export const booksApi = {
     subjectCode?: string
     caseNo?: string
     receiptNo?: string
+    refreshSnapshot?: boolean
   }) {
     return apiAction('/book/auxBalance', {
       period: params.period,
       subject_code: params.subjectCode,
       case_no: params.caseNo,
-      receipt_no: params.receiptNo
+      receipt_no: params.receiptNo,
+      refresh_snapshot: params.refreshSnapshot ? 1 : 0
     }) as Promise<{ items: AuxBalanceRow[]; total: number; period: string }>
   },
   auxBalanceSubjects() {

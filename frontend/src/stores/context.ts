@@ -11,6 +11,14 @@ const loadAuth = (): Partial<LoginUser> => {
   }
 }
 
+const savedAccountSetBankName = (auth: Partial<LoginUser>) => {
+  const directName = String((auth as any).bank_name || (auth as any).account_set_bank_name || '').trim()
+  if (directName !== '') return directName
+  const accountSetId = String(auth.account_set_id || '').trim()
+  const accountSets = Array.isArray(auth.account_sets) ? auth.account_sets : []
+  return String(accountSets.find((item: AccountSet) => item.account_set_id === accountSetId)?.bank_name || '').trim()
+}
+
 const currentMonthPeriod = () => {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -46,6 +54,7 @@ export const useContextStore = defineStore('context', {
       accountSetId: auth.account_set_id || '00000000-0000-0000-0000-000000000101',
       accountSetCode: (auth as any).set_code || '',
       accountSetName: (auth as any).set_name || '',
+      accountSetBankName: savedAccountSetBankName(auth),
       bizType: (auth as any).biz_type || '',
       userId: auth.user_id || '',
       username: auth.username || '',
@@ -77,6 +86,7 @@ export const useContextStore = defineStore('context', {
       this.accountSetId = user.account_set_id || ''
       this.accountSetCode = ''
       this.accountSetName = ''
+      this.accountSetBankName = ''
       this.bizType = ''
       this.userId = user.user_id
       this.username = user.username
@@ -95,6 +105,7 @@ export const useContextStore = defineStore('context', {
       this.accountSetId = accountSet.account_set_id
       this.accountSetCode = accountSet.set_code
       this.accountSetName = accountSet.set_name
+      this.accountSetBankName = accountSet.bank_name || ''
       this.bizType = accountSet.biz_type
       const selectedPeriod = periodForSelectedYear(accountSet, year)
       this.period = selectedPeriod
@@ -114,7 +125,19 @@ export const useContextStore = defineStore('context', {
         account_set_id: this.accountSetId,
         set_code: this.accountSetCode,
         set_name: this.accountSetName,
+        bank_name: this.accountSetBankName,
         biz_type: this.bizType,
+        year: this.year,
+        period: this.period
+      }))
+    },
+    setPeriod(period: string) {
+      if (!validPeriod(period)) return
+      this.period = period
+      this.year = periodYear(period)
+      const saved = loadAuth()
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        ...saved,
         year: this.year,
         period: this.period
       }))
@@ -123,6 +146,7 @@ export const useContextStore = defineStore('context', {
       this.accountSetId = ''
       this.accountSetCode = ''
       this.accountSetName = ''
+      this.accountSetBankName = ''
       this.bizType = ''
       this.userId = ''
       this.username = ''

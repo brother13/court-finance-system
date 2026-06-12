@@ -102,10 +102,15 @@ create table fin_account_set (
     enabled_year int not null,
     enabled_period varchar(7),
     finance_manager varchar(100),
+    bank_account_name varchar(200) not null default '',
+    bank_account_no varchar(100) not null default '',
+    bank_name varchar(160) not null default '',
+    bank_branch_name varchar(200) not null default '',
     paper_size varchar(20) not null default 'A5',
     voucher_import_auto_no tinyint not null default 1,
     voucher_print_line_count int not null default 8,
     generate_voucher_by_day_flag tinyint not null default 1,
+    generate_payment_voucher_by_method_flag tinyint not null default 0,
     generate_refund_voucher_by_out_order_no_flag tinyint not null default 0,
     subject_code_rule varchar(50) not null default '4-2-2-2',
     status int not null,
@@ -119,6 +124,7 @@ create table fin_account_set (
 );
 
 create unique index uk_account_set_code on fin_account_set (set_code);
+create index idx_account_set_bank_account on fin_account_set (bank_account_no);
 
 create table fin_fiscal_period (
     period_id varchar(36) primary key,
@@ -406,6 +412,42 @@ create index idx_voucher_aux_detail on fin_voucher_aux_value (account_set_id, de
 create index idx_voucher_aux_detail_id on fin_voucher_aux_value (voucher_id, detail_id);
 create index idx_voucher_aux_value on fin_voucher_aux_value (account_set_id, aux_type_code, aux_value);
 create index idx_voucher_aux_del on fin_voucher_aux_value (account_set_id, del_flag);
+
+create table fin_aux_balance_snapshot (
+    snapshot_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    subject_code varchar(50) not null,
+    subject_name varchar(200) not null default '',
+    direction varchar(20) not null default 'DEBIT',
+    case_no varchar(200) not null,
+    receipt_no varchar(200) not null default '',
+    opening_debit_amount decimal(18,2) not null default 0,
+    opening_credit_amount decimal(18,2) not null default 0,
+    opening_balance_amount decimal(18,2) not null default 0,
+    debit_amount decimal(18,2) not null default 0,
+    credit_amount decimal(18,2) not null default 0,
+    ending_balance_amount decimal(18,2) not null default 0,
+    entry_count int not null default 0,
+    monitor_flag tinyint not null default 0,
+    source_updated_time datetime,
+    snapshot_time datetime not null,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create unique index uk_aux_balance_snapshot on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, subject_code, case_no, receipt_no);
+create index idx_aux_balance_snapshot_period on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, del_flag);
+create index idx_aux_balance_snapshot_subject on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, subject_code, del_flag);
+create index idx_aux_balance_snapshot_case on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, case_no, del_flag);
+create index idx_aux_balance_snapshot_receipt on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, receipt_no, del_flag);
+create index idx_aux_balance_snapshot_monitor on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, monitor_flag, del_flag);
 
 create table fin_case_fund_payment (
     payment_id varchar(36) primary key,

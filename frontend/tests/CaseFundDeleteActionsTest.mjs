@@ -37,8 +37,8 @@ for (const [name, source, apiCall] of [
   }
 }
 
-assert(paymentView.includes("selectedPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'payment delete should reject selected generated rows before calling delete API')
-assert(refundView.includes("selectedRefundRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'refund delete should reject selected generated rows before calling delete API')
+assert(!paymentView.includes("selectedPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'payment delete should let backend decide whether generated rows are deletable')
+assert(!refundView.includes("selectedRefundRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'refund delete should let backend decide whether generated rows are deletable')
 assert(unknownPaymentView.includes("selectedUnknownPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'unknown payment delete should reject selected generated rows before calling delete API')
 assert(distributionView.includes("selectedDistributionRows.value.some((row) => row.voucher_status !== 'UNGENERATED')"), 'distribution delete should reject selected generated rows before calling delete API')
 assert(bankView.includes("row.reconcile_status === 'UNMATCHED'"), 'bank statement table should only select unmatched rows')

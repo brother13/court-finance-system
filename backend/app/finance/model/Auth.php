@@ -31,7 +31,7 @@ class Auth extends Common
 
         $rows = Db::name('fin_account_set')
             ->where(['status' => 1, 'del_flag' => 0])
-            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,enabled_period,remark')
+            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,enabled_period,bank_account_name,bank_account_no,bank_name,bank_branch_name,remark')
             ->order('biz_type asc,set_code asc')
             ->select();
 
@@ -62,10 +62,14 @@ class Auth extends Common
     protected function currentPeriodValue($accountSetId, $enabledPeriod)
     {
         $openPeriod = $this->openFiscalPeriodValue($accountSetId, $enabledPeriod);
-        if ($openPeriod !== '') {
-            return $openPeriod;
+        $latestVoucherPeriod = $this->latestVoucherPeriodValue($accountSetId, $enabledPeriod);
+        if ($openPeriod !== '' && $latestVoucherPeriod !== '') {
+            return strcmp($latestVoucherPeriod, $openPeriod) > 0 ? $latestVoucherPeriod : $openPeriod;
         }
-        return $enabledPeriod;
+        if ($latestVoucherPeriod !== '') {
+            return $latestVoucherPeriod;
+        }
+        return $openPeriod !== '' ? $openPeriod : $enabledPeriod;
     }
 
     protected function openFiscalPeriodValue($accountSetId, $enabledPeriod)
@@ -80,6 +84,22 @@ class Auth extends Common
                 $query->where('period', '>=', $enabledPeriod);
             }
             return $query->order('period asc')->value('period') ?: '';
+        } catch (\Exception $e) {
+            return '';
+        }
+    }
+
+    protected function latestVoucherPeriodValue($accountSetId, $enabledPeriod)
+    {
+        try {
+            $query = Db::name('fin_voucher')->where([
+                'account_set_id' => $accountSetId,
+                'del_flag' => 0,
+            ]);
+            if ($enabledPeriod !== '') {
+                $query->where('period', '>=', $enabledPeriod);
+            }
+            return $query->order('period desc')->value('period') ?: '';
         } catch (\Exception $e) {
             return '';
         }
@@ -167,6 +187,8 @@ class Auth extends Common
         $roles = $this->userRoles($user['user_id']);
         $permissions = $this->userPermissions($user['user_id']);
         $accountSets = $this->userAccountSets($user['user_id']);
+        $accountSets = $this->fillAvailableYears($accountSets);
+        $accountSets = $this->appendAccountSetPeriodFields($accountSets);
         foreach ($accountSets as &$accountSet) {
             $accountSet['id'] = $accountSet['account_set_id'];
             $accountSet['code'] = $accountSet['set_code'];

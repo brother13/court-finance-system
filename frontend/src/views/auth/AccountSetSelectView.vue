@@ -75,6 +75,8 @@ const accountSets = ref<AccountSet[]>([])
 const selectedAccountSet = ref<AccountSet | null>(null)
 const selectedYear = ref<number>(0)
 
+const currentCalendarYear = () => new Date().getFullYear()
+
 const bizTypeMeta = (type: string) => {
   const map: Record<string, { label: string; desc: string }> = {
     CASE_FUND: { label: '案款', desc: '只展示案款收支、余额、未退案款和案款业务入口。' },
@@ -85,9 +87,16 @@ const bizTypeMeta = (type: string) => {
   return map[type] || { label: type, desc: '专项资金独立账套。' }
 }
 
+const defaultSelectedYear = (item: AccountSet) => {
+  if (item.available_years?.includes(currentCalendarYear())) {
+    return currentCalendarYear()
+  }
+  return item.enabled_year || (item.available_years?.[0] ?? 0)
+}
+
 const selectCard = (item: AccountSet) => {
   selectedAccountSet.value = item
-  selectedYear.value = item.enabled_year || (item.available_years?.[0] ?? 0)
+  selectedYear.value = defaultSelectedYear(item)
 }
 
 const cancelSelect = () => {

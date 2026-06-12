@@ -25,7 +25,6 @@
         router
         :collapse="sidebarCollapsed"
         :default-active="$route.path"
-        :default-openeds="['/books', '/case-fund', '/base', '/system']"
         class="nav-menu"
       >
         <el-menu-item v-if="context.hasPermission('menu:dashboard')" index="/dashboard">
@@ -51,7 +50,7 @@
             <el-icon><Coin /></el-icon>
             <span>案款业务</span>
           </template>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">缴费登记查询</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">缴费登记</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">出账查询</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
           <el-menu-item v-if="context.bizType === 'CASE_FUND' && context.hasPermission('menu:case_fund:unknown_payment')" index="/case-fund/unknown-payments">不明款</el-menu-item>
@@ -131,7 +130,11 @@
         </button>
       </div>
       <el-main class="main">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <KeepAlive include="VoucherListView">
+            <component :is="Component" />
+          </KeepAlive>
+        </router-view>
       </el-main>
     </el-container>
   </el-container>
@@ -173,7 +176,7 @@ const titleMap: Record<string, string> = {
   '/books/subject-balance': '科目余额表',
   '/books/subject-summary': '科目汇总表',
   '/books/aux-balance': '辅助核算余额表',
-  '/case-fund/payments': '缴费登记查询',
+  '/case-fund/payments': '缴费登记',
   '/case-fund/refunds': '出账查询',
   '/case-fund/bank-statements': '银行对账单',
   '/case-fund/unknown-payments': '不明款',

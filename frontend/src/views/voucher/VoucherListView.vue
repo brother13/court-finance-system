@@ -24,6 +24,9 @@
         </el-button>
         <template #dropdown>
           <el-dropdown-menu>
+            <el-dropdown-item v-if="context.hasPermission('voucher:audit')" command="audit" :disabled="selectedRows.length === 0">
+              批量审核
+            </el-dropdown-item>
             <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
               批量记账
             </el-dropdown-item>
@@ -393,6 +396,8 @@ import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
 import * as XLSX from 'xlsx'
 
+defineOptions({ name: 'VoucherListView' })
+
 type TopFilter = {
   year: string
   period_start: string
@@ -491,6 +496,7 @@ const periodRangeLabel = computed(() => {
 
 const showFundAuxFilters = computed(() => ['CASE_FUND', 'LITIGATION_FEE'].includes(context.bizType))
 const hasBatchActions = computed(() =>
+  context.hasPermission('voucher:audit') ||
   context.hasPermission('voucher:post') ||
   context.hasPermission('voucher:delete') ||
   context.hasPermission('voucher:import') ||
@@ -618,7 +624,7 @@ const canUnauditRow = (row: any) => statusForRow(row) === 'AUDITED' && context.h
 const canPostRow = (row: any) => statusForRow(row) === 'AUDITED' && context.hasPermission('voucher:post')
 const canUnpostRow = (row: any) => statusForRow(row) === 'POSTED' && context.hasPermission('voucher:unpost')
 const canPrintRow = (row: any) => context.hasPermission('voucher:print') && statusForRow(row) !== 'VOIDED'
-const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row) || canPostRow(row)
+const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row) || canAuditRow(row) || canPostRow(row)
 
 const handleSelectionChange = (selection: any[]) => {
   selectedRows.value = selection
@@ -694,6 +700,9 @@ const printSelectedVouchers = async () => {
 
 const handleBatchCommand = (command: string | number | object) => {
   switch (command) {
+    case 'audit':
+      batchAudit()
+      break
     case 'post':
       batchPost()
       break
@@ -772,6 +781,35 @@ const confirmRenumber = async () => {
     }
   } finally {
     renumberSubmitting.value = false
+  }
+}
+
+const batchAudit = async () => {
+  const auditableRows = selectedRows.value.filter(canAuditRow)
+  if (auditableRows.length === 0) {
+    ElMessage.warning('请选择可审核的未审核凭证')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认将选中的 ${auditableRows.length} 张未审核凭证审核？`, '批量审核', {
+      type: 'warning',
+      confirmButtonText: '批量审核',
+      cancelButtonText: '取消'
+    })
+    const rowsByPeriod = auditableRows.reduce((groups: Record<string, string[]>, row: any) => {
+      const period = row.period || topFilter.period_start
+      if (!groups[period]) groups[period] = []
+      groups[period].push(row.voucher_id)
+      return groups
+    }, {})
+    for (const [period, voucherIds] of Object.entries(rowsByPeriod)) {
+      await voucherApi.batchAudit(period, voucherIds)
+    }
+    ElMessage.success('凭证已批量审核')
+    selectedRows.value = []
+    await load()
+  } catch {
+    // 用户取消时不提示。
   }
 }
 

@@ -31,7 +31,7 @@ class AccountSet extends Common
         }
         $rows = $this->getdb(self::TABLE)
             ->where(['del_flag' => 0])
-            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,enabled_period,finance_manager,paper_size,voucher_import_auto_no,voucher_print_line_count,status,remark')
+            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,enabled_period,finance_manager,bank_account_name,bank_account_no,bank_name,bank_branch_name,paper_size,voucher_import_auto_no,voucher_print_line_count,status,remark')
             ->order('set_code asc')
             ->select();
         foreach ($rows as &$row) {
@@ -67,6 +67,10 @@ class AccountSet extends Common
             'enabled_year' => $enabledYear,
             'enabled_period' => $enabledPeriod,
             'finance_manager' => trim($data['finance_manager'] ?? ''),
+            'bank_account_name' => trim($data['bank_account_name'] ?? ''),
+            'bank_account_no' => trim($data['bank_account_no'] ?? ''),
+            'bank_name' => trim($data['bank_name'] ?? ''),
+            'bank_branch_name' => trim($data['bank_branch_name'] ?? ''),
             'paper_size' => $data['paper_size'] ?? 'A5',
             'voucher_import_auto_no' => (int)($data['voucher_import_auto_no'] ?? 1),
             'voucher_print_line_count' => (int)($data['voucher_print_line_count'] ?? 8),
@@ -112,6 +116,10 @@ class AccountSet extends Common
             'set_name' => trim($data['set_name']),
             'biz_type' => $data['biz_type'],
             'finance_manager' => trim($data['finance_manager'] ?? ''),
+            'bank_account_name' => trim($data['bank_account_name'] ?? ''),
+            'bank_account_no' => trim($data['bank_account_no'] ?? ''),
+            'bank_name' => trim($data['bank_name'] ?? ''),
+            'bank_branch_name' => trim($data['bank_branch_name'] ?? ''),
             'paper_size' => $data['paper_size'] ?? 'A5',
             'voucher_import_auto_no' => (int)($data['voucher_import_auto_no'] ?? 1),
             'voucher_print_line_count' => (int)($data['voucher_print_line_count'] ?? 8),
@@ -130,6 +138,9 @@ class AccountSet extends Common
         }
         if (trim($data['biz_type'] ?? '') === '') {
             return '业务类型不能为空';
+        }
+        if (trim($data['bank_account_no'] ?? '') === '') {
+            return '银行账号不能为空';
         }
         if ($isCreate && !$this->isValidPeriod($data['enabled_period'] ?? '')) {
             return '账套启用年月格式不正确';

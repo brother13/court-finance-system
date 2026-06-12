@@ -17,12 +17,16 @@
           <el-option label="已生成凭证" value="GENERATED" />
           <el-option label="已作废" value="VOIDED" />
         </el-select>
+        <el-select v-model="filters.payment_method" placeholder="收费方式" clearable class="payment-method-select">
+          <el-option label="POS 收款" value="POS" />
+          <el-option label="银行转账" value="TRANSFER" />
+          <el-option label="不明款认领" value="UNKNOWN" />
+        </el-select>
         <el-input v-model="filters.keyword" placeholder="案号 / 当事人 / 票据 / 流水号" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handlePaymentImportFile" />
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
         <el-dropdown v-if="canUseMoreActions" trigger="click" @command="handleMoreAction">
           <el-button :icon="MoreFilled">
             更多功能
@@ -52,6 +56,10 @@
         <span>未制证</span>
         <strong>{{ ungeneratedCount }}</strong>
       </div>
+      <div class="case-fund-summary-actions">
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" plain :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
+      </div>
     </div>
 
     <div class="case-fund-table-shell">
@@ -72,7 +80,13 @@
           <template #default="{ row }">{{ money(row.payment_amount) }}</template>
         </el-table-column>
         <el-table-column prop="receipt_no" label="票据号码" width="120" show-overflow-tooltip />
-        <el-table-column prop="payment_method" label="收费方式" width="110" show-overflow-tooltip />
+        <el-table-column prop="payment_method" label="收费方式" width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            <el-tag :type="paymentMethodTagType(row.payment_method)" effect="light">
+              {{ paymentMethodLabel(row.payment_method) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="department_name" label="承办部门" min-width="140" show-overflow-tooltip />
         <el-table-column prop="judge_name" label="承办法官" width="110" show-overflow-tooltip />
         <el-table-column prop="bank_account_no" label="收款账号" min-width="210" show-overflow-tooltip />
@@ -110,6 +124,10 @@
         <span>是否按天生成凭证</span>
         <el-switch v-model="generateVoucherByDay" />
       </div>
+      <div class="subject-config-options">
+        <span>是否按照收费方式生成凭证</span>
+        <el-switch v-model="generatePaymentVoucherByMethod" />
+      </div>
       <el-table :data="subjectConfigRows" border v-loading="subjectConfigLoading">
         <el-table-column prop="business_item_type" label="业务类型" min-width="160" />
         <el-table-column label="借方科目" min-width="240">
@@ -136,6 +154,25 @@
               check-strictly
               default-expand-all
               placeholder="贷方科目"
+              style="width: 100%"
+            />
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-table v-if="generatePaymentVoucherByMethod" :data="paymentMethodConfigRows" border class="payment-method-config-table">
+        <el-table-column prop="business_item_label" label="收费方式" min-width="160">
+          <template #default="{ row }">{{ row.business_item_label || paymentMethodLabel(row.business_item_type) }}</template>
+        </el-table-column>
+        <el-table-column label="借方科目" min-width="280">
+          <template #default="{ row }">
+            <el-tree-select
+              v-model="row.debit_subject_code"
+              :data="subjectTreeOptions"
+              filterable
+              clearable
+              check-strictly
+              default-expand-all
+              placeholder="借方科目"
               style="width: 100%"
             />
           </template>
@@ -176,7 +213,9 @@ const subjectConfigVisible = ref(false)
 const subjectConfigLoading = ref(false)
 const subjectConfigSaving = ref(false)
 const subjectConfigRows = ref<CaseFundSubjectConfig[]>([])
+const paymentMethodConfigRows = ref<CaseFundSubjectConfig[]>([])
 const generateVoucherByDay = ref(true)
+const generatePaymentVoucherByMethod = ref(false)
 const voucherBizType: 'PAYMENT' = 'PAYMENT'
 const initialRange = initialPaymentDateRange(context.period)
 const filters = reactive({
@@ -184,6 +223,7 @@ const filters = reactive({
   date_start: initialRange.start,
   date_end: initialRange.end,
   voucher_status: '',
+  payment_method: '',
   keyword: ''
 })
 
@@ -203,6 +243,7 @@ const load = async () => {
       date_start: filters.date_start,
       date_end: filters.date_end,
       voucher_status: filters.voucher_status,
+      payment_method: filters.payment_method,
       keyword: filters.keyword,
       page: page.value,
       pagesize: pageSize.value
@@ -228,7 +269,9 @@ const openSubjectConfig = async () => {
       loadSubjects()
     ])
     generateVoucherByDay.value = Number(configResult.generate_voucher_by_day_flag ?? 1) === 1
+    generatePaymentVoucherByMethod.value = Number(configResult.generate_payment_voucher_by_method_flag ?? 0) === 1
     subjectConfigRows.value = (configResult.items || []).map((item) => ({ ...item }))
+    paymentMethodConfigRows.value = normalizePaymentMethodConfigRows(configResult.payment_method_items || [])
   } finally {
     subjectConfigLoading.value = false
   }
@@ -240,9 +283,23 @@ const saveSubjectConfig = async () => {
     ElMessage.warning(`${missing.business_item_type} 的借方科目和贷方科目都不能为空`)
     return
   }
+  if (generatePaymentVoucherByMethod.value) {
+    const missingMethod = paymentMethodConfigRows.value.find((row) => !row.debit_subject_code)
+    if (missingMethod) {
+      ElMessage.warning(`${missingMethod.business_item_label || paymentMethodLabel(missingMethod.business_item_type)} 的借方科目不能为空`)
+      return
+    }
+  }
   subjectConfigSaving.value = true
   try {
-    await caseFundApi.saveSubjectConfigs(voucherBizType, subjectConfigRows.value, generateVoucherByDay.value ? 1 : 0)
+    await caseFundApi.saveSubjectConfigs(
+      voucherBizType,
+      subjectConfigRows.value,
+      generateVoucherByDay.value ? 1 : 0,
+      undefined,
+      generatePaymentVoucherByMethod.value ? 1 : 0,
+      paymentMethodConfigRows.value
+    )
     ElMessage.success('科目配置已保存')
     subjectConfigVisible.value = false
   } finally {
@@ -253,6 +310,43 @@ const saveSubjectConfig = async () => {
 const loadSubjects = async () => {
   if (subjects.value.length > 0) return
   subjects.value = await baseApi.subjects()
+}
+
+const paymentMethodLabels: Record<string, string> = {
+  POS: 'POS 收款',
+  TRANSFER: '银行转账',
+  UNKNOWN: '不明款认领'
+}
+
+const paymentMethodLabel = (method?: string) => {
+  const value = String(method || '').trim()
+  if (!value) return '-'
+  return paymentMethodLabels[value] || `未识别：${value}`
+}
+
+const paymentMethodTagType = (method?: string) => {
+  const value = String(method || '').trim()
+  if (value === 'POS') return 'warning'
+  if (value === 'TRANSFER') return 'success'
+  if (value === 'UNKNOWN') return 'info'
+  return 'danger'
+}
+
+const normalizePaymentMethodConfigRows = (items: CaseFundSubjectConfig[]): CaseFundSubjectConfig[] => {
+  const defaultDebitSubjectCode = subjectConfigRows.value.find((row) => row.debit_subject_code)?.debit_subject_code || ''
+  const byType = new Map(items.map((item) => [item.business_item_type, item]))
+  return ([
+    ['POS', 'POS 收款'],
+    ['TRANSFER', '银行转账'],
+    ['UNKNOWN', '不明款认领']
+  ] as Array<[string, string]>).map(([type, label]) => ({
+    ...(byType.get(type) || {}),
+    voucher_biz_type: 'PAYMENT_METHOD' as const,
+    business_item_type: type,
+    business_item_label: label,
+    debit_subject_code: byType.get(type)?.debit_subject_code || defaultDebitSubjectCode,
+    credit_subject_code: byType.get(type)?.credit_subject_code || byType.get(type)?.debit_subject_code || defaultDebitSubjectCode
+  }))
 }
 
 const applyQuickRange = () => {
@@ -344,9 +438,29 @@ const handlePaymentImportFile = async (event: Event) => {
     ElMessage.success(`导入完成：新增${result.created}条，覆盖${result.updated || 0}条，跳过重复${result.skipped}条`)
     page.value = 1
     await load()
+  } catch (error: any) {
+    await showPaymentImportError(error)
   } finally {
     importing.value = false
   }
+}
+
+const showPaymentImportError = async (error: any) => {
+  const details = Array.isArray(error?.data) ? error.data.filter(Boolean).map(String) : []
+  if (details.length === 0) {
+    return
+  }
+  const visibleDetails = details.slice(0, 80)
+  const moreText = details.length > visibleDetails.length ? `\n还有 ${details.length - visibleDetails.length} 条错误未显示，请先处理前面错误后重新导入。` : ''
+  await ElMessageBox.alert(
+    `${visibleDetails.join('\n')}${moreText}`,
+    '校验明细',
+    {
+      type: 'error',
+      confirmButtonText: '知道了',
+      customClass: 'import-validation-dialog'
+    }
+  ).catch(() => {})
 }
 
 const readFileBase64 = (file: File) => {
@@ -393,6 +507,14 @@ const handleSelectionChange = (selection: CaseFundPayment[]) => {
   selectedPaymentIds.value = selection.map((row) => row.payment_id)
 }
 
+const buildGenerateVoucherQueryPayload = () => ({
+  date_start: filters.date_start,
+  date_end: filters.date_end,
+  voucher_status: 'UNGENERATED',
+  payment_method: filters.payment_method,
+  keyword: filters.keyword
+})
+
 const handleGenerateVoucher = async () => {
   if (selectedPaymentIds.value.length === 0) {
     ElMessage.warning('请选择要生成凭证的缴费记录')
@@ -420,18 +542,38 @@ const handleGenerateVoucher = async () => {
   }
 }
 
+const handleGenerateVoucherByQuery = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定按当前查询条件生成全部未制证缴费记录的凭证吗？该操作不受当前分页限制。',
+      '按查询条件生成凭证',
+      { confirmButtonText: '按查询生成', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  generating.value = true
+  try {
+    const result = await caseFundApi.paymentGenerateVoucherByQuery(buildGenerateVoucherQueryPayload())
+    ElMessage.success(`成功生成 ${result.generated_count} 张凭证，处理 ${result.payment_count} 条缴费记录`)
+    selectedPaymentIds.value = []
+    selectedPaymentRows.value = []
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成凭证失败')
+  } finally {
+    generating.value = false
+  }
+}
+
 const handleDeletePayments = async () => {
   if (selectedPaymentIds.value.length === 0) {
     ElMessage.warning('请选择要删除的未制证缴费记录')
     return
   }
-  if (selectedPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')) {
-    ElMessage.warning('已制证缴费记录不能删除；如原凭证已删除，请使用生成凭证重新制证')
-    return
-  }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedPaymentIds.value.length} 条缴费记录吗？已制证或已对账的数据不能删除。`,
+      `确定要删除选中的 ${selectedPaymentIds.value.length} 条缴费记录吗？已制证且原凭证仍有效、或已对账的数据不能删除。`,
       '确认删除缴费记录',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -498,6 +640,10 @@ onMounted(load)
   width: 150px;
 }
 
+.payment-method-select {
+  width: 140px;
+}
+
 .case-fund-search {
   width: 300px;
 }
@@ -508,12 +654,13 @@ onMounted(load)
 
 .case-fund-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(112px, 150px)) minmax(260px, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 
 .case-fund-summary > div {
-  padding: 14px 16px;
+  padding: 8px 12px;
   background: var(--card-bg);
   border: 1px solid var(--border-light);
   border-radius: 8px;
@@ -522,15 +669,24 @@ onMounted(load)
 .case-fund-summary span {
   display: block;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .case-fund-summary strong {
   display: block;
-  margin-top: 6px;
+  margin-top: 2px;
   color: var(--text-main);
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1.2;
+}
+
+.case-fund-summary-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
 }
 
 .case-fund-table-shell {
@@ -559,6 +715,10 @@ onMounted(load)
   color: var(--text-main);
 }
 
+.payment-method-config-table {
+  margin-top: 12px;
+}
+
 @media (max-width: 1100px) {
   .case-fund-toolbar {
     flex-direction: column;
@@ -566,6 +726,15 @@ onMounted(load)
 
   .case-fund-filters {
     flex-wrap: wrap;
+  }
+
+  .case-fund-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .case-fund-summary-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .case-fund-search {

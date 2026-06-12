@@ -60,21 +60,61 @@ $accountSetId = '00000000-0000-0000-0000-000000000101';
 $testSubjectCodes = ['100201', '100202', '100203', '100204', '200301'];
 $testCaseNo = 'IMPORT_TEST_CASE_20260509';
 $testReceiptNo = 'IMPORT_TEST_RECEIPT_20260509';
+$softDeletedConflictVoucherId = '00000000-0000-4000-8000-import0993';
 
 // 清理测试数据
 function cleanupTestVouchers($db, $accountSetId)
 {
     $voucherIds = $db->table('fin_voucher')
         ->where('account_set_id', $accountSetId)
-        ->where('fiscal_year', 2025)
-        ->where('period', '2025-01')
-        ->where('voucher_no', 'in', [990, 991, 992, 993])
+        ->where(function ($query) {
+            $query->where(function ($q) {
+                $q->where('fiscal_year', 2025)
+                    ->where('period', '2025-01')
+                    ->where('voucher_no', 'in', [990, 991, 992, 993]);
+            })->whereOr('remark', 'like', 'IMPORT_TEST_SOFT_DELETED_CONFLICT%');
+        })
         ->column('voucher_id');
     foreach ($voucherIds as $vid) {
         $db->execute("DELETE FROM fin_voucher_aux_value WHERE voucher_id = '{$vid}'");
         $db->execute("DELETE FROM fin_voucher_detail WHERE voucher_id = '{$vid}'");
         $db->execute("DELETE FROM fin_voucher WHERE voucher_id = '{$vid}'");
     }
+}
+
+function insertSoftDeletedVoucherNoConflict($db, $accountSetId, $voucherId)
+{
+    $now = date('Y-m-d H:i:s');
+    $db->table('fin_voucher')->insert([
+        'voucher_id' => $voucherId,
+        'account_set_id' => $accountSetId,
+        'fiscal_year' => 2025,
+        'period' => '2025-01',
+        'voucher_date' => '2025-01-28',
+        'voucher_word' => '记',
+        'voucher_no' => 993,
+        'summary' => '已删除凭证号占用测试',
+        'debit_amount' => '100.00',
+        'credit_amount' => '100.00',
+        'attachment_count' => 0,
+        'status' => 'SUBMITTED',
+        'source_type' => 'IMPORT',
+        'printed_flag' => '0',
+        'prepared_by' => '00000000-0000-0000-0000-000000000301',
+        'prepared_time' => $now,
+        'audit_by' => null,
+        'audit_time' => null,
+        'posted_by' => null,
+        'posted_time' => null,
+        'void_flag' => '0',
+        'created_by' => '00000000-0000-0000-0000-000000000301',
+        'created_time' => $now,
+        'updated_by' => '00000000-0000-0000-0000-000000000301',
+        'updated_time' => $now,
+        'del_flag' => 1,
+        'version' => 0,
+        'remark' => 'IMPORT_TEST_SOFT_DELETED_CONFLICT',
+    ]);
 }
 
 function cleanupTestAuxArchives($db, $accountSetId, $caseNo, $receiptNo)
@@ -127,6 +167,7 @@ function restoreSubjectEntryFlags($db, $accountSetId, $flags)
 
 cleanupTestVouchers($db, $accountSetId);
 cleanupTestAuxArchives($db, $accountSetId, $testCaseNo, $testReceiptNo);
+insertSoftDeletedVoucherNoConflict($db, $accountSetId, $softDeletedConflictVoucherId);
 $originalSubjectEntryFlags = captureSubjectEntryFlags($db, $accountSetId, $testSubjectCodes);
 setSubjectEntryFlags($db, $accountSetId, $testSubjectCodes, 0);
 
@@ -294,6 +335,16 @@ if (!$summaryVoucher || $summaryVoucher['summary'] !== '导入凭证头摘要回
     cleanupTestVouchers($db, $accountSetId);
     cleanupTestAuxArchives($db, $accountSetId, $testCaseNo, $testReceiptNo);
     fwrite(STDERR, '导入凭证应将明细摘要保存到 fin_voucher.summary' . PHP_EOL);
+    exit(1);
+}
+
+$softDeletedConflict = $db->table('fin_voucher')
+    ->where('voucher_id', $softDeletedConflictVoucherId)
+    ->find();
+if (!$softDeletedConflict || (int)$softDeletedConflict['del_flag'] !== 1 || (int)$softDeletedConflict['voucher_no'] === 993 || (int)$softDeletedConflict['voucher_no'] >= 0) {
+    cleanupTestVouchers($db, $accountSetId);
+    cleanupTestAuxArchives($db, $accountSetId, $testCaseNo, $testReceiptNo);
+    fwrite(STDERR, '导入应先避让同期间同号的软删除凭证，释放原凭证号' . PHP_EOL);
     exit(1);
 }
 

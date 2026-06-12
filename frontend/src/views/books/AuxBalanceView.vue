@@ -5,7 +5,7 @@
       <p>按科目、案号、收据号汇总辅助核算余额,用于识别尚未划拨或退还的案款收据。</p>
     </div>
     <div class="page-actions">
-      <el-button :icon="Refresh" @click="load">刷新数据</el-button>
+      <el-button :icon="Refresh" @click="load(true)">刷新数据</el-button>
       <el-button v-permission="'book:export'" type="primary" :icon="Download" @click="exportData">导出余额表</el-button>
     </div>
   </div>
@@ -163,12 +163,13 @@ const loadSubjectOptions = async () => {
   }
 }
 
-const load = async () => {
+const load = async (refreshSnapshot = false) => {
   const result = await booksApi.auxBalance({
     period: context.period,
     subjectCode: filters.subjectCode,
     caseNo: filters.caseNo,
-    receiptNo: filters.receiptNo
+    receiptNo: filters.receiptNo,
+    refreshSnapshot
   })
   rows.value = result.items || []
 }

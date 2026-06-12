@@ -58,11 +58,27 @@ if (strpos($source, "'DISTRIBUTION'") === false || strpos($source, 'allowedDistr
 }
 
 if (
-    strpos($source, "'CASE_FUND' => ['执行、调解款']") === false ||
-    strpos($source, "'LITIGATION_FEE' => ['诉讼费预收']") === false
+    strpos($source, "'CASE_FUND' => ['缴费登记']") === false ||
+    strpos($source, "'LITIGATION_FEE' => ['缴费登记']") === false
 ) {
-    fwrite(STDERR, 'Subject config should only expose canonical payment business types' . PHP_EOL);
+    fwrite(STDERR, 'Payment subject config should only expose the payment-register default config item' . PHP_EOL);
     exit(1);
+}
+
+foreach ([
+    'voucherSubjectConfigKey',
+    "'诉讼费直接结算' => '缴费登记'",
+    "'诉讼费预收' => '缴费登记'",
+    "'诉讼费收款' => '缴费登记'",
+    "'执行、调解款' => '缴费登记'",
+    "'出账查询'",
+    "'诉讼费退费' => '出账查询'",
+    "'执行、调解款发放' => '出账查询'",
+] as $needle) {
+    if (strpos($source, $needle) === false) {
+        fwrite(STDERR, 'Business import types should map to voucher default subject config items: ' . $needle . PHP_EOL);
+        exit(1);
+    }
 }
 
 if (

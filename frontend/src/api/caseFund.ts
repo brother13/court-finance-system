@@ -1,7 +1,7 @@
 import { apiAction } from './http'
 import type { CaseFundBankReconcile, CaseFundBankStatement, CaseFundDistribution, CaseFundPayment, CaseFundRefund, CaseFundSubjectConfig, CaseFundUnknownPayment } from '../types/api'
 
-type CaseFundVoucherBizType = 'PAYMENT' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
+type CaseFundVoucherBizType = 'PAYMENT' | 'PAYMENT_METHOD' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
 
 export const caseFundApi = {
   paymentList(payload: Record<string, any> = {}) {
@@ -75,7 +75,7 @@ export const caseFundApi = {
     }>
   },
   importBankStatements(bankCode: string, filename: string, rows: Partial<CaseFundBankStatement>[]) {
-    return apiAction('/caseFund/bankStatementImport', { bank_code: bankCode, filename, rows }) as Promise<{
+    return apiAction('/caseFund/bankStatementImport', { bank_code: bankCode, filename, rows }, {}, { timeout: 120000 }) as Promise<{
       total: number
       created: number
       skipped: number
@@ -103,14 +103,18 @@ export const caseFundApi = {
       biz_type: string
       voucher_biz_type: CaseFundVoucherBizType
       generate_voucher_by_day_flag: number
+      generate_payment_voucher_by_method_flag: number
       generate_refund_voucher_by_out_order_no_flag: number
+      payment_method_items?: CaseFundSubjectConfig[]
     }>
   },
   saveSubjectConfigs(
     voucherBizType: CaseFundVoucherBizType,
     items: CaseFundSubjectConfig[],
     generateVoucherByDayFlag = 1,
-    generateRefundVoucherByOutOrderNoFlag?: number
+    generateRefundVoucherByOutOrderNoFlag?: number,
+    generatePaymentVoucherByMethodFlag?: number,
+    paymentMethodItems?: CaseFundSubjectConfig[]
   ) {
     const payload: Record<string, any> = {
       voucher_biz_type: voucherBizType,
@@ -119,6 +123,12 @@ export const caseFundApi = {
     }
     if (generateRefundVoucherByOutOrderNoFlag !== undefined) {
       payload.generate_refund_voucher_by_out_order_no_flag = generateRefundVoucherByOutOrderNoFlag
+    }
+    if (generatePaymentVoucherByMethodFlag !== undefined) {
+      payload.generate_payment_voucher_by_method_flag = generatePaymentVoucherByMethodFlag
+    }
+    if (paymentMethodItems !== undefined) {
+      payload.payment_method_items = paymentMethodItems
     }
     return apiAction('/caseFund/subjectConfigSave', payload) as Promise<{ saved: number }>
   },
@@ -129,8 +139,22 @@ export const caseFundApi = {
       vouchers: { voucher_id: string; voucher_no: number; period: string }[]
     }>
   },
+  paymentGenerateVoucherByQuery(payload: Record<string, any>) {
+    return apiAction('/caseFund/paymentGenerateVoucherByQuery', payload) as Promise<{
+      generated_count: number
+      payment_count: number
+      vouchers: { voucher_id: string; voucher_no: number; period: string }[]
+    }>
+  },
   refundGenerateVoucher(refundIds: string[]) {
     return apiAction('/caseFund/refundGenerateVoucher', { refund_ids: refundIds }) as Promise<{
+      generated_count: number
+      refund_count: number
+      vouchers: { voucher_id: string; voucher_no: number; period: string }[]
+    }>
+  },
+  refundGenerateVoucherByQuery(payload: Record<string, any>) {
+    return apiAction('/caseFund/refundGenerateVoucherByQuery', payload) as Promise<{
       generated_count: number
       refund_count: number
       vouchers: { voucher_id: string; voucher_no: number; period: string }[]

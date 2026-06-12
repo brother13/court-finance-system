@@ -2,9 +2,10 @@
   <div class="case-fund-board">
     <div class="case-fund-toolbar">
       <div class="case-fund-filters">
-        <el-select v-model="filters.bank_code" placeholder="开户银行" class="bank-select" @change="query">
-          <el-option v-for="bank in bankOptions" :key="bank.code" :label="bank.name" :value="bank.code" />
-        </el-select>
+        <div class="bank-auto-field">
+          <span>开户银行</span>
+          <strong>{{ selectedBankName || '未配置开户银行' }}</strong>
+        </div>
         <span class="date-filter-label">交易日期</span>
         <el-date-picker v-model="filters.date_start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" class="statement-date-picker" />
         <span class="date-separator">至</span>
@@ -17,7 +18,7 @@
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
       </div>
       <div class="case-fund-actions">
-        <input ref="importInputRef" type="file" accept=".xlsx" class="case-fund-file-input" @change="handleBankStatementImportFile" />
+        <input ref="importInputRef" type="file" accept=".xls,.xlsx" class="case-fund-file-input" @change="handleBankStatementImportFile" />
         <el-button v-permission="'case_fund:reconcile'" type="success" :icon="DocumentChecked" :loading="reconciling" @click="runAutoReconcile">自动对账</el-button>
         <el-button v-permission="'case_fund:delete'" type="danger" :icon="Delete" :loading="deleting" @click="handleDeleteBankStatements">删除</el-button>
         <el-button v-permission="'case_fund:import'" type="primary" :icon="Upload" :loading="importing" @click="chooseBankStatementImportFile">导入对账单</el-button>
@@ -38,17 +39,17 @@
         <strong>{{ money(debitAmount) }}</strong>
       </div>
       <div>
-        <span>已对账</span>
-        <strong>{{ reconcileSummary.MATCHED || 0 }}</strong>
+        <span>本页已对账</span>
+        <strong>{{ statementStatusSummary.MATCHED || 0 }}</strong>
       </div>
       <div>
-        <span>金额不符</span>
-        <strong>{{ reconcileSummary.AMOUNT_DIFF || 0 }}</strong>
+        <span>本页金额不符</span>
+        <strong>{{ statementStatusSummary.AMOUNT_DIFF || 0 }}</strong>
       </div>
     </div>
 
     <div class="case-fund-table-shell">
-      <el-table :data="rows" border height="330px" v-loading="loading" @selection-change="handleStatementSelectionChange">
+      <el-table :data="rows" border height="620px" v-loading="loading" @selection-change="handleStatementSelectionChange">
         <el-table-column type="selection" width="55" :selectable="isStatementSelectable" fixed="left" />
         <el-table-column prop="transaction_time" label="交易时间" width="170" fixed="left" />
         <el-table-column prop="bank_name" label="银行" width="100" />
@@ -81,58 +82,13 @@
         v-model:page-size="pageSize"
         background
         layout="total, sizes, prev, pager, next"
-        :page-sizes="[20, 50, 100, 200]"
+        :page-sizes="[50, 100, 150, 200]"
         :total="total"
         @size-change="load"
         @current-change="load"
       />
     </div>
 
-    <div class="case-fund-table-shell">
-      <div class="reconcile-panel-header">
-        <strong>对账结果</strong>
-        <span>缴费按银行流水号匹配，退付按出账单号匹配。</span>
-      </div>
-      <el-table :data="reconcileRows" border height="320px" v-loading="reconcileLoading">
-        <el-table-column prop="reconcile_date" label="日期" width="112" fixed="left" />
-        <el-table-column prop="match_status" label="结果" width="110" fixed="left">
-          <template #default="{ row }">
-            <el-tag effect="light" :type="reconcileStatusType(row.match_status)">{{ reconcileStatusLabel(row.match_status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="biz_type" label="业务类型" width="100">
-          <template #default="{ row }">{{ bizTypeLabel(row.biz_type) }}</template>
-        </el-table-column>
-        <el-table-column prop="bank_serial_no" label="交易流水号 / 出账单号" min-width="170" show-overflow-tooltip />
-        <el-table-column prop="bank_amount" label="银行金额" width="120" align="right">
-          <template #default="{ row }">{{ money(row.bank_amount) }}</template>
-        </el-table-column>
-        <el-table-column prop="biz_amount" label="业务金额" width="120" align="right">
-          <template #default="{ row }">{{ money(row.biz_amount) }}</template>
-        </el-table-column>
-        <el-table-column prop="diff_amount" label="差额" width="120" align="right">
-          <template #default="{ row }">{{ money(row.diff_amount) }}</template>
-        </el-table-column>
-        <el-table-column prop="bank_summary" label="银行摘要" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="biz_summary" label="业务摘要" min-width="240" show-overflow-tooltip />
-        <el-table-column prop="match_rule" label="规则" width="110">
-          <template #default>流水号</template>
-        </el-table-column>
-      </el-table>
-    </div>
-
-    <div class="case-fund-pagination">
-      <el-pagination
-        v-model:current-page="reconcilePage"
-        v-model:page-size="reconcilePageSize"
-        background
-        layout="total, sizes, prev, pager, next"
-        :page-sizes="[20, 50, 100, 200]"
-        :total="reconcileTotal"
-        @size-change="loadReconcile"
-        @current-change="loadReconcile"
-      />
-    </div>
   </div>
 </template>
 
@@ -143,7 +99,7 @@ import { DocumentChecked, Search, Upload, Delete } from '@element-plus/icons-vue
 import * as XLSX from 'xlsx'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
-import type { CaseFundBankReconcile, CaseFundBankStatement } from '../../types/api'
+import type { CaseFundBankStatement } from '../../types/api'
 
 const context = useContextStore()
 const bankOptions = [
@@ -151,18 +107,12 @@ const bankOptions = [
   { code: 'CCB', name: '建设银行' }
 ]
 const rows = ref<CaseFundBankStatement[]>([])
-const reconcileRows = ref<CaseFundBankReconcile[]>([])
 const total = ref(0)
-const reconcileTotal = ref(0)
 const debitAmount = ref(0)
 const creditAmount = ref(0)
-const reconcileSummary = ref<Record<string, number>>({})
 const page = ref(1)
-const pageSize = ref(50)
-const reconcilePage = ref(1)
-const reconcilePageSize = ref(50)
+const pageSize = ref(150)
 const loading = ref(false)
-const reconcileLoading = ref(false)
 const importing = ref(false)
 const reconciling = ref(false)
 const deleting = ref(false)
@@ -170,14 +120,19 @@ const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedStatementIds = ref<string[]>([])
 const initialRange = initialStatementDateRange(context.period)
 const filters = reactive({
-  bank_code: 'SHENGJING',
+  bank_code: bankCodeFromAccountSetName(context.accountSetBankName),
   date_start: initialRange.start,
   date_end: initialRange.end,
   direction: '',
   keyword: ''
 })
 
-const selectedBankName = computed(() => bankOptions.find((bank) => bank.code === filters.bank_code)?.name || '')
+const selectedBankName = computed(() => bankOptions.find((bank) => bank.code === filters.bank_code)?.name || context.accountSetBankName || '')
+const statementStatusSummary = computed(() => rows.value.reduce<Record<string, number>>((summary, row) => {
+  const status = row.reconcile_status || 'UNMATCHED'
+  summary[status] = (summary[status] || 0) + 1
+  return summary
+}, {}))
 
 const load = async () => {
   loading.value = true
@@ -202,27 +157,7 @@ const load = async () => {
 
 const query = async () => {
   page.value = 1
-  reconcilePage.value = 1
   await load()
-  await loadReconcile()
-}
-
-const loadReconcile = async () => {
-  reconcileLoading.value = true
-  try {
-    const result = await caseFundApi.bankReconcileList({
-      date_start: filters.date_start,
-      date_end: filters.date_end,
-      keyword: filters.keyword,
-      page: reconcilePage.value,
-      pagesize: reconcilePageSize.value
-    })
-    reconcileRows.value = result.items || []
-    reconcileTotal.value = result.total || 0
-    reconcileSummary.value = result.summary || {}
-  } finally {
-    reconcileLoading.value = false
-  }
 }
 
 const runAutoReconcile = async () => {
@@ -236,9 +171,7 @@ const runAutoReconcile = async () => {
     const amountDiff = result.counts?.AMOUNT_DIFF || 0
     ElMessage.success(`自动对账完成：生成${result.total}条结果，金额不符${amountDiff}条`)
     page.value = 1
-    reconcilePage.value = 1
     await load()
-    await loadReconcile()
   } catch (e: any) {
     ElMessage.error(e?.message || '自动对账失败')
   } finally {
@@ -274,7 +207,6 @@ const handleDeleteBankStatements = async () => {
     ElMessage.success(`已删除 ${result.deleted_count} 条银行流水`)
     selectedStatementIds.value = []
     await load()
-    await loadReconcile()
   } catch (e: any) {
     ElMessage.error(e?.message || '删除银行流水失败')
   } finally {
@@ -283,8 +215,8 @@ const handleDeleteBankStatements = async () => {
 }
 
 const chooseBankStatementImportFile = () => {
-  if (filters.bank_code === 'CCB') {
-    ElMessage.warning('建设银行电子对账单模板待配置，请先使用盛京银行模板')
+  if (!filters.bank_code) {
+    ElMessage.warning('当前账套未配置可识别的开户银行，请先在账套设置中维护开户银行')
     return
   }
   if (!importInputRef.value) return
@@ -296,8 +228,8 @@ const handleBankStatementImportFile = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  if (!file.name.toLowerCase().endsWith('.xlsx')) {
-    ElMessage.warning('请选择 .xlsx 格式的银行电子对账单')
+  if (!/\.(xls|xlsx)$/i.test(file.name)) {
+    ElMessage.warning('请选择 .xls 或 .xlsx 格式的银行电子对账单')
     return
   }
   importing.value = true
@@ -308,7 +240,6 @@ const handleBankStatementImportFile = async (event: Event) => {
     ElMessage.success(`导入${selectedBankName.value}对账单完成：新增${result.created}条，跳过重复${result.skipped}条`)
     page.value = 1
     await load()
-    await loadReconcile()
   } catch (e: any) {
     ElMessage.error(e?.message || '导入银行对账单失败')
   } finally {
@@ -319,6 +250,9 @@ const handleBankStatementImportFile = async (event: Event) => {
 const parseBankStatementRows = (workbook: XLSX.WorkBook) => {
   if (filters.bank_code === 'SHENGJING') {
     return parseShengjingRows(workbook)
+  }
+  if (filters.bank_code === 'CCB') {
+    return parseCcbRows(workbook)
   }
   throw new Error('当前银行模板暂未配置')
 }
@@ -350,6 +284,46 @@ const parseShengjingRows = (workbook: XLSX.WorkBook) => {
     .filter((row) => row.transaction_time || row.debit_amount || row.credit_amount || row.bank_serial_no)
 }
 
+const parseCcbRows = (workbook: XLSX.WorkBook) => {
+  const sheetName = workbook.SheetNames[0]
+  const sheet = workbook.Sheets[sheetName]
+  const table = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '', raw: false })
+  const required = [
+    '账号',
+    '账户名称',
+    '交易时间',
+    '借方发生额（支取）',
+    '贷方发生额（收入）',
+    '余额',
+    '对方户名',
+    '对方账号',
+    '对方开户机构',
+    '摘要',
+    '备注',
+    '账户明细编号-交易流水号'
+  ]
+  const first = table[0] || {}
+  const missing = required.filter((name) => !(name in first))
+  if (missing.length > 0) {
+    throw new Error(`建设银行模板缺少表头：${missing.join('、')}`)
+  }
+  return table
+    .map((row, index) => ({
+      transaction_time: normalizeCcbDateTime(row['交易时间']),
+      debit_amount: normalizeAmount(row['借方发生额（支取）']),
+      credit_amount: normalizeAmount(row['贷方发生额（收入）']),
+      balance_amount: normalizeAmount(row['余额']),
+      counterparty_account_no: cellText(row['对方账号']),
+      counterparty_account_name: cellText(row['对方户名']),
+      counterparty_bank_name: cellText(row['对方开户机构']),
+      purpose: cellText(row['摘要']),
+      postscript: cellText(row['备注']),
+      bank_serial_no: cellText(row['账户明细编号-交易流水号']),
+      source_row_no: index + 2
+    }))
+    .filter((row) => row.transaction_time || row.debit_amount || row.credit_amount || row.bank_serial_no)
+}
+
 const readWorkbook = (file: File) => {
   return new Promise<XLSX.WorkBook>((resolve, reject) => {
     const reader = new FileReader()
@@ -372,6 +346,15 @@ const normalizeExcelDateTime = (value: any) => {
   if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(text)) return text
   if (/^\d{4}\/\d{1,2}\/\d{1,2}/.test(text)) return formatDateTime(new Date(text))
   return text
+}
+
+const normalizeCcbDateTime = (value: any) => {
+  if (value instanceof Date) return formatDateTime(value)
+  const text = cellText(value)
+  const match = text.match(/^(\d{4})(\d{2})(\d{2})(?:\s+(\d{2}):(\d{2}):(\d{2}))?$/)
+  if (!match) return normalizeExcelDateTime(value)
+  const [, year, month, day, hour = '00', minute = '00', second = '00'] = match
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
 }
 
 const normalizeAmount = (value: any) => {
@@ -405,6 +388,13 @@ function initialStatementDateRange(period: string) {
     start: `${period}-01`,
     end: formatDate(new Date(year, month, 0))
   }
+}
+
+function bankCodeFromAccountSetName(bankName: string) {
+  const name = String(bankName || '').trim()
+  if (name.includes('盛京')) return 'SHENGJING'
+  if (name.includes('建设') || name.includes('建行') || /CCB/i.test(name)) return 'CCB'
+  return ''
 }
 
 const money = (value: string | number | undefined) => {
@@ -443,17 +433,8 @@ const reconcileStatusType = (status: string) => {
   return map[status] || 'info'
 }
 
-const bizTypeLabel = (type: string) => {
-  const map: Record<string, string> = {
-    PAYMENT: '缴费',
-    REFUND: '退付'
-  }
-  return map[type] || type || '-'
-}
-
 onMounted(async () => {
   await load()
-  await loadReconcile()
 })
 </script>
 
@@ -483,9 +464,27 @@ onMounted(async () => {
   min-width: 0;
 }
 
-.bank-select,
 .direction-select {
   width: 132px;
+}
+
+.bank-auto-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 176px;
+  height: 32px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+  background: #f8fafc;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.bank-auto-field strong {
+  color: var(--text-main);
+  font-weight: 600;
 }
 
 .date-filter-label,
@@ -538,19 +537,6 @@ onMounted(async () => {
   border: 1px solid var(--border-light);
   border-radius: 8px;
   overflow: hidden;
-}
-
-.reconcile-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.reconcile-panel-header span {
-  color: var(--text-secondary);
-  font-size: 13px;
 }
 
 .case-fund-pagination {

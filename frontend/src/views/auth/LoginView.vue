@@ -42,6 +42,12 @@
           <strong>支持不明款与案款分配生成凭证</strong>
           <p>不明款、案款分配数据可纳入统一凭证生成流程。</p>
         </div>
+        <div>
+          <el-icon><Coin /></el-icon>
+          <span>按收费方式制证</span>
+          <strong>自动区分来账方式并匹配科目</strong>
+          <p>系统可自动区分 POS、转账、不明款，可根据收费方式设置科目生成凭证。</p>
+        </div>
       </div>
     </section>
 

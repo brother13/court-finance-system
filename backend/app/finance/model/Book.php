@@ -5,6 +5,8 @@ namespace app\finance\model;
 class Book extends Common
 {
     const ACTION = 'book';
+    const DETAIL_LEDGER_PDF_PAGE_SIZE = 30;
+    const DETAIL_LEDGER_PDF_QUERY_PAGE_SIZE = 800;
 
     public function index($action = '', $data = [])
     {
@@ -13,6 +15,12 @@ class Book extends Common
                 return $this->detailLedger($data);
             case 'detailLedgerPdf':
                 return $this->detailLedgerPdf($data);
+            case 'detailLedgerPdfJob':
+                return $this->detailLedgerPdfJob($data);
+            case 'detailLedgerPdfJobStatus':
+                return $this->detailLedgerPdfJobStatus($data);
+            case 'detailLedgerPdfJobDownload':
+                return $this->detailLedgerPdfJobDownload($data);
             case 'subjectBalance':
                 return $this->subjectBalance($data);
             case 'subjectBalancePdf':
@@ -121,9 +129,26 @@ class Book extends Common
 
     public function detailLedgerPdf($data = [])
     {
-        $ledgerResult = $this->loadDetailLedgerRowsForPdf($data);
-        if (($ledgerResult['code'] ?? self::CODE_SUCCESS) !== self::CODE_SUCCESS) {
-            return $ledgerResult;
+        $progressCallback = $data['_progress_callback'] ?? null;
+        $progressCallback = is_callable($progressCallback) ? $progressCallback : null;
+        $rowsPerPdfPage = self::DETAIL_LEDGER_PDF_PAGE_SIZE;
+        $queryPageSize = self::DETAIL_LEDGER_PDF_QUERY_PAGE_SIZE;
+        $firstResult = $this->loadDetailLedgerSummaryForPdf($data);
+        if (($firstResult['code'] ?? self::CODE_SUCCESS) !== self::CODE_SUCCESS) {
+            return $firstResult;
+        }
+        $firstPayload = $firstResult['data'] ?? [];
+        $total = (int)($firstPayload['total'] ?? count($firstPayload['items'] ?? []));
+        $pdfPageCount = max(1, (int)ceil($total / $rowsPerPdfPage));
+        $queryPageCount = (int)ceil($total / $queryPageSize);
+        if ($progressCallback) {
+            $progressCallback([
+                'progress' => $total === 0 ? 20 : 1,
+                'total_rows' => $total,
+                'generated_pages' => 0,
+                'total_pages' => $pdfPageCount,
+                'message' => $total === 0 ? '暂无明细账数据，正在生成空报表' : '正在读取明细账数据',
+            ]);
         }
 
         $vendorDir = __DIR__ . '/../../../vendor';
@@ -132,10 +157,10 @@ class Book extends Common
         }
         $this->registerMpdfAutoloader($vendorDir);
 
-        $rows = $ledgerResult['items'] ?? [];
         $startPeriod = trim((string)($data['start_period'] ?? ($data['period'] ?? '')));
         $endPeriod = trim((string)($data['end_period'] ?? ($data['period'] ?? '')));
         $subjectCode = trim((string)($data['subject_code'] ?? ''));
+        $disposition = $this->pdfDisposition($data['disposition'] ?? 'inline');
         $accountSetName = db('fin_account_set')
             ->where([
                 'account_set_id' => $this->accountSetId,
@@ -158,7 +183,7 @@ class Book extends Common
             mkdir($tempDir, 0775, true);
         }
 
-        $rowCount = max(1, count($rows));
+        $rowCount = max(1, $total);
         $fontSizePt = 8.4;
         if ($rowCount > 32) {
             $fontSizePt = 7.8;
@@ -166,18 +191,6 @@ class Book extends Common
         if ($rowCount > 55) {
             $fontSizePt = 7.1;
         }
-
-        $html = $this->buildDetailLedgerPdfHtml(
-            $rows,
-            $accountSetName,
-            $startPeriod,
-            $endPeriod,
-            $subjectCode,
-            $subjectName,
-            $ledgerResult['debit_total'] ?? 0,
-            $ledgerResult['credit_total'] ?? 0,
-            $fontSizePt
-        );
 
         try {
             $mpdf = new \Mpdf\Mpdf([
@@ -194,15 +207,174 @@ class Book extends Common
             ]);
             $mpdf->SetTitle('明细账');
             $mpdf->SetDisplayMode('fullpage');
-            $mpdf->WriteHTML($html);
+            $mpdf->SetFooter('第 {PAGENO} / {nbpg} 页');
+            $mpdf->WriteHTML($this->detailLedgerPdfStyles($fontSizePt), \Mpdf\HTMLParserMode::HEADER_CSS);
+            if ($total === 0) {
+                $mpdf->WriteHTML($this->buildDetailLedgerPdfPageHtml(
+                    [],
+                    $accountSetName,
+                    $startPeriod,
+                    $endPeriod,
+                    $subjectCode,
+                    $subjectName,
+                    $firstPayload['debit_total'] ?? 0,
+                    $firstPayload['credit_total'] ?? 0,
+                    '',
+                    $fontSizePt
+                ));
+                if ($progressCallback) {
+                    $progressCallback([
+                        'progress' => 80,
+                        'total_rows' => 0,
+                        'generated_pages' => 1,
+                        'total_pages' => 1,
+                        'message' => '正在写入PDF文件',
+                    ]);
+                }
+            } else {
+                $pdfPageNo = 0;
+                for ($queryPage = 1; $queryPage <= $queryPageCount; $queryPage++) {
+                    $pageResult = $this->loadDetailLedgerRowsPageOnlyForPdf($data, $queryPage, $queryPageSize);
+                    if (($pageResult['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+                        return $pageResult;
+                    }
+                    foreach (array_chunk($pageResult['data']['items'] ?? [], $rowsPerPdfPage) as $rows) {
+                        $pdfPageNo++;
+                        if ($pdfPageNo > 1) {
+                            $mpdf->AddPage();
+                        }
+                        $isLastPage = $pdfPageNo === $pdfPageCount;
+                        $mpdf->WriteHTML($this->buildDetailLedgerPdfPageHtml(
+                            $rows,
+                            $accountSetName,
+                            $startPeriod,
+                            $endPeriod,
+                            $subjectCode,
+                            $subjectName,
+                            $isLastPage ? ($firstPayload['debit_total'] ?? 0) : null,
+                            $isLastPage ? ($firstPayload['credit_total'] ?? 0) : null,
+                            '',
+                            $fontSizePt
+                        ));
+                        if ($progressCallback) {
+                            $progress = min(95, max(1, (int)floor($pdfPageNo * 95 / $pdfPageCount)));
+                            $progressCallback([
+                                'progress' => $progress,
+                                'total_rows' => $total,
+                                'generated_pages' => $pdfPageNo,
+                                'total_pages' => $pdfPageCount,
+                                'message' => '正在生成第' . $pdfPageNo . '/' . $pdfPageCount . '页PDF',
+                            ]);
+                        }
+                    }
+                }
+            }
             $pdf = $mpdf->Output('', 'S');
+            if ($progressCallback) {
+                $progressCallback([
+                    'progress' => 98,
+                    'total_rows' => $total,
+                    'generated_pages' => $pdfPageCount,
+                    'total_pages' => $pdfPageCount,
+                    'message' => 'PDF已生成，正在保存文件',
+                ]);
+            }
         } catch (\Exception $e) {
             return $this->error('生成明细账PDF失败：' . $e->getMessage());
         }
 
         return response($pdf, 200, [
             'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="detail-ledger.pdf"',
+            'Content-Disposition' => $disposition . '; filename="detail-ledger.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
+    }
+
+    public function detailLedgerPdfJob($data = [])
+    {
+        $auth = $this->requirePermission('book:view');
+        if ($auth) {
+            return $auth;
+        }
+        $this->ensureDetailLedgerPdfJobDir();
+        $jobId = uuid();
+        $job = [
+            'job_id' => $jobId,
+            'status' => 'QUEUED',
+            'created_time' => $this->now(),
+            'updated_time' => $this->now(),
+            'account_set_id' => $this->accountSetId,
+            'year' => $this->year,
+            'user_id' => $this->userid,
+            'user_name' => $this->username,
+            'params' => array_merge($data, ['disposition' => 'attachment']),
+            'pdf_path' => $this->detailLedgerPdfJobPdfPath($jobId),
+            'log_path' => $this->detailLedgerPdfJobLogPath($jobId),
+            'message' => '任务已创建',
+            'error' => '',
+            'progress' => 0,
+            'total_rows' => 0,
+            'generated_pages' => 0,
+            'total_pages' => 0,
+        ];
+        $this->writeDetailLedgerPdfJob($job);
+        $startResult = $this->startDetailLedgerPdfJobProcess($jobId);
+        if (!($startResult['ok'] ?? false)) {
+            $job = $this->readDetailLedgerPdfJob($jobId) ?: $job;
+            $job['status'] = 'FAILED';
+            $job['updated_time'] = $this->now();
+            $job['message'] = 'PDF任务启动失败';
+            $job['error'] = $startResult['error'] ?? '后台PDF任务启动失败';
+            $this->writeDetailLedgerPdfJob($job);
+            return $this->error($job['error']);
+        }
+
+        $job = $this->readDetailLedgerPdfJob($jobId) ?: $job;
+        return $this->ok($this->publicDetailLedgerPdfJob($job), 'OK');
+    }
+
+    public function detailLedgerPdfJobStatus($data = [])
+    {
+        $auth = $this->requirePermission('book:view');
+        if ($auth) {
+            return $auth;
+        }
+        $job = $this->readDetailLedgerPdfJob(trim((string)($data['job_id'] ?? '')));
+        if (!$job) {
+            return $this->error('PDF任务不存在或已清理');
+        }
+        if (($job['account_set_id'] ?? '') !== $this->accountSetId) {
+            return $this->error('无权访问该PDF任务');
+        }
+        $job = $this->refreshDetailLedgerPdfJobStatus($job);
+
+        return $this->ok($this->publicDetailLedgerPdfJob($job), 'OK');
+    }
+
+    public function detailLedgerPdfJobDownload($data = [])
+    {
+        $auth = $this->requirePermission('book:view');
+        if ($auth) {
+            return $auth;
+        }
+        $job = $this->readDetailLedgerPdfJob(trim((string)($data['job_id'] ?? '')));
+        if (!$job) {
+            return $this->error('PDF任务不存在或已清理');
+        }
+        if (($job['account_set_id'] ?? '') !== $this->accountSetId) {
+            return $this->error('无权访问该PDF任务');
+        }
+        if (($job['status'] ?? '') !== 'DONE') {
+            return $this->error('PDF任务尚未完成');
+        }
+        $path = $job['pdf_path'] ?? '';
+        if ($path === '' || !is_file($path)) {
+            return $this->error('PDF文件不存在或已清理');
+        }
+
+        return response(file_get_contents($path), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="detail-ledger.pdf"',
             'Cache-Control' => 'no-store, no-cache, must-revalidate',
         ]);
     }
@@ -740,6 +912,239 @@ class Book extends Common
         require_once $vendorDir . '/mpdf/mpdf/src/functions.php';
     }
 
+    protected function pdfDisposition($value)
+    {
+        return $value === 'attachment' ? 'attachment' : 'inline';
+    }
+
+    protected function detailLedgerPdfJobDir()
+    {
+        return __DIR__ . '/../../../runtime/detail_ledger_pdf_jobs';
+    }
+
+    protected function ensureDetailLedgerPdfJobDir()
+    {
+        $dir = $this->detailLedgerPdfJobDir();
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        return $dir;
+    }
+
+    protected function detailLedgerPdfJobPath($jobId)
+    {
+        return $this->detailLedgerPdfJobDir() . '/' . basename((string)$jobId) . '.json';
+    }
+
+    protected function detailLedgerPdfJobPdfPath($jobId)
+    {
+        return $this->detailLedgerPdfJobDir() . '/' . basename((string)$jobId) . '.pdf';
+    }
+
+    protected function detailLedgerPdfJobLogPath($jobId)
+    {
+        return $this->detailLedgerPdfJobDir() . '/' . basename((string)$jobId) . '.log';
+    }
+
+    protected function readDetailLedgerPdfJob($jobId)
+    {
+        if ($jobId === '') {
+            return null;
+        }
+        $path = $this->detailLedgerPdfJobPath($jobId);
+        if (!is_file($path)) {
+            return null;
+        }
+        $job = json_decode((string)file_get_contents($path), true);
+        return is_array($job) ? $job : null;
+    }
+
+    protected function writeDetailLedgerPdfJob($job)
+    {
+        $this->ensureDetailLedgerPdfJobDir();
+        file_put_contents(
+            $this->detailLedgerPdfJobPath($job['job_id'] ?? ''),
+            json_encode($job, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
+            LOCK_EX
+        );
+    }
+
+    protected function detailLedgerPdfJobErrorFromLog($job)
+    {
+        $logPath = $job['log_path'] ?? '';
+        if ($logPath !== '' && is_file($logPath) && filesize($logPath) > 0) {
+            $content = trim((string)file_get_contents($logPath, false, null, 0, 2000));
+            if ($content !== '') {
+                return $content;
+            }
+        }
+        return '';
+    }
+
+    protected function refreshDetailLedgerPdfJobStatus($job)
+    {
+        $status = $job['status'] ?? '';
+        if ($status !== 'QUEUED' && $status !== 'RUNNING') {
+            return $job;
+        }
+        $updatedTime = strtotime((string)($job['updated_time'] ?? '')) ?: time();
+        $idleSeconds = time() - $updatedTime;
+        $error = '';
+        if ($status === 'QUEUED' && $idleSeconds >= 8) {
+            $error = $this->detailLedgerPdfJobErrorFromLog($job);
+            if ($error === '') {
+                $error = 'PDF后台任务未启动。请检查生产环境是否允许PHP执行exec函数、是否安装PHP CLI、backend/scripts/detail_ledger_pdf_job.php是否已部署，以及backend/runtime目录是否可写。';
+            }
+        }
+        if ($status === 'RUNNING' && $idleSeconds >= 600) {
+            $error = $this->detailLedgerPdfJobErrorFromLog($job);
+            if ($error === '') {
+                $error = 'PDF后台任务超过10分钟没有进度更新，可能已被服务器中止。请检查PHP CLI执行权限、内存限制和runtime目录权限。';
+            }
+        }
+        if ($error === '') {
+            return $job;
+        }
+
+        $job['status'] = 'FAILED';
+        $job['message'] = 'PDF生成失败';
+        $job['error'] = $error;
+        $job['updated_time'] = $this->now();
+        $this->writeDetailLedgerPdfJob($job);
+        return $job;
+    }
+
+    protected function publicDetailLedgerPdfJob($job)
+    {
+        return [
+            'job_id' => $job['job_id'] ?? '',
+            'status' => $job['status'] ?? 'UNKNOWN',
+            'message' => $job['message'] ?? '',
+            'error' => $job['error'] ?? '',
+            'created_time' => $job['created_time'] ?? '',
+            'updated_time' => $job['updated_time'] ?? '',
+            'file_size' => isset($job['pdf_path']) && is_file($job['pdf_path']) ? filesize($job['pdf_path']) : 0,
+            'progress' => isset($job['progress']) ? (int)$job['progress'] : 0,
+            'total_rows' => isset($job['total_rows']) ? (int)$job['total_rows'] : 0,
+            'generated_pages' => isset($job['generated_pages']) ? (int)$job['generated_pages'] : 0,
+            'total_pages' => isset($job['total_pages']) ? (int)$job['total_pages'] : 0,
+        ];
+    }
+
+    protected function startDetailLedgerPdfJobProcess($jobId)
+    {
+        $script = realpath(__DIR__ . '/../../../scripts/detail_ledger_pdf_job.php');
+        if (!$script) {
+            return ['ok' => false, 'error' => 'PDF后台脚本不存在，请确认 backend/scripts/detail_ledger_pdf_job.php 已部署'];
+        }
+        $php = $this->findPhpCliBinary();
+        if (!is_file($php)) {
+            return ['ok' => false, 'error' => '未找到PHP CLI可执行文件，当前路径：' . $php];
+        }
+        $log = $this->detailLedgerPdfJobLogPath($jobId);
+        $job = $this->readDetailLedgerPdfJob($jobId);
+        if (!$job) {
+            return ['ok' => false, 'error' => 'PDF任务文件不存在，无法启动后台任务'];
+        }
+        $job['launcher_php'] = $php;
+        $job['launcher_script'] = $script;
+        $job['message'] = '后台任务启动中';
+        $this->writeDetailLedgerPdfJob($job);
+
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        if ($isWindows) {
+            if (!$this->isPhpFunctionAvailable('popen') || !$this->isPhpFunctionAvailable('pclose')) {
+                return ['ok' => false, 'error' => '生产环境禁用了PHP popen/pclose函数，无法在Windows上启动PDF后台任务'];
+            }
+            $cmd = 'cmd /C start "" /B ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobId)
+                . ' > ' . escapeshellarg($log) . ' 2>&1';
+            $handle = @popen($cmd, 'r');
+            if (!$handle) {
+                $job['launcher_command'] = $cmd;
+                $job['launcher_code'] = -1;
+                $this->writeDetailLedgerPdfJob($job);
+                return ['ok' => false, 'error' => 'Windows后台任务启动失败，请检查XAMPP运行用户是否允许执行cmd/start'];
+            }
+            pclose($handle);
+            $job = $this->readDetailLedgerPdfJob($jobId) ?: $job;
+            $job['launcher_code'] = 0;
+            $job['launcher_pid'] = '';
+            $job['launcher_command'] = $cmd;
+            $this->writeDetailLedgerPdfJob($job);
+            return ['ok' => true];
+        } else {
+            if (!$this->isPhpFunctionAvailable('exec')) {
+                return ['ok' => false, 'error' => '生产环境禁用了PHP exec函数，无法启动PDF后台任务'];
+            }
+            $cmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($jobId)
+                . ' > ' . escapeshellarg($log) . ' 2>&1 & echo $!';
+            $output = [];
+            $code = 0;
+            exec($cmd, $output, $code);
+            $job = $this->readDetailLedgerPdfJob($jobId) ?: $job;
+            $job['launcher_code'] = $code;
+            $job['launcher_pid'] = trim((string)($output[0] ?? ''));
+            $job['launcher_command'] = $cmd;
+            $this->writeDetailLedgerPdfJob($job);
+            if ($code !== 0) {
+                $error = $this->detailLedgerPdfJobErrorFromLog($job);
+                return ['ok' => false, 'error' => $error !== '' ? $error : 'PDF后台任务启动命令执行失败'];
+            }
+
+            return ['ok' => true];
+        }
+    }
+
+    protected function isPhpFunctionAvailable($function)
+    {
+        if (!function_exists($function)) {
+            return false;
+        }
+        $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+        return !in_array($function, $disabled, true);
+    }
+
+    protected function findPhpCliBinary()
+    {
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        $names = $isWindows ? ['php.exe', 'php'] : ['php'];
+        $candidates = [];
+        $baseDirs = [PHP_BINDIR, dirname(PHP_BINARY)];
+        if ($isWindows) {
+            foreach ([PHP_BINDIR, dirname(PHP_BINARY)] as $dir) {
+                $dir = rtrim($dir, '/\\');
+                $baseDirs[] = dirname(dirname($dir)) . DIRECTORY_SEPARATOR . 'php';
+                $baseDirs[] = dirname(dirname(dirname($dir))) . DIRECTORY_SEPARATOR . 'php';
+            }
+            $pathDirs = explode(PATH_SEPARATOR, (string)getenv('PATH'));
+            foreach ($pathDirs as $pathDir) {
+                if ($pathDir !== '') {
+                    $baseDirs[] = $pathDir;
+                }
+            }
+        }
+        foreach (array_unique($baseDirs) as $dir) {
+            foreach ($names as $name) {
+                $candidates[] = rtrim($dir, '/\\') . DIRECTORY_SEPARATOR . $name;
+            }
+        }
+        if ($this->isPhpCliBinaryPath(PHP_BINARY)) {
+            $candidates[] = PHP_BINARY;
+        }
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate) && $this->isPhpCliBinaryPath($candidate)) {
+                return $candidate;
+            }
+        }
+        return '';
+    }
+
+    protected function isPhpCliBinaryPath($path)
+    {
+        $name = strtolower(basename((string)$path));
+        return $name === 'php' || $name === 'php.exe';
+    }
+
     protected function buildSubjectBalancePdfHtml($rows, $accountSetName, $startPeriod, $endPeriod, $totals, $fontSizePt)
     {
         $escape = function ($value) {
@@ -861,7 +1266,125 @@ class Book extends Common
         ];
     }
 
+    protected function loadDetailLedgerSummaryForPdf($data)
+    {
+        return $this->detailLedger(array_merge($data, [
+            'page' => 1,
+            'pagesize' => 1,
+        ]));
+    }
+
+    protected function loadDetailLedgerRowsPageOnlyForPdf($data, $page, $pageSize)
+    {
+        $queryResult = $this->buildDetailLedgerRowsQueryForPdf($data);
+        if (($queryResult['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+            return $queryResult;
+        }
+        $rows = $queryResult['query']
+            ->field('v.voucher_id,v.period,v.voucher_date,v.voucher_no,d.summary,d.subject_code,s.subject_name,d.debit_amount,d.credit_amount,d.aux_desc')
+            ->order('v.voucher_date asc,v.voucher_no asc,d.line_no asc')
+            ->page(max(1, (int)$page), max(1, (int)$pageSize))
+            ->select();
+
+        return $this->ok([
+            'items' => $rows,
+        ]);
+    }
+
+    protected function buildDetailLedgerRowsQueryForPdf($data)
+    {
+        $paramsResult = $this->normalizeDetailLedgerPdfParams($data);
+        if (($paramsResult['code'] ?? self::CODE_ERROR) !== self::CODE_SUCCESS) {
+            return $paramsResult;
+        }
+        $params = $paramsResult['data'];
+        $where = [
+            'd.account_set_id' => $this->accountSetId,
+            'd.fiscal_year' => $params['fiscal_year'],
+            'd.del_flag' => 0,
+            'v.fiscal_year' => $params['fiscal_year'],
+            'v.del_flag' => 0,
+            'v.voucher_date' => ['between', [$params['start_date'], $params['end_date']]],
+            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
+        ];
+        $query = db('fin_voucher_detail')->alias('d')
+            ->force('idx_voucher_detail_ledger_subject')
+            ->join('fin_voucher v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
+            ->join('fin_subject s', 's.subject_code=d.subject_code and s.account_set_id=d.account_set_id and s.del_flag=0', 'LEFT')
+            ->where($where)
+            ->where('d.period', 'between', [$params['start_period'], $params['end_period']])
+            ->where('v.period', 'between', [$params['start_period'], $params['end_period']]);
+        if ($params['subject_code'] !== '') {
+            $query->where('d.subject_code', '>=', $params['subject_code']);
+            $query->where('d.subject_code', '<=', $this->subjectRangeUpperBound($params['subject_code'], $params['max_length']));
+        }
+
+        return [
+            'code' => self::CODE_SUCCESS,
+            'query' => $query,
+        ];
+    }
+
+    protected function normalizeDetailLedgerPdfParams($data)
+    {
+        $period = trim((string)($data['period'] ?? ''));
+        $startPeriod = trim((string)($data['start_period'] ?? ''));
+        $endPeriod = trim((string)($data['end_period'] ?? ''));
+        if ($startPeriod === '') {
+            $startPeriod = $period;
+        }
+        if ($endPeriod === '') {
+            $endPeriod = $period;
+        }
+        if ($startPeriod === '' || $endPeriod === '') {
+            return $this->error('会计期间不能为空');
+        }
+        if (!$this->validPeriod($startPeriod) || !$this->validPeriod($endPeriod)) {
+            return $this->error('会计期间格式不正确');
+        }
+        if (substr($startPeriod, 0, 4) !== substr($endPeriod, 0, 4)) {
+            return $this->error('明细账暂不支持跨年度查询');
+        }
+        if ($startPeriod > $endPeriod) {
+            return $this->error('起始期间不能晚于结束期间');
+        }
+        $startDate = trim((string)($data['start_date'] ?? ''));
+        $endDate = trim((string)($data['end_date'] ?? ''));
+        if ($startDate === '') {
+            $startDate = substr($startPeriod, 0, 7) . '-01';
+        }
+        if ($endDate === '') {
+            $endDate = date('Y-m-t', strtotime($endPeriod . '-01'));
+        }
+        $codeRule = $this->subjectCodeRule();
+        $lengths = $this->subjectCodeRuleLengths($codeRule);
+
+        return $this->ok([
+            'start_period' => $startPeriod,
+            'end_period' => $endPeriod,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'subject_code' => trim((string)($data['subject_code'] ?? '')),
+            'fiscal_year' => $this->fiscalYear($endPeriod),
+            'max_length' => empty($lengths) ? 10 : max($lengths),
+        ]);
+    }
+
     protected function buildDetailLedgerPdfHtml($rows, $accountSetName, $startPeriod, $endPeriod, $subjectCode, $subjectName, $debitTotal, $creditTotal, $fontSizePt)
+    {
+        return '<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">'
+            . $this->detailLedgerPdfStyles($fontSizePt)
+            . '</head>
+<body>'
+            . $this->buildDetailLedgerPdfPageHtml($rows, $accountSetName, $startPeriod, $endPeriod, $subjectCode, $subjectName, $debitTotal, $creditTotal, '', $fontSizePt)
+            . '</body>
+</html>';
+    }
+
+    protected function buildDetailLedgerPdfPageHtml($rows, $accountSetName, $startPeriod, $endPeriod, $subjectCode, $subjectName, $debitTotal, $creditTotal, $rightMetaText, $fontSizePt = 7.1)
     {
         $escape = function ($value) {
             return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
@@ -882,7 +1405,9 @@ class Book extends Common
             $body .= '<tr>';
             $body .= '<td class="date">' . $escape($row['voucher_date'] ?? '') . '</td>';
             $body .= '<td class="voucher-no">' . $escape($voucherNo) . '</td>';
-            $body .= '<td class="summary">' . $escape($row['summary'] ?? '') . '</td>';
+            $summaryText = (string)($row['summary'] ?? '');
+            $summaryStyle = $this->detailLedgerPdfSummaryStyle($summaryText, $fontSizePt);
+            $body .= '<td class="summary"><span class="summary-text"' . $summaryStyle . '>' . $escape($summaryText) . '</span></td>';
             $body .= '<td class="subject">' . $escape($subjectLabel) . '</td>';
             $body .= '<td class="amount">' . $escape($money($row['debit_amount'] ?? 0)) . '</td>';
             $body .= '<td class="amount">' . $escape($money($row['credit_amount'] ?? 0)) . '</td>';
@@ -892,41 +1417,20 @@ class Book extends Common
         if ($body === '') {
             $body = '<tr><td class="empty" colspan="7">暂无明细账数据</td></tr>';
         }
-        $body .= '<tr class="total-row">'
-            . '<td class="date">合计</td>'
-            . '<td class="voucher-no"></td>'
-            . '<td class="summary"></td>'
-            . '<td class="subject"></td>'
-            . '<td class="amount">' . $escape($money($debitTotal, true)) . '</td>'
-            . '<td class="amount">' . $escape($money($creditTotal, true)) . '</td>'
-            . '<td class="aux"></td>'
-            . '</tr>';
+        if ($debitTotal !== null && $creditTotal !== null) {
+            $body .= '<tr class="total-row">'
+                . '<td class="date">合计</td>'
+                . '<td class="voucher-no"></td>'
+                . '<td class="summary"></td>'
+                . '<td class="subject"></td>'
+                . '<td class="amount">' . $escape($money($debitTotal, true)) . '</td>'
+                . '<td class="amount">' . $escape($money($creditTotal, true)) . '</td>'
+                . '<td class="aux"></td>'
+                . '</tr>';
+        }
         $subjectText = trim($subjectCode . ($subjectName !== '' ? ' ' . $subjectName : ''));
 
-        return '<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: gb, sun-exta, "SimSun", serif; color: #111; font-size: ' . $fontSizePt . 'pt; }
-    h1 { text-align: center; margin: 0 0 8px; font-size: 16pt; font-weight: bold; }
-    .meta { width: 100%; margin-bottom: 8px; font-size: 8pt; }
-    .meta td { border: 0; padding: 0; }
-    .meta-right { text-align: right; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #111; padding: 3px 4px; vertical-align: top; }
-    th { text-align: center; font-weight: bold; background: #f2f2f2; }
-    .date { width: 10%; text-align: center; }
-    .voucher-no { width: 9%; text-align: center; }
-    .summary { width: 24%; }
-    .subject { width: 18%; }
-    .amount { width: 11%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
-    .aux { width: 17%; }
-    .empty { text-align: center; color: #666; }
-    .total-row td { font-weight: bold; background: #efefef; }
-  </style>
-</head>
-<body>
+        return '
   <h1>明细账</h1>
   <table class="meta" border="0" cellpadding="0" cellspacing="0">
     <tr>
@@ -934,7 +1438,8 @@ class Book extends Common
       <td class="meta-right">期间：' . $escape($startPeriod) . ' 至 ' . $escape($endPeriod) . '</td>
     </tr>
     <tr>
-      <td colspan="2">科目：' . $escape($subjectText !== '' ? $subjectText : '全部科目') . '</td>
+      <td>科目：' . $escape($subjectText !== '' ? $subjectText : '全部科目') . '</td>
+      <td class="meta-right">' . $escape($rightMetaText) . '</td>
     </tr>
   </table>
   <table border="1" cellpadding="3" cellspacing="0">
@@ -950,9 +1455,57 @@ class Book extends Common
       </tr>
     </thead>
     <tbody>' . $body . '</tbody>
-  </table>
-</body>
-</html>';
+  </table>';
+    }
+
+    protected function detailLedgerPdfStyles($fontSizePt)
+    {
+        return '
+  <style>
+    body { font-family: gb, sun-exta, "SimSun", serif; color: #111; font-size: ' . $fontSizePt . 'pt; }
+    h1 { text-align: center; margin: 0 0 8px; font-size: 16pt; font-weight: bold; }
+    .meta { width: 100%; margin-bottom: 8px; font-size: 8pt; }
+    .meta td { border: 0; padding: 0; }
+    .meta-right { text-align: right; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #111; padding: 3px 4px; vertical-align: top; }
+    th { text-align: center; font-weight: bold; background: #f2f2f2; }
+    .date { width: 10%; text-align: center; }
+    .voucher-no { width: 9%; text-align: center; }
+    .summary { width: 24%; }
+    .summary-text { display: block; }
+    .subject { width: 18%; }
+    .amount { width: 11%; text-align: right; font-family: dejavusansmono, gb, sun-exta, monospace; }
+    .aux { width: 17%; }
+    .empty { text-align: center; color: #666; }
+    .total-row td { font-weight: bold; background: #efefef; }
+  </style>';
+    }
+
+    protected function detailLedgerPdfSummaryStyle($summary, $baseFontSizePt)
+    {
+        $length = $this->utf8Length($summary);
+        if ($length <= 24) {
+            return '';
+        }
+        $baseFontSizePt = max(4.0, (float)$baseFontSizePt);
+        $fontSize = max(3.6, min($baseFontSizePt, round($baseFontSizePt * 24 / max(1, $length), 2)));
+        return ' style="font-size: ' . $fontSize . 'pt; line-height: 1; white-space: nowrap; word-break: keep-all;"';
+    }
+
+    protected function utf8Length($value)
+    {
+        $text = (string)$value;
+        if ($text === '') {
+            return 0;
+        }
+        if (function_exists('mb_strlen')) {
+            return mb_strlen($text, 'UTF-8');
+        }
+        if (preg_match_all('/./us', $text, $matches)) {
+            return count($matches[0]);
+        }
+        return strlen($text);
     }
 
     protected function formatDetailLedgerAuxDesc($auxDesc)
@@ -1150,6 +1703,83 @@ class Book extends Common
         $subjectCode = trim((string)($data['subject_code'] ?? ''));
         $caseNoFilter = trim((string)($data['case_no'] ?? ''));
         $receiptNoFilter = trim((string)($data['receipt_no'] ?? ''));
+        $refreshSnapshot = !empty($data['refresh_snapshot']);
+        $snapshotError = $this->ensureAuxBalanceSnapshot($period, $refreshSnapshot);
+        if ($snapshotError) {
+            return $snapshotError;
+        }
+
+        $rows = $this->loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter);
+        return $this->ok([
+            'items' => $rows,
+            'total' => count($rows),
+            'period' => $period,
+            'snapshot_time' => $this->auxBalanceSnapshotTime($period),
+        ], 'OK', count($rows));
+    }
+
+    protected function ensureAuxBalanceSnapshot($period, $forceRefresh = false)
+    {
+        if (!$forceRefresh && $this->auxBalanceSnapshotFresh($period)) {
+            return null;
+        }
+        return $this->rebuildAuxBalanceSnapshot($period);
+    }
+
+    protected function auxBalanceSnapshotFresh($period)
+    {
+        $fiscalYear = $this->fiscalYear($period);
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $fiscalYear,
+            'period' => $period,
+            'del_flag' => 0,
+        ];
+        try {
+            $count = (int)db('fin_aux_balance_snapshot')->where($where)->count();
+            return $count > 0;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    protected function rebuildAuxBalanceSnapshot($period)
+    {
+        $fiscalYear = $this->fiscalYear($period);
+        $sourceTime = $this->auxBalanceSourceUpdatedTime($period);
+        $snapshotTime = $this->now();
+        $groups = $this->buildAuxBalanceGroupsFromSources($period);
+        $where = [
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $fiscalYear,
+            'period' => $period,
+        ];
+
+        \think\Db::startTrans();
+        try {
+            db('fin_aux_balance_snapshot')->where($where)->delete();
+            $batch = [];
+            foreach ($groups as $detail) {
+                $batch[] = $this->buildAuxBalanceSnapshotInsertRow($detail, $fiscalYear, $period, $snapshotTime, $sourceTime);
+                if (count($batch) >= 500) {
+                    db('fin_aux_balance_snapshot')->insertAll($batch);
+                    $batch = [];
+                }
+            }
+            if (!empty($batch)) {
+                db('fin_aux_balance_snapshot')->insertAll($batch);
+            }
+            \think\Db::commit();
+        } catch (\Exception $e) {
+            \think\Db::rollback();
+            return $this->error('刷新辅助核算余额快照失败：' . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    protected function buildAuxBalanceGroupsFromSources($period)
+    {
         $fiscalYear = $this->fiscalYear($period);
         $groups = [];
         $subjectMap = $this->subjectInfoMap();
@@ -1160,21 +1790,16 @@ class Book extends Common
                 'period' => $this->openingPeriodFor($period, 'fin_aux_opening_balance'),
                 'del_flag' => 0,
             ])
+            ->field('subject_code,aux_values_json,debit_amount,credit_amount')
             ->select();
         foreach ($openingRows as $row) {
             $rowSubjectCode = $row['subject_code'] ?? '';
-            if ($subjectCode !== '' && $rowSubjectCode !== $subjectCode) {
-                continue;
-            }
             $auxValues = json_decode($row['aux_values_json'] ?? '{}', true);
             if (!is_array($auxValues)) {
                 $auxValues = [];
             }
             $caseNo = trim((string)($auxValues['case_no'] ?? ''));
             $receiptNo = trim((string)($auxValues['receipt_no'] ?? ''));
-            if (!$this->matchAuxBalanceFilter($caseNo, $receiptNo, $caseNoFilter, $receiptNoFilter)) {
-                continue;
-            }
             $subject = $subjectMap[$rowSubjectCode] ?? [];
             $this->addAuxBalanceAmount(
                 $groups,
@@ -1200,9 +1825,6 @@ class Book extends Common
             'case_aux.aux_type_code' => 'case_no',
             'case_aux.del_flag' => 0,
         ];
-        if ($subjectCode !== '') {
-            $voucherWhere['d.subject_code'] = $subjectCode;
-        }
         $voucherQuery = db('fin_voucher_detail')->alias('d')
             ->join('fin_voucher v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
             ->join('fin_voucher_aux_value case_aux', 'case_aux.detail_id=d.detail_id and case_aux.account_set_id=d.account_set_id and case_aux.fiscal_year=d.fiscal_year and case_aux.period=d.period')
@@ -1211,19 +1833,14 @@ class Book extends Common
             ->where($voucherWhere)
             ->where('d.period', 'between', [$this->reportYearStartPeriod($period), $period])
             ->where('v.period', 'between', [$this->reportYearStartPeriod($period), $period]);
-        if ($caseNoFilter !== '') {
-            $voucherQuery->where('case_aux.aux_value|case_aux.aux_label', 'like', '%' . $caseNoFilter . '%');
-        }
-        if ($receiptNoFilter !== '') {
-            $voucherQuery->where('receipt_aux.aux_value|receipt_aux.aux_label', 'like', '%' . $receiptNoFilter . '%');
-        }
         $voucherRows = $voucherQuery
-            ->field('d.subject_code,s.subject_name,s.direction,d.debit_amount,d.credit_amount,case_aux.aux_value as case_no,case_aux.aux_label as case_label,receipt_aux.aux_value as receipt_no,receipt_aux.aux_label as receipt_label')
-            ->order('d.subject_code asc,case_aux.aux_value asc,receipt_aux.aux_value asc')
+            ->field("d.subject_code,s.subject_name,s.direction,trim(coalesce(nullif(case_aux.aux_label,''),case_aux.aux_value)) as case_no,trim(coalesce(nullif(receipt_aux.aux_label,''),receipt_aux.aux_value,'')) as receipt_no,sum(d.debit_amount) as debit_amount,sum(d.credit_amount) as credit_amount,count(*) as entry_count")
+            ->group('d.subject_code,s.subject_name,s.direction,case_no,receipt_no')
+            ->order('d.subject_code asc,case_no asc,receipt_no asc')
             ->select();
         foreach ($voucherRows as $row) {
-            $caseNo = trim((string)($row['case_label'] ?: $row['case_no']));
-            $receiptNo = trim((string)($row['receipt_label'] ?: $row['receipt_no']));
+            $caseNo = trim((string)$row['case_no']);
+            $receiptNo = trim((string)$row['receipt_no']);
             $this->addAuxBalanceAmount(
                 $groups,
                 $row['subject_code'],
@@ -1234,16 +1851,153 @@ class Book extends Common
                 0,
                 0,
                 $this->decimalToCents($row['debit_amount'] ?? 0),
-                $this->decimalToCents($row['credit_amount'] ?? 0)
+                $this->decimalToCents($row['credit_amount'] ?? 0),
+                (int)($row['entry_count'] ?? 0)
             );
         }
 
-        $rows = $this->buildAuxBalanceRows($groups);
-        return $this->ok([
-            'items' => $rows,
-            'total' => count($rows),
+        return $groups;
+    }
+
+    protected function buildAuxBalanceSnapshotInsertRow($detail, $fiscalYear, $period, $snapshotTime, $sourceTime)
+    {
+        $openingBalanceCents = $this->normalBalanceCents($detail['direction'], $detail['opening_debit_cents'], $detail['opening_credit_cents']);
+        $endingBalanceCents = $this->normalBalanceCents(
+            $detail['direction'],
+            $detail['opening_debit_cents'] + $detail['debit_cents'],
+            $detail['opening_credit_cents'] + $detail['credit_cents']
+        );
+        return [
+            'snapshot_id' => uuid(),
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $fiscalYear,
             'period' => $period,
-        ], 'OK', count($rows));
+            'subject_code' => $detail['subject_code'],
+            'subject_name' => $detail['subject_name'],
+            'direction' => $detail['direction'],
+            'case_no' => $detail['case_no'],
+            'receipt_no' => $detail['receipt_no'],
+            'opening_debit_amount' => $this->centsToDecimal($detail['opening_debit_cents']),
+            'opening_credit_amount' => $this->centsToDecimal($detail['opening_credit_cents']),
+            'opening_balance_amount' => $this->centsToDecimal($openingBalanceCents),
+            'debit_amount' => $this->centsToDecimal($detail['debit_cents']),
+            'credit_amount' => $this->centsToDecimal($detail['credit_cents']),
+            'ending_balance_amount' => $this->centsToDecimal($endingBalanceCents),
+            'entry_count' => (int)$detail['entry_count'],
+            'monitor_flag' => $endingBalanceCents !== 0 ? 1 : 0,
+            'source_updated_time' => $sourceTime !== '' ? $sourceTime : null,
+            'snapshot_time' => $snapshotTime,
+            'created_by' => $this->userid,
+            'created_time' => $snapshotTime,
+            'updated_by' => $this->userid,
+            'updated_time' => $snapshotTime,
+            'del_flag' => 0,
+            'version' => 0,
+        ];
+    }
+
+    protected function loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter)
+    {
+        $query = db('fin_aux_balance_snapshot')
+            ->where([
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'period' => $period,
+                'del_flag' => 0,
+            ]);
+        if ($subjectCode !== '') {
+            $query->where('subject_code', $subjectCode);
+        }
+        if ($caseNoFilter !== '') {
+            $query->where('case_no', 'like', '%' . $caseNoFilter . '%');
+        }
+        if ($receiptNoFilter !== '') {
+            $query->where('receipt_no', 'like', '%' . $receiptNoFilter . '%');
+        }
+
+        $snapshotRows = $query
+            ->field('subject_code,subject_name,direction,case_no,receipt_no,opening_debit_amount,opening_credit_amount,debit_amount,credit_amount,entry_count')
+            ->order('subject_code asc,case_no asc,receipt_no asc')
+            ->select();
+        $groups = [];
+        foreach ($snapshotRows as $row) {
+            $this->addAuxBalanceAmount(
+                $groups,
+                $row['subject_code'],
+                $row['subject_name'] ?? '',
+                $row['direction'] ?? 'DEBIT',
+                $row['case_no'],
+                $row['receipt_no'],
+                $this->decimalToCents($row['opening_debit_amount'] ?? 0),
+                $this->decimalToCents($row['opening_credit_amount'] ?? 0),
+                $this->decimalToCents($row['debit_amount'] ?? 0),
+                $this->decimalToCents($row['credit_amount'] ?? 0),
+                (int)($row['entry_count'] ?? 0)
+            );
+        }
+
+        return $this->buildAuxBalanceRows($groups);
+    }
+
+    protected function auxBalanceSnapshotTime($period)
+    {
+        try {
+            $row = db('fin_aux_balance_snapshot')
+                ->where([
+                    'account_set_id' => $this->accountSetId,
+                    'fiscal_year' => $this->fiscalYear($period),
+                    'period' => $period,
+                    'del_flag' => 0,
+                ])
+                ->field('max(snapshot_time) as snapshot_time')
+                ->find();
+            return (string)($row['snapshot_time'] ?? '');
+        } catch (\Exception $e) {
+            return '';
+        }
+    }
+
+    protected function auxBalanceSourceUpdatedTime($period)
+    {
+        $fiscalYear = $this->fiscalYear($period);
+        $periodRange = [$this->reportYearStartPeriod($period), $period];
+        $times = [
+            $this->maxUpdatedTime('fin_voucher', [
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $fiscalYear,
+            ], $periodRange),
+            $this->maxUpdatedTime('fin_voucher_detail', [
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $fiscalYear,
+            ], $periodRange),
+            $this->maxUpdatedTime('fin_voucher_aux_value', [
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $fiscalYear,
+            ], $periodRange),
+            $this->maxUpdatedTime('fin_aux_opening_balance', [
+                'account_set_id' => $this->accountSetId,
+                'period' => $this->openingPeriodFor($period, 'fin_aux_opening_balance'),
+            ]),
+            $this->maxUpdatedTime('fin_subject', [
+                'account_set_id' => $this->accountSetId,
+            ]),
+        ];
+        $times = array_values(array_filter($times, 'strlen'));
+        if (empty($times)) {
+            return '';
+        }
+        sort($times);
+        return end($times);
+    }
+
+    protected function maxUpdatedTime($table, $where, $periodRange = null)
+    {
+        $query = db($table)->where($where);
+        if ($periodRange !== null) {
+            $query->where('period', 'between', $periodRange);
+        }
+        $row = $query->field('max(updated_time) as max_time')->find();
+        return (string)($row['max_time'] ?? '');
     }
 
     public function auxBalanceSubjects($data = [])
@@ -1474,7 +2228,7 @@ class Book extends Common
         return true;
     }
 
-    protected function addAuxBalanceAmount(&$groups, $subjectCode, $subjectName, $direction, $caseNo, $receiptNo, $openingDebitCents, $openingCreditCents, $debitCents, $creditCents)
+    protected function addAuxBalanceAmount(&$groups, $subjectCode, $subjectName, $direction, $caseNo, $receiptNo, $openingDebitCents, $openingCreditCents, $debitCents, $creditCents, $entryCount = null)
     {
         $caseNo = trim((string)$caseNo);
         if ($caseNo === '') {
@@ -1500,7 +2254,9 @@ class Book extends Common
         $groups[$key]['opening_credit_cents'] += $openingCreditCents;
         $groups[$key]['debit_cents'] += $debitCents;
         $groups[$key]['credit_cents'] += $creditCents;
-        if ($debitCents !== 0 || $creditCents !== 0) {
+        if ($entryCount !== null) {
+            $groups[$key]['entry_count'] += max(0, (int)$entryCount);
+        } elseif ($debitCents !== 0 || $creditCents !== 0) {
             $groups[$key]['entry_count']++;
         }
     }

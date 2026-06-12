@@ -113,7 +113,7 @@ class User extends Common
         }
         $rows = Db::name('fin_account_set')
             ->where($this->accountSetOptionWhere())
-            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,remark')
+            ->field('account_set_id,set_code,set_name,biz_type,enabled_year,bank_account_name,bank_account_no,bank_name,bank_branch_name,remark')
             ->order('biz_type asc,set_code asc')
             ->select();
         return $this->ok($rows, 'OK', count($rows));
