@@ -583,12 +583,7 @@ class CaseFund extends Common
         }
         $dateStart = $data['date_start'] ?? ($data['startDate'] ?? '');
         $dateEnd = $data['date_end'] ?? ($data['endDate'] ?? '');
-        if ($dateStart !== '') {
-            $where['refund_date'][] = ['>=', $dateStart];
-        }
-        if ($dateEnd !== '') {
-            $where['refund_date'][] = ['<=', $dateEnd];
-        }
+        $this->applyDateRangeFilter($where, 'refund_date', $dateStart, $dateEnd);
         if (!empty($data['out_status'])) {
             $where['out_status'] = $data['out_status'];
         }
@@ -626,6 +621,32 @@ class CaseFund extends Common
         return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
     }
 
+    protected function normalizeDateFilterValue($value)
+    {
+        if ($value === null) {
+            return '';
+        }
+        if (is_string($value)) {
+            return trim($value);
+        }
+        if (is_numeric($value)) {
+            return trim((string)$value);
+        }
+        return '';
+    }
+
+    protected function applyDateRangeFilter(&$where, $field, $dateStart, $dateEnd)
+    {
+        $dateStart = $this->normalizeDateFilterValue($dateStart);
+        $dateEnd = $this->normalizeDateFilterValue($dateEnd);
+        if ($dateStart !== '') {
+            $where[$field][] = ['>=', $dateStart];
+        }
+        if ($dateEnd !== '') {
+            $where[$field][] = ['<=', $dateEnd];
+        }
+    }
+
     public function refundImport($data = [])
     {
         $auth = $this->requirePermission('case_fund:import');
@@ -641,8 +662,9 @@ class CaseFund extends Common
             return $this->error('导入文件内容不正确');
         }
 
+        $bizType = $this->currentAccountSetBizType();
         try {
-            $rows = $this->parseRefundImportRowsFromXls($binary);
+            $rows = $this->parseRefundImportRowsFromXls($binary, $bizType);
         } catch (\Exception $e) {
             return $this->error('解析案款退付登记失败：' . $e->getMessage());
         }
@@ -650,7 +672,6 @@ class CaseFund extends Common
             return $this->error('导入文件没有案款退付数据');
         }
 
-        $bizType = $this->currentAccountSetBizType();
         $errors = $this->validateRefundRows($rows, $bizType);
         if (!empty($errors)) {
             return $this->error($this->refundImportErrorMessage($errors, $bizType), $errors);
@@ -2311,12 +2332,7 @@ class CaseFund extends Common
         }
         $dateStart = $data['date_start'] ?? ($data['startDate'] ?? '');
         $dateEnd = $data['date_end'] ?? ($data['endDate'] ?? '');
-        if ($dateStart !== '') {
-            $where['refund_date'][] = ['>=', $dateStart];
-        }
-        if ($dateEnd !== '') {
-            $where['refund_date'][] = ['<=', $dateEnd];
-        }
+        $this->applyDateRangeFilter($where, 'refund_date', $dateStart, $dateEnd);
         if (!empty($data['out_status'])) {
             $where['out_status'] = $data['out_status'];
         }
@@ -3182,7 +3198,7 @@ class CaseFund extends Common
         return $rows;
     }
 
-    protected function parseRefundImportRowsFromXls($binary)
+    protected function parseRefundImportRowsFromXls($binary, $bizType = '')
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
         if (empty($cells)) {
@@ -3200,17 +3216,20 @@ class CaseFund extends Common
         for ($col = 0; $col <= $maxCol; $col++) {
             $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
         }
-        $required = [
-            '案号', '经办人', '书记员', '票据号码', '开票日期', '出账日期',
-            '来源票据号码', '来源票据开票日期', '出账单号', '出账状态', '出账种类',
-            '诉讼地位', '当事人', '出账金额', '总出账金额', '收款人与当事人关系',
-            '支付方式', '实际收款人', '身份证号/企业', '收款人银行户名', '收款账号',
-            '开户银行', '银联号', '是否本行', '承办人情况说明', '申请人',
-        ];
+        $required = $this->refundImportRequiredHeaders($bizType);
+        $optional = ['总出账金额'];
+        if ($bizType === 'LITIGATION_FEE') {
+            $optional[] = '来源票据号码';
+            $optional[] = '来源票据开票日期';
+        }
+        $optionalMap = array_fill_keys($optional, true);
         $index = [];
-        foreach ($required as $name) {
+        foreach (array_merge($required, $optional) as $name) {
             $found = array_search($name, $headers, true);
             if ($found === false) {
+                if (isset($optionalMap[$name])) {
+                    continue;
+                }
                 throw new \Exception('缺少表头：' . $name);
             }
             $index[$name] = $found;
@@ -3221,6 +3240,11 @@ class CaseFund extends Common
             $raw = [];
             foreach ($index as $name => $col) {
                 $raw[$name] = $this->normalizeImportCellText($cells[$row . ':' . $col] ?? '');
+            }
+            foreach ($optional as $name) {
+                if (!isset($raw[$name])) {
+                    $raw[$name] = '';
+                }
             }
             if ($this->isEmptyPaymentRawRow($raw)) {
                 continue;
@@ -3273,6 +3297,21 @@ class CaseFund extends Common
             $rows[] = $parsed;
         }
         return $rows;
+    }
+
+    protected function refundImportRequiredHeaders($bizType = '')
+    {
+        $headers = [
+            '案号', '经办人', '书记员', '票据号码', '开票日期', '出账日期',
+            '来源票据号码', '来源票据开票日期', '出账单号', '出账状态', '出账种类',
+            '诉讼地位', '当事人', '出账金额', '收款人与当事人关系',
+            '支付方式', '实际收款人', '身份证号/企业', '收款人银行户名', '收款账号',
+            '开户银行', '银联号', '是否本行', '承办人情况说明', '申请人',
+        ];
+        if ($bizType === 'LITIGATION_FEE') {
+            $headers = array_values(array_diff($headers, ['来源票据号码', '来源票据开票日期']));
+        }
+        return $headers;
     }
 
     protected function parseUnknownPaymentImportRowsFromXls($binary)
@@ -3687,7 +3726,7 @@ class CaseFund extends Common
             if ($row['refund_date'] === '') {
                 $errors[] = $prefix . '出账日期不能为空或格式不正确';
             }
-            if ($row['receipt_no'] === '' && $row['source_receipt_no'] === '' && $row['out_order_no'] === '') {
+            if ($bizType !== 'LITIGATION_FEE' && $row['receipt_no'] === '' && $row['source_receipt_no'] === '' && $row['out_order_no'] === '') {
                 $errors[] = $prefix . '票据号码、来源票据号码、出账单号至少填写一项用于追溯';
             }
         }
@@ -4866,17 +4905,32 @@ class CaseFund extends Common
         $records = [];
         $pos = 0;
         while ($pos + 4 <= strlen($stream)) {
+            $recordOffset = $pos;
             $type = $this->u16($stream, $pos);
             $length = $this->u16($stream, $pos + 2);
             $pos += 4;
-            $records[] = [$type, substr($stream, $pos, $length)];
+            $records[] = [$recordOffset, $type, substr($stream, $pos, $length)];
             $pos += $length;
         }
         $sst = $this->parseBiffSharedStrings($records);
+        $firstSheetOffset = $this->firstBiffWorksheetOffset($records);
 
         $cells = [];
+        $inFirstSheet = $firstSheetOffset === null;
         foreach ($records as $record) {
-            list($type, $data) = $record;
+            list($offset, $type, $data) = $record;
+            if ($firstSheetOffset !== null) {
+                if ($offset === $firstSheetOffset && $type === 0x0809) {
+                    $inFirstSheet = true;
+                    continue;
+                }
+                if (!$inFirstSheet) {
+                    continue;
+                }
+                if ($type === 0x000A) {
+                    break;
+                }
+            }
             if ($type === 0x00FD && strlen($data) >= 10) {
                 $row = $this->u16($data, 0);
                 $col = $this->u16($data, 2);
@@ -4910,15 +4964,26 @@ class CaseFund extends Common
         return $cells;
     }
 
+    protected function firstBiffWorksheetOffset($records)
+    {
+        foreach ($records as $record) {
+            list(, $type, $data) = $record;
+            if ($type === 0x0085 && strlen($data) >= 8) {
+                return $this->u32($data, 0);
+            }
+        }
+        return null;
+    }
+
     protected function parseBiffSharedStrings($records)
     {
         for ($i = 0; $i < count($records); $i++) {
-            if ($records[$i][0] !== 0x00FC) {
+            if ($records[$i][1] !== 0x00FC) {
                 continue;
             }
-            $chunks = [$records[$i][1]];
-            for ($j = $i + 1; $j < count($records) && $records[$j][0] === 0x003C; $j++) {
-                $chunks[] = $records[$j][1];
+            $chunks = [$records[$i][2]];
+            for ($j = $i + 1; $j < count($records) && $records[$j][1] === 0x003C; $j++) {
+                $chunks[] = $records[$j][2];
             }
             $unique = $this->u32($chunks[0], 4);
             $chunkIndex = 0;

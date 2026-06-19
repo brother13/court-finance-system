@@ -31,7 +31,7 @@
             <el-dropdown-menu>
               <el-dropdown-item v-permission="'case_fund:delete'" command="delete" :icon="Delete" :disabled="deleting" class="danger-dropdown-item" style="color: var(--el-color-danger)">删除</el-dropdown-item>
               <el-dropdown-item v-permission="'case_fund:subject_config'" command="subjectConfig" :icon="Setting">科目配置</el-dropdown-item>
-              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="importing">导入退付</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="importing">数据导入</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -212,8 +212,8 @@ const load = async () => {
   loading.value = true
   try {
     const result = await caseFundApi.refundList({
-      date_start: filters.date_start,
-      date_end: filters.date_end,
+      date_start: normalizeDateFilter(filters.date_start),
+      date_end: normalizeDateFilter(filters.date_end),
       voucher_status: filters.voucher_status,
       keyword: filters.keyword,
       page: page.value,
@@ -312,6 +312,10 @@ function formatDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function normalizeDateFilter(value: string | null | undefined) {
+  return value ? String(value).trim() : ''
 }
 
 function initialRefundDateRange(period: string) {
@@ -432,8 +436,8 @@ const handleSelectionChange = (selection: CaseFundRefund[]) => {
 }
 
 const buildGenerateVoucherQueryPayload = () => ({
-  date_start: filters.date_start,
-  date_end: filters.date_end,
+  date_start: normalizeDateFilter(filters.date_start),
+  date_end: normalizeDateFilter(filters.date_end),
   voucher_status: 'UNGENERATED',
   keyword: filters.keyword
 })

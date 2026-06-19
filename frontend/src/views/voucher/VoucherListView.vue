@@ -1,78 +1,17 @@
 <template>
-  <div class="page-header">
-    <div>
-      <h1>凭证中心</h1>
-      <p>按当前账套、年度和会计期间范围查询凭证；顶部条件常驻，高级条件应用后参与查询。</p>
-    </div>
-    <div class="page-actions">
-      <el-button :icon="Refresh" @click="load">刷新数据</el-button>
-      <el-button
-        v-if="context.hasPermission('voucher:print')"
-        type="primary"
-        plain
-        :icon="Printer"
-        :loading="printing"
-        :disabled="selectedRows.length === 0"
-        @click="printSelectedVouchers"
-      >
-        打印凭证
-      </el-button>
-      <el-dropdown v-if="hasBatchActions" trigger="click" @command="handleBatchCommand">
-        <el-button :icon="Operation" :loading="importing">
-          批量操作
-          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-        </el-button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item v-if="context.hasPermission('voucher:audit')" command="audit" :disabled="selectedRows.length === 0">
-              批量审核
-            </el-dropdown-item>
-            <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
-              批量记账
-            </el-dropdown-item>
-            <el-dropdown-item v-if="context.hasPermission('voucher:delete')" command="delete" :disabled="selectedRows.length === 0">
-              批量删除
-            </el-dropdown-item>
-            <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
-              批量导入
-            </el-dropdown-item>
-            <el-dropdown-item v-if="context.hasPermission('voucher:renumber')" command="renumber">
-              凭证号整理
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-      <el-button v-if="context.hasPermission('voucher:add')" type="primary" :icon="Plus" @click="$router.push('/vouchers/new')">新增凭证</el-button>
-    </div>
-  </div>
-
   <div class="search-filter-section voucher-query-section compact">
     <div class="voucher-query-grid compact">
       <label class="query-field">
-        <span>年度</span>
-        <el-select v-model="topFilter.year" placeholder="年度" style="width: 90px">
-          <el-option v-for="year in yearOptions" :key="year" :label="year" :value="year" />
-        </el-select>
-      </label>
-      <label class="query-field">
         <span>期间起</span>
-        <el-select v-model="topFilter.period_start" placeholder="起始期间" style="width: 110px">
+        <el-select v-model="topFilter.period_start" placeholder="起始期间" size="small" style="width: 110px">
           <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
         </el-select>
       </label>
       <label class="query-field">
         <span>期间止</span>
-        <el-select v-model="topFilter.period_end" placeholder="结束期间" style="width: 110px">
+        <el-select v-model="topFilter.period_end" placeholder="结束期间" size="small" style="width: 110px">
           <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
         </el-select>
-      </label>
-      <label class="query-field voucher-no-range">
-        <span>凭证号</span>
-        <div class="range-inputs">
-          <el-input v-model="topFilter.voucher_no_start" placeholder="起" clearable style="width: 60px" />
-          <em>-</em>
-          <el-input v-model="topFilter.voucher_no_end" placeholder="止" clearable style="width: 60px" />
-        </div>
       </label>
       <label class="query-field voucher-date-range">
         <span>日期</span>
@@ -84,12 +23,13 @@
           value-format="YYYY-MM-DD"
           range-separator="-"
           clearable
+          size="small"
           style="width: 220px"
         />
       </label>
       <label class="query-field">
         <span>状态</span>
-        <el-select v-model="topFilter.status" placeholder="全部" clearable style="width: 100px">
+        <el-select v-model="topFilter.status" placeholder="全部" clearable size="small" style="width: 100px">
           <el-option label="草稿" value="DRAFT" />
           <el-option label="未审核" value="SUBMITTED" />
           <el-option label="已审核" value="AUDITED" />
@@ -100,20 +40,58 @@
       </label>
       <label class="query-field" style="flex: 1; min-width: 160px">
         <span>摘要</span>
-        <el-input v-model="topFilter.summary_keyword" placeholder="关键字" :prefix-icon="Search" clearable />
+        <el-input v-model="topFilter.summary_keyword" placeholder="关键字" :prefix-icon="Search" clearable size="small" />
       </label>
       <div class="voucher-query-actions">
         <el-button type="primary" :icon="Search" size="small" @click="query">查询</el-button>
-        <el-button :icon="RefreshLeft" size="small" @click="resetFilters">重置</el-button>
         <el-button :class="{ 'has-advanced-filter': advancedHasApplied }" :icon="Filter" size="small" @click="openAdvanced">
           高级
           <span v-if="advancedHasApplied" class="filter-red-dot" />
         </el-button>
+        <span class="voucher-query-action-divider" />
+        <el-button
+          v-if="context.hasPermission('voucher:print')"
+          type="primary"
+          plain
+          :icon="Printer"
+          :loading="printing"
+          :disabled="selectedRows.length === 0"
+          size="small"
+          @click="printSelectedVouchers"
+        >
+          打印凭证
+        </el-button>
+        <el-dropdown v-if="hasBatchActions" trigger="click" @command="handleBatchCommand">
+          <el-button :icon="Operation" :loading="importing" size="small">
+            批量操作
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-if="context.hasPermission('voucher:audit')" command="audit" :disabled="selectedRows.length === 0">
+                批量审核
+              </el-dropdown-item>
+              <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
+                批量记账
+              </el-dropdown-item>
+              <el-dropdown-item v-if="context.hasPermission('voucher:delete')" command="delete" :disabled="selectedRows.length === 0">
+                批量删除
+              </el-dropdown-item>
+              <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
+                批量导入
+              </el-dropdown-item>
+              <el-dropdown-item v-if="context.hasPermission('voucher:renumber')" command="renumber">
+                凭证号整理
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button v-if="context.hasPermission('voucher:add')" type="primary" :icon="Plus" size="small" @click="$router.push('/vouchers/new')">新增凭证</el-button>
       </div>
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel voucher-list-panel">
     <div class="panel-header">
       <strong>
         <el-icon><Tickets /></el-icon>
@@ -122,27 +100,35 @@
       <span class="muted">共 {{ pageTotal }} 条记录</span>
     </div>
     <div class="panel-body compact">
-      <el-table v-loading="loading" :data="rows" height="calc(100vh - 260px)" @row-dblclick="openDetail" @selection-change="handleSelectionChange">
+      <el-table v-loading="loading" :data="rows" height="calc(100vh - 180px)" @row-dblclick="openDetail" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="46" :selectable="canSelectRow" />
-        <el-table-column prop="voucher_no" label="凭证号" width="110" align="center">
+        <el-table-column prop="voucher_no" label="凭证号" width="92" align="left">
           <template #default="{ row }">
-            <span class="text-mono" style="color: var(--brand-blue); font-weight: 600">
+            <span class="text-mono voucher-no-text">
               {{ row.voucher_word || '记' }}-{{ String(row.voucher_no).padStart(4, '0') }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="voucher_date" label="制单日期" width="130" align="center" />
-        <el-table-column prop="summary" label="摘要" min-width="240" />
-        <el-table-column prop="debit_amount" label="借方金额" width="150" align="right">
+        <el-table-column prop="voucher_date" label="制单日期" width="112" align="left">
           <template #default="{ row }">
-            <span :class="['text-mono', Number(row.debit_amount || row.debitAmount) > 0 ? 'amount-debit' : 'muted']">
+            <span class="voucher-date-text">{{ row.voucher_date }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="summary" label="摘要" min-width="420" align="left">
+          <template #default="{ row }">
+            <span class="voucher-summary-text">{{ row.summary }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="debit_amount" label="借方金额" width="132" align="right" header-align="right">
+          <template #default="{ row }">
+            <span :class="voucherAmountClass(row.debit_amount || row.debitAmount)">
               {{ amountText(row.debit_amount || row.debitAmount) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="credit_amount" label="贷方金额" width="150" align="right">
+        <el-table-column prop="credit_amount" label="贷方金额" width="132" align="right" header-align="right">
           <template #default="{ row }">
-            <span :class="['text-mono', Number(row.credit_amount || row.creditAmount) > 0 ? 'amount-credit' : 'muted']">
+            <span :class="voucherAmountClass(row.credit_amount || row.creditAmount)">
               {{ amountText(row.credit_amount || row.creditAmount) }}
             </span>
           </template>
@@ -194,6 +180,14 @@
 
   <el-dialog v-model="advancedVisible" title="高级筛选" width="760px" class="finance-dialog">
     <div class="advanced-filter-grid">
+      <label class="query-field">
+        <span>凭证号区间</span>
+        <div class="range-inputs">
+          <el-input v-model="advancedDraft.voucher_no_start" placeholder="起始号" clearable />
+          <em>-</em>
+          <el-input v-model="advancedDraft.voucher_no_end" placeholder="结束号" clearable />
+        </div>
+      </label>
       <label class="query-field">
         <span>借方金额区间</span>
         <div class="range-inputs">
@@ -391,7 +385,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Check, Delete as DeleteIcon, Document, Edit, Filter, Operation, Plus, Printer, Refresh, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Delete as DeleteIcon, Document, Edit, Filter, Operation, Plus, Printer, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
 import * as XLSX from 'xlsx'
@@ -402,13 +396,13 @@ type TopFilter = {
   year: string
   period_start: string
   period_end: string
-  voucher_no_start: string
-  voucher_no_end: string
   status: string
   summary_keyword: string
 }
 
 type AdvancedFilter = {
+  voucher_no_start: string
+  voucher_no_end: string
   debit_min: string
   debit_max: string
   credit_min: string
@@ -456,13 +450,13 @@ const topFilter = reactive<TopFilter>({
   year: defaultYear,
   period_start: context.period,
   period_end: context.period,
-  voucher_no_start: '',
-  voucher_no_end: '',
   status: '',
   summary_keyword: ''
 })
 
 const emptyAdvanced = (): AdvancedFilter => ({
+  voucher_no_start: '',
+  voucher_no_end: '',
   debit_min: '',
   debit_max: '',
   credit_min: '',
@@ -478,11 +472,6 @@ const emptyAdvanced = (): AdvancedFilter => ({
 
 const advancedDraft = reactive<AdvancedFilter>(emptyAdvanced())
 const advancedApplied = ref<AdvancedFilter>(emptyAdvanced())
-
-const yearOptions = computed(() => {
-  const current = Number(defaultYear || new Date().getFullYear())
-  return Array.from({ length: 5 }, (_, index) => String(current - 2 + index))
-})
 
 const periodOptions = computed(() =>
   Array.from({ length: 12 }, (_, index) => `${topFilter.year}-${String(index + 1).padStart(2, '0')}`)
@@ -535,8 +524,6 @@ const buildQueryParams = () => {
     period_end: topFilter.period_end,
     page: page.value,
     pagesize: pageSize.value,
-    voucher_no_start: topFilter.voucher_no_start,
-    voucher_no_end: topFilter.voucher_no_end,
     date_start: dateStart,
     date_end: dateEnd,
     status: topFilter.status,
@@ -563,23 +550,6 @@ const query = async () => {
 }
 
 const handlePageSizeChange = async () => {
-  page.value = 1
-  await load()
-}
-
-const resetFilters = async () => {
-  Object.assign(topFilter, {
-    year: defaultYear,
-    period_start: context.period,
-    period_end: context.period,
-    voucher_no_start: '',
-    voucher_no_end: '',
-    status: '',
-    summary_keyword: ''
-  })
-  dateRange.value = []
-  Object.assign(advancedDraft, emptyAdvanced())
-  advancedApplied.value = emptyAdvanced()
   page.value = 1
   await load()
 }
@@ -890,7 +860,15 @@ const sourceTypeText = (sourceType: string) =>
 
 const amountText = (value: any) => {
   const amount = Number(value || 0)
-  return amount > 0 ? '¥ ' + amount.toFixed(2) : '-'
+  return amount !== 0 ? amount.toFixed(2) : '-'
+}
+
+const voucherAmountClass = (value: any) => {
+  const amount = Number(value || 0)
+  if (amount < 0) {
+    return ['text-mono', 'voucher-amount-text', 'amount-negative']
+  }
+  return amount > 0 ? ['text-mono', 'voucher-amount-text'] : ['text-mono', 'muted']
 }
 
 // === 批量导入 ===

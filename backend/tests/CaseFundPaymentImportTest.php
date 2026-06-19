@@ -104,6 +104,23 @@ if (count($rows) !== 19) {
     exit(1);
 }
 
+$multiSheetLitigationPath = '/Users/apple/Desktop/缴费登记 (3).xls';
+if (file_exists($multiSheetLitigationPath)) {
+    $multiSheetRows = $parseMethod->invoke($caseFund, file_get_contents($multiSheetLitigationPath));
+    if (empty($multiSheetRows)) {
+        fwrite(STDERR, 'Expected multi-sheet litigation fee payment file to parse rows from the first worksheet' . PHP_EOL);
+        exit(1);
+    }
+    $multiSheetFirst = $multiSheetRows[0];
+    if (($multiSheetFirst['case_no'] ?? '') !== '（2026）辽0111民初5590号'
+        || ($multiSheetFirst['business_type'] ?? '') !== '诉讼费预收'
+        || ($multiSheetFirst['receipt_no'] ?? '') !== '0000149648'
+    ) {
+        fwrite(STDERR, 'Payment import should read the first worksheet when an xls file contains multiple sheets' . PHP_EOL);
+        exit(1);
+    }
+}
+
 $first = $rows[0];
 $expected = [
     'case_no' => '（2025）辽0103执1348号',
@@ -155,6 +172,21 @@ $accountAmountKey = $duplicateKeyMethod->invoke($caseFund, [
 ]);
 if ($accountAmountKey !== 'account_amount:0334210102000370000717900|551788.00') {
     fwrite(STDERR, 'Payment import duplicate key should use bank account plus amount when receipt no is empty' . PHP_EOL);
+    exit(1);
+}
+
+$decimalToCentsMethod = new ReflectionMethod(CaseFund::class, 'decimalToCents');
+$decimalToCentsMethod->setAccessible(true);
+if ($decimalToCentsMethod->invoke($caseFund, '97.349999999999') !== 9735) {
+    fwrite(STDERR, 'Amount conversion should round Excel float artifacts to the nearest cent' . PHP_EOL);
+    exit(1);
+}
+if ($decimalToCentsMethod->invoke($caseFund, '97.345') !== 9735) {
+    fwrite(STDERR, 'Amount conversion should round half cents up' . PHP_EOL);
+    exit(1);
+}
+if ($decimalToCentsMethod->invoke($caseFund, '99.999') !== 10000) {
+    fwrite(STDERR, 'Amount conversion should carry rounded cents into yuan' . PHP_EOL);
     exit(1);
 }
 

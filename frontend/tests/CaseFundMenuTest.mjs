@@ -94,6 +94,8 @@ assert(refundView.includes('type="selection"'), 'refund view should allow select
 assert(refundView.includes('voucher_status'), 'refund view should show voucher generation status')
 assert(refundView.includes('date_start'), 'refund view should query by refund start date')
 assert(refundView.includes('date_end'), 'refund view should query by refund end date')
+assert(refundView.includes('normalizeDateFilter(filters.date_start)'), 'refund view should normalize cleared start date before querying')
+assert(refundView.includes('normalizeDateFilter(filters.date_end)'), 'refund view should normalize cleared end date before querying')
 assert(refundView.includes('今天') && refundView.includes('本周') && refundView.includes('本月') && refundView.includes('本年'), 'refund view should provide quick refund date ranges')
 assert(refundView.includes('@click="query"'), 'refund view should include a query button')
 assert(distributionView.includes('chooseDistributionImportFile'), 'distribution view should provide import file picker')

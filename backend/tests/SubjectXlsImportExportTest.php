@@ -47,6 +47,25 @@ if (count($rows) !== 10) {
     exit(1);
 }
 
+$multiSheetXlsPath = '/Users/apple/Desktop/缴费登记 (3).xls';
+if (file_exists($multiSheetXlsPath)) {
+    $readWorkbookMethod = new ReflectionMethod(Subject::class, 'readOleWorkbookStream');
+    $readWorkbookMethod->setAccessible(true);
+    $parseCellsMethod = new ReflectionMethod(Subject::class, 'parseBiffCells');
+    $parseCellsMethod->setAccessible(true);
+    $normalizeMethod = new ReflectionMethod(Subject::class, 'normalizeImportCellText');
+    $normalizeMethod->setAccessible(true);
+
+    $cells = $parseCellsMethod->invoke(
+        $subject,
+        $readWorkbookMethod->invoke($subject, file_get_contents($multiSheetXlsPath))
+    );
+    if ($normalizeMethod->invoke($subject, $cells['0:0'] ?? '') !== '案号') {
+        fwrite(STDERR, 'Subject xls parser should read cells from the first worksheet only' . PHP_EOL);
+        exit(1);
+    }
+}
+
 $first = $rows[0];
 if ($first['subject_code'] !== '1002' || $first['subject_name'] !== '银行存款' || $first['subject_type'] !== 'ASSET' || $first['direction'] !== 'DEBIT') {
     fwrite(STDERR, 'First subject row was not parsed as expected' . PHP_EOL);

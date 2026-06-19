@@ -565,20 +565,21 @@ class Subject extends Common
         $records = [];
         $pos = 0;
         while ($pos + 4 <= strlen($stream)) {
+            $recordOffset = $pos;
             $type = $this->u16($stream, $pos);
             $length = $this->u16($stream, $pos + 2);
             $pos += 4;
-            $records[] = [$type, substr($stream, $pos, $length)];
+            $records[] = [$recordOffset, $type, substr($stream, $pos, $length)];
             $pos += $length;
         }
         $sst = [];
         for ($i = 0; $i < count($records); $i++) {
-            if ($records[$i][0] !== 0x00FC) {
+            if ($records[$i][1] !== 0x00FC) {
                 continue;
             }
-            $blob = $records[$i][1];
-            for ($j = $i + 1; $j < count($records) && $records[$j][0] === 0x003C; $j++) {
-                $blob .= $records[$j][1];
+            $blob = $records[$i][2];
+            for ($j = $i + 1; $j < count($records) && $records[$j][1] === 0x003C; $j++) {
+                $blob .= $records[$j][2];
             }
             $unique = $this->u32($blob, 4);
             $offset = 8;
@@ -590,8 +591,22 @@ class Subject extends Common
         }
 
         $cells = [];
+        $firstSheetOffset = $this->firstBiffWorksheetOffset($records);
+        $inFirstSheet = $firstSheetOffset === null;
         foreach ($records as $record) {
-            list($type, $data) = $record;
+            list($offset, $type, $data) = $record;
+            if ($firstSheetOffset !== null) {
+                if ($offset === $firstSheetOffset && $type === 0x0809) {
+                    $inFirstSheet = true;
+                    continue;
+                }
+                if (!$inFirstSheet) {
+                    continue;
+                }
+                if ($type === 0x000A) {
+                    break;
+                }
+            }
             if ($type === 0x00FD && strlen($data) >= 10) {
                 $row = $this->u16($data, 0);
                 $col = $this->u16($data, 2);
@@ -618,6 +633,17 @@ class Subject extends Common
             }
         }
         return $cells;
+    }
+
+    protected function firstBiffWorksheetOffset($records)
+    {
+        foreach ($records as $record) {
+            list(, $type, $data) = $record;
+            if ($type === 0x0085 && strlen($data) >= 8) {
+                return $this->u32($data, 0);
+            }
+        }
+        return null;
     }
 
     protected function readBiffString($data, $offset)

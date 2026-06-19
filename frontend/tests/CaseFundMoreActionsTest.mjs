@@ -9,7 +9,7 @@ const refundView = readFileSync(resolve(__dirname, '../src/views/case-fund/Refun
 
 for (const [name, source, importLabel] of [
   ['payment', paymentView, '导入缴费'],
-  ['refund', refundView, '导入退付']
+  ['refund', refundView, '数据导入']
 ]) {
   assert(source.includes('<el-dropdown'), `${name} register should use a more-actions dropdown`)
   assert(source.includes('更多功能'), `${name} register should label the dropdown trigger as more actions`)

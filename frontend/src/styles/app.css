@@ -1450,6 +1450,11 @@ body {
   z-index: 8;
 }
 
+.voucher-query-section.compact {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
 .voucher-query-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr));
@@ -1550,8 +1555,8 @@ body {
 
 /* 紧凑查询模式 */
 .voucher-query-grid.compact {
-  grid-template-columns: repeat(auto-fit, minmax(80px, auto));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(76px, auto));
+  gap: 6px;
   align-items: end;
 }
 
@@ -1576,6 +1581,46 @@ body {
 .voucher-query-grid.compact .voucher-query-actions {
   grid-column: auto;
   gap: 6px;
+  flex-wrap: wrap;
+  align-self: end;
+  min-width: max-content;
+}
+
+.voucher-query-action-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: var(--border-soft);
+}
+
+.voucher-no-text {
+  color: var(--brand-blue);
+  font-weight: 600;
+}
+
+.voucher-date-text,
+.voucher-summary-text,
+.voucher-amount-text {
+  color: #333333;
+}
+
+.voucher-summary-text {
+  display: inline-block;
+  padding-left: 10px;
+  line-height: 1.5;
+}
+
+.voucher-amount-text {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.amount-negative {
+  color: var(--brand-danger);
+}
+
+.voucher-list-panel .panel-header {
+  padding: 10px 16px;
 }
 
 /* ============================================================

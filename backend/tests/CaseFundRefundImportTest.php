@@ -121,6 +121,23 @@ if (!in_array('诉讼费退费', $litigationFeeTypes, true)) {
     exit(1);
 }
 
+$headersMethod = new ReflectionMethod(CaseFund::class, 'refundImportRequiredHeaders');
+$headersMethod->setAccessible(true);
+$caseFundHeaders = $headersMethod->invoke($caseFund, 'CASE_FUND');
+$litigationHeaders = $headersMethod->invoke($caseFund, 'LITIGATION_FEE');
+if (!in_array('来源票据号码', $caseFundHeaders, true) || !in_array('来源票据开票日期', $caseFundHeaders, true)) {
+    fwrite(STDERR, 'CASE_FUND refund import should still require source receipt headers' . PHP_EOL);
+    exit(1);
+}
+if (in_array('来源票据号码', $litigationHeaders, true) || in_array('来源票据开票日期', $litigationHeaders, true)) {
+    fwrite(STDERR, 'LITIGATION_FEE refund import should not require source receipt headers' . PHP_EOL);
+    exit(1);
+}
+if (in_array('总出账金额', $caseFundHeaders, true) || in_array('总出账金额', $litigationHeaders, true)) {
+    fwrite(STDERR, 'Refund import should not require total refund amount header for either account set type' . PHP_EOL);
+    exit(1);
+}
+
 $validateMethod = new ReflectionMethod(CaseFund::class, 'validateRefundRows');
 $validateMethod->setAccessible(true);
 $errors = $validateMethod->invoke($caseFund, [$first], 'CASE_FUND');
@@ -144,6 +161,26 @@ $litigationRows[0]['out_type'] = '诉讼费退费';
 $errors = $validateMethod->invoke($caseFund, $litigationRows, 'LITIGATION_FEE');
 if (!empty($errors)) {
     fwrite(STDERR, 'LITIGATION_FEE validation should accept litigation fee refund rows' . PHP_EOL);
+    exit(1);
+}
+
+$litigationRowsWithoutReceipt = [$litigationRows[0]];
+$litigationRowsWithoutReceipt[0]['receipt_no'] = '';
+$litigationRowsWithoutReceipt[0]['source_receipt_no'] = '';
+$litigationRowsWithoutReceipt[0]['out_order_no'] = '';
+$errors = $validateMethod->invoke($caseFund, $litigationRowsWithoutReceipt, 'LITIGATION_FEE');
+if (!empty($errors)) {
+    fwrite(STDERR, 'LITIGATION_FEE refund import should not require receipt fields for auxiliary accounting' . PHP_EOL);
+    exit(1);
+}
+
+$caseFundRowsWithoutReceipt = [$first];
+$caseFundRowsWithoutReceipt[0]['receipt_no'] = '';
+$caseFundRowsWithoutReceipt[0]['source_receipt_no'] = '';
+$caseFundRowsWithoutReceipt[0]['out_order_no'] = '';
+$errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND');
+if (empty($errors) || strpos(implode("\n", $errors), '至少填写一项用于追溯') === false) {
+    fwrite(STDERR, 'CASE_FUND refund import should still require receipt or out-order trace fields' . PHP_EOL);
     exit(1);
 }
 

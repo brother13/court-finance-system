@@ -122,16 +122,22 @@ class Common
         if ($amount === '') {
             return 0;
         }
+        $amount = str_replace([',', ' '], '', $amount);
         $negative = false;
         if ($amount[0] === '-') {
             $negative = true;
+            $amount = substr($amount, 1);
+        } elseif ($amount[0] === '+') {
             $amount = substr($amount, 1);
         }
         $parts = explode('.', $amount, 2);
         $yuan = preg_replace('/\D/', '', $parts[0]);
         $cent = isset($parts[1]) ? preg_replace('/\D/', '', $parts[1]) : '';
-        $cent = substr(str_pad($cent, 2, '0'), 0, 2);
-        $value = ((int)$yuan) * 100 + (int)$cent;
+        $cent = str_pad($cent, 3, '0');
+        $value = ((int)$yuan) * 100 + (int)substr($cent, 0, 2);
+        if ((int)$cent[2] >= 5) {
+            $value++;
+        }
         return $negative ? -$value : $value;
     }
 
