@@ -1,106 +1,126 @@
 <template>
-  <div class="search-filter-section voucher-query-section compact">
-    <div class="voucher-query-grid compact">
-      <label class="query-field">
-        <span>期间起</span>
-        <el-select v-model="topFilter.period_start" placeholder="起始期间" size="small" style="width: 110px">
-          <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
-        </el-select>
-      </label>
-      <label class="query-field">
-        <span>期间止</span>
-        <el-select v-model="topFilter.period_end" placeholder="结束期间" size="small" style="width: 110px">
-          <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
-        </el-select>
-      </label>
-      <label class="query-field voucher-date-range">
-        <span>日期</span>
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          start-placeholder="开始"
-          end-placeholder="结束"
-          value-format="YYYY-MM-DD"
-          range-separator="-"
-          clearable
-          size="small"
-          style="width: 220px"
-        />
-      </label>
-      <label class="query-field">
-        <span>状态</span>
-        <el-select v-model="topFilter.status" placeholder="全部" clearable size="small" style="width: 100px">
-          <el-option label="草稿" value="DRAFT" />
-          <el-option label="未审核" value="SUBMITTED" />
-          <el-option label="已审核" value="AUDITED" />
-          <el-option label="已记账" value="POSTED" />
-          <el-option label="已打印" value="PRINTED" />
-          <el-option label="已作废" value="VOIDED" />
-        </el-select>
-      </label>
-      <label class="query-field" style="flex: 1; min-width: 160px">
-        <span>摘要</span>
-        <el-input v-model="topFilter.summary_keyword" placeholder="关键字" :prefix-icon="Search" clearable size="small" />
-      </label>
-      <div class="voucher-query-actions">
-        <el-button type="primary" :icon="Search" size="small" @click="query">查询</el-button>
-        <el-button :class="{ 'has-advanced-filter': advancedHasApplied }" :icon="Filter" size="small" @click="openAdvanced">
-          高级
-          <span v-if="advancedHasApplied" class="filter-red-dot" />
-        </el-button>
-        <span class="voucher-query-action-divider" />
-        <el-button
-          v-if="context.hasPermission('voucher:print')"
-          type="primary"
-          plain
-          :icon="Printer"
-          :loading="printing"
-          :disabled="selectedRows.length === 0"
-          size="small"
-          @click="printSelectedVouchers"
-        >
-          打印凭证
-        </el-button>
-        <el-dropdown v-if="hasBatchActions" trigger="click" @command="handleBatchCommand">
-          <el-button :icon="Operation" :loading="importing" size="small">
-            批量操作
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+  <div class="voucher-list-page">
+    <div class="search-filter-section voucher-query-section compact">
+      <div class="voucher-query-toolbar">
+        <div class="voucher-query-grid compact">
+          <label class="query-field">
+            <span>期间起</span>
+            <el-select v-model="topFilter.period_start" placeholder="起始期间" size="small" style="width: 112px">
+              <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
+            </el-select>
+          </label>
+          <label class="query-field">
+            <span>期间止</span>
+            <el-select v-model="topFilter.period_end" placeholder="结束期间" size="small" style="width: 112px">
+              <el-option v-for="period in periodOptions" :key="period" :label="period" :value="period" />
+            </el-select>
+          </label>
+          <label class="query-field voucher-date-range">
+            <span>日期</span>
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              start-placeholder="开始"
+              end-placeholder="结束"
+              value-format="YYYY-MM-DD"
+              range-separator="-"
+              clearable
+              size="small"
+              style="width: 236px"
+            />
+          </label>
+          <label class="query-field">
+            <span>状态</span>
+            <el-select v-model="topFilter.status" placeholder="全部" clearable size="small" style="width: 112px">
+              <el-option label="未审核" value="SUBMITTED" />
+              <el-option label="已审核" value="AUDITED" />
+              <el-option label="已记账" value="POSTED" />
+              <el-option label="已打印" value="PRINTED" />
+            </el-select>
+          </label>
+          <label class="query-field voucher-summary-query">
+            <span>摘要</span>
+            <el-input v-model="topFilter.summary_keyword" placeholder="关键字" :prefix-icon="Search" clearable size="small" />
+          </label>
+          <div class="voucher-query-actions">
+            <el-button type="primary" :icon="Search" size="small" @click="query">查询</el-button>
+            <el-button :class="{ 'has-advanced-filter': advancedHasApplied }" :icon="Filter" size="small" @click="openAdvanced">
+              高级
+              <span v-if="advancedHasApplied" class="filter-red-dot" />
+            </el-button>
+          </div>
+        </div>
+        <div class="voucher-toolbar-primary">
+          <el-button
+            v-if="context.hasPermission('voucher:print')"
+            plain
+            :icon="Printer"
+            :loading="printing"
+            :disabled="selectedRows.length === 0"
+            size="small"
+            @click="printSelectedVouchers"
+          >
+            打印凭证
           </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item v-if="context.hasPermission('voucher:audit')" command="audit" :disabled="selectedRows.length === 0">
-                批量审核
-              </el-dropdown-item>
-              <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
-                批量记账
-              </el-dropdown-item>
-              <el-dropdown-item v-if="context.hasPermission('voucher:delete')" command="delete" :disabled="selectedRows.length === 0">
-                批量删除
-              </el-dropdown-item>
-              <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
-                批量导入
-              </el-dropdown-item>
-              <el-dropdown-item v-if="context.hasPermission('voucher:renumber')" command="renumber">
-                凭证号整理
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-button v-if="context.hasPermission('voucher:add')" type="primary" :icon="Plus" size="small" @click="$router.push('/vouchers/new')">新增凭证</el-button>
+          <el-dropdown v-if="hasBatchActions" trigger="click" @command="handleBatchCommand">
+            <el-button plain :icon="Operation" :loading="importing" size="small">
+              批量操作
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="context.hasPermission('voucher:audit')" command="audit" :disabled="selectedRows.length === 0">
+                  批量审核
+                </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
+                  批量记账
+                </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:delete')" command="delete" :disabled="selectedRows.length === 0">
+                  批量删除
+                </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
+                  批量导入
+                </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:renumber')" command="renumber">
+                  凭证号整理
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-button v-if="context.hasPermission('voucher:add')" type="primary" :icon="Plus" size="small" @click="$router.push('/vouchers/new')">新增凭证</el-button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <div class="panel voucher-list-panel">
-    <div class="panel-header">
-      <strong>
-        <el-icon><Tickets /></el-icon>
-        凭证列表 · {{ periodRangeLabel }}
-      </strong>
-      <span class="muted">共 {{ pageTotal }} 条记录</span>
+    <div class="voucher-workbench-metrics">
+      <div class="voucher-metric">
+        <span>本期凭证数</span>
+        <strong>{{ pageTotal }}</strong>
+      </div>
+      <div class="voucher-metric">
+        <span>未审核</span>
+        <strong>{{ pendingReviewCount }}</strong>
+      </div>
+      <div class="voucher-metric">
+        <span>已记账</span>
+        <strong>{{ postedCount }}</strong>
+      </div>
+      <div class="voucher-metric" :class="{ balanced: pageBalanceDiffCents === 0, unbalanced: pageBalanceDiffCents !== 0 }">
+        <span>本页借贷</span>
+        <strong>{{ pageBalanceDiffCents === 0 ? '平衡' : '差额' }}</strong>
+      </div>
     </div>
-    <div class="panel-body compact">
-      <el-table v-loading="loading" :data="rows" height="calc(100vh - 180px)" @row-dblclick="openDetail" @selection-change="handleSelectionChange">
+
+    <div class="panel voucher-list-panel">
+      <div class="panel-header">
+        <strong>
+          <el-icon><Tickets /></el-icon>
+          凭证列表 · {{ periodRangeLabel }}
+        </strong>
+        <span class="muted">共 {{ pageTotal }} 条记录</span>
+      </div>
+      <div class="panel-body compact">
+        <el-table v-loading="loading" :data="rows" height="100%" @row-dblclick="openDetail" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="46" :selectable="canSelectRow" />
         <el-table-column prop="voucher_no" label="凭证号" width="92" align="left">
           <template #default="{ row }">
@@ -155,25 +175,33 @@
         </el-table-column>
         <el-table-column label="操作" width="220" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button v-if="canEditRow(row)" link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="canAuditRow(row)" link type="success" :icon="Check" @click="audit(row)">审核</el-button>
-            <el-button v-if="canUnauditRow(row)" link type="warning" :icon="RefreshLeft" @click="unaudit(row)">取消审核</el-button>
-            <el-button v-if="canPostRow(row)" link type="success" :icon="Check" @click="post(row)">记账</el-button>
-            <el-button v-if="canUnpostRow(row)" link type="warning" :icon="RefreshLeft" @click="unpost(row)">反记账</el-button>
-            <el-button v-if="canDeleteRow(row)" link type="danger" :icon="DeleteIcon" @click="deleteOne(row)">删除</el-button>
+            <el-button v-if="canEditRow(row)" class="voucher-operation-button" link :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="canAuditRow(row)" class="voucher-operation-button" link :icon="Check" @click="audit(row)">审核</el-button>
+            <el-button v-if="canUnauditRow(row)" class="voucher-operation-button" link :icon="RefreshLeft" @click="unaudit(row)">取消审核</el-button>
+            <el-button v-if="canPostRow(row)" class="voucher-operation-button" link :icon="Check" @click="post(row)">记账</el-button>
+            <el-button v-if="canUnpostRow(row)" class="voucher-operation-button" link :icon="RefreshLeft" @click="unpost(row)">反记账</el-button>
+            <el-button v-if="canDeleteRow(row)" class="voucher-operation-button is-delete" link :icon="DeleteIcon" @click="deleteOne(row)">删除</el-button>
           </template>
         </el-table-column>
-      </el-table>
-      <div class="pagination-bar">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="[20, 50, 100, 200]"
-          :total="pageTotal"
-          layout="total, sizes, prev, pager, next"
-          @current-change="load"
-          @size-change="handlePageSizeChange"
-        />
+        </el-table>
+        <div class="voucher-total-bar">
+          <span>本页借方合计：<strong class="text-mono">{{ pageDebitTotal }}</strong></span>
+          <span>本页贷方合计：<strong class="text-mono">{{ pageCreditTotal }}</strong></span>
+          <span :class="{ 'is-balanced': pageBalanceDiffCents === 0, 'is-unbalanced': pageBalanceDiffCents !== 0 }">
+            差额：<strong class="text-mono">{{ balanceDiffText }}</strong>
+          </span>
+        </div>
+        <div class="pagination-bar fixed">
+          <el-pagination
+            v-model:current-page="page"
+            v-model:page-size="pageSize"
+            :page-sizes="[20, 50, 100, 200]"
+            :total="pageTotal"
+            layout="total, sizes, prev, pager, next"
+            @current-change="load"
+            @size-change="handlePageSizeChange"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -496,6 +524,24 @@ const cleanFilter = (filter: Record<string, any>) =>
   Object.fromEntries(Object.entries(filter).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== ''))
 
 const advancedHasApplied = computed(() => Object.keys(cleanFilter(advancedApplied.value)).length > 0)
+const toAmountCents = (value: any) => Math.round(Number(value || 0) * 100)
+const formatCents = (cents: number) => (cents / 100).toFixed(2)
+const pageDebitTotalCents = computed(() =>
+  rows.value.reduce((sum, row) => sum + toAmountCents(row.debit_amount || row.debitAmount), 0)
+)
+const pageCreditTotalCents = computed(() =>
+  rows.value.reduce((sum, row) => sum + toAmountCents(row.credit_amount || row.creditAmount), 0)
+)
+const pageBalanceDiffCents = computed(() => pageDebitTotalCents.value - pageCreditTotalCents.value)
+const pageDebitTotal = computed(() => formatCents(pageDebitTotalCents.value))
+const pageCreditTotal = computed(() => formatCents(pageCreditTotalCents.value))
+const balanceDiffText = computed(() => formatCents(Math.abs(pageBalanceDiffCents.value)))
+const pendingReviewCount = computed(() =>
+  rows.value.filter((row) => statusForRow(row) === 'SUBMITTED').length
+)
+const postedCount = computed(() =>
+  rows.value.filter((row) => statusForRow(row) === 'POSTED').length
+)
 
 watch(
   () => topFilter.year,

@@ -15,7 +15,6 @@
         <el-select v-model="filters.voucher_status" placeholder="制证状态" clearable class="status-select">
           <el-option label="未生成凭证" value="UNGENERATED" />
           <el-option label="已生成凭证" value="GENERATED" />
-          <el-option label="已作废" value="VOIDED" />
         </el-select>
         <el-input v-model="filters.keyword" placeholder="案号 / 当事人 / 收款人 / 票据" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
@@ -53,7 +52,7 @@
       </div>
       <div class="case-fund-summary-actions">
         <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" plain :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
       </div>
     </div>
 
@@ -524,141 +523,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.case-fund-board {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
-.case-fund-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.case-fund-filters,
-.case-fund-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.quick-range-select {
-  width: 128px;
-}
-
-.date-filter-label,
-.date-separator {
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.refund-date-picker {
-  width: 142px;
-}
-
 .status-select {
   width: 150px;
-}
-
-.case-fund-search {
-  width: 300px;
-}
-
-.case-fund-file-input {
-  display: none;
-}
-
-.case-fund-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(112px, 150px)) minmax(260px, 1fr);
-  align-items: center;
-  gap: 8px;
-}
-
-.case-fund-summary > div {
-  padding: 8px 12px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.case-fund-summary span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.case-fund-summary strong {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-main);
-  font-size: 16px;
-  line-height: 1.2;
-}
-
-.case-fund-summary-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 0 !important;
-  background: transparent !important;
-  border: 0 !important;
-}
-
-.case-fund-table-shell {
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.case-fund-pagination {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 0;
-}
-
-.muted-text {
-  color: var(--text-mute);
-}
-
-.subject-config-options {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 12px;
-  color: var(--text-main);
-}
-
-@media (max-width: 1100px) {
-  .case-fund-toolbar {
-    flex-direction: column;
-  }
-
-  .case-fund-filters {
-    flex-wrap: wrap;
-  }
-
-  .case-fund-summary {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .case-fund-summary-actions {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-  }
-
-  .case-fund-search {
-    width: min(100%, 360px);
-  }
 }
 </style>

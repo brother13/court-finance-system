@@ -10,17 +10,19 @@
     </div>
   </div>
 
-  <div class="search-filter-section">
-    <el-input v-model.trim="filter.keyword" placeholder="角色编码 / 名称" clearable style="width: 240px" />
-    <el-select v-model="filter.status" placeholder="全部状态" clearable style="width: 140px">
+  <div class="search-filter-section management-filter-section">
+    <el-input v-model.trim="filter.keyword" placeholder="角色编码 / 名称" clearable class="filter-field manage-search" />
+    <el-select v-model="filter.status" placeholder="全部状态" clearable class="filter-field manage-status">
       <el-option label="启用" :value="1" />
       <el-option label="禁用" :value="0" />
     </el-select>
-    <el-button type="primary" :icon="Search" @click="load">查询</el-button>
-    <el-button :icon="RefreshLeft" @click="resetFilter">重置</el-button>
+    <div class="filter-actions">
+      <el-button type="primary" :icon="Search" @click="load">查询</el-button>
+      <el-button :icon="RefreshLeft" @click="resetFilter">重置</el-button>
+    </div>
   </div>
 
-  <div class="panel">
+  <div class="panel management-panel">
     <div class="panel-header">
       <strong>角色列表</strong>
       <span class="muted">共 {{ rows.length }} 个角色</span>

@@ -1,66 +1,19 @@
 <template>
   <main class="login-page">
-    <section class="login-brand-panel">
-      <div class="login-brand">
-        <div class="brand-mark login-brand-mark">
-          <span class="brand-mark-core" />
-        </div>
-        <div>
-          <strong>树莓法衡专项账务系统</strong>
-          <small>法院专项资金核算与凭证管理平台</small>
-        </div>
-      </div>
-
-      <div class="login-hero">
-        <span class="login-kicker">
-          <el-icon><CircleCheck /></el-icon>
-          单院部署 · 专项资金核算
-        </span>
-        <h1>
-          <span>凭证、账簿、辅助核算</span>
-          <span class="login-hero-gradient">一体化处理</span>
-        </h1>
-        <p>面向法院案款、诉讼费等专项账务场景，提供清晰、可追溯的记账工作台。</p>
-      </div>
-
-      <div class="login-status-grid">
-        <div>
-          <el-icon><Connection /></el-icon>
-          <span>一张网对接</span>
-          <strong>案款收退数据一键导入并一键生成凭证</strong>
-          <p>对接法院“一张网”业务系统，减少手工录入和重复制单。</p>
-        </div>
-        <div>
-          <el-icon><Coin /></el-icon>
-          <span>辅助核算</span>
-          <strong>执行款支持案号+单据号辅助核算</strong>
-          <p>生成凭证时可同步生成并设置辅助核算项。</p>
-        </div>
-        <div>
-          <el-icon><CircleCheck /></el-icon>
-          <span>案款扩展业务</span>
-          <strong>支持不明款与案款分配生成凭证</strong>
-          <p>不明款、案款分配数据可纳入统一凭证生成流程。</p>
-        </div>
-        <div>
-          <el-icon><Coin /></el-icon>
-          <span>按收费方式制证</span>
-          <strong>自动区分来账方式并匹配科目</strong>
-          <p>系统可自动区分 POS、转账、不明款，可根据收费方式设置科目生成凭证。</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="login-form-panel">
-      <div class="login-card">
-        <div class="login-card-header">
-          <span class="login-card-icon">
-            <el-icon><Key /></el-icon>
+    <div class="login-shell">
+      <header class="login-identity">
+        <div class="login-brand-row">
+          <span class="login-logo-frame">
+            <img class="login-brand-logo" :src="raspberryLogo" alt="树莓软件" />
           </span>
-          <div>
-            <h2>用户登录</h2>
-            <p>请选择用户单位并输入账号密码</p>
-          </div>
+          <strong>树莓法衡</strong>
+        </div>
+        <small class="login-identity-subtitle">法院专项资金核算与凭证管理平台</small>
+      </header>
+
+      <section class="login-card">
+        <div class="login-card-header">
+          <h1>账户登录</h1>
         </div>
 
         <el-form
@@ -121,22 +74,26 @@
             <el-icon class="login-submit-icon"><Right /></el-icon>
           </el-button>
         </el-form>
-      </div>
-    </section>
+      </section>
+    </div>
+
+    <footer class="login-page-footer">
+      Copyright © 2026 树莓（沈阳）软件科技发展有限公司 技术支持
+    </footer>
   </main>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { CircleCheck, Coin, Connection, Key, Lock, OfficeBuilding, Right, User } from '@element-plus/icons-vue'
+import { Lock, OfficeBuilding, Right, User } from '@element-plus/icons-vue'
 import { authApi } from '../../api/auth'
 import { useContextStore } from '../../stores/context'
 import type { Unit } from '../../types/api'
+import raspberryLogo from '../../assets/raspberry-logo.png'
 
 const router = useRouter()
-const route = useRoute()
 const context = useContextStore()
 
 const formRef = ref<FormInstance>()
@@ -162,6 +119,9 @@ const loadUnits = async () => {
     if (!form.unit_id && units.value.length > 0) {
       form.unit_id = units.value[0].unit_id
     }
+  } catch {
+    units.value = []
+    ElMessage.error('单位列表加载失败，请确认后端服务已启动')
   } finally {
     unitLoading.value = false
   }
@@ -175,6 +135,8 @@ const submit = async () => {
     context.setAuth(user)
     ElMessage.success('登录成功')
     router.replace('/select-account-set')
+  } catch {
+    // The API layer has already shown the business error message.
   } finally {
     submitting.value = false
   }

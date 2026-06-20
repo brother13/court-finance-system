@@ -35,7 +35,7 @@
     />
   </div>
 
-  <div class="panel">
+  <div class="panel management-panel">
     <div class="panel-header">
       <strong>科目期初余额</strong>
       <span class="panel-hint">非末级科目通常由下级汇总，实际录入应以末级科目为准。</span>

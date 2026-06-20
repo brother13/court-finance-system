@@ -2,6 +2,7 @@
   <div class="page-header">
     <div>
       <h1>{{ pageTitle }}</h1>
+      <p>{{ context.accountSetName || '当前账套' }} · {{ form.period }} · {{ statusText(statusForForm) }}</p>
     </div>
     <div class="page-actions">
       <el-button v-if="isViewMode || isEditMode" :icon="ArrowLeft" @click="router.push('/vouchers')">返回列表</el-button>
@@ -168,12 +169,12 @@
       <div v-if="!isReadonly" class="paper-actions-buttons">
         <el-button :icon="Plus" @click="addLine">增行</el-button>
         <el-button @click="fillBalanceForLastLine">当前行找平</el-button>
-        <el-button v-if="context.hasAnyPermission(['voucher:add', 'voucher:edit'])" type="success" :icon="DocumentChecked" :loading="saving" @click="submit">保存凭证</el-button>
+        <el-button v-if="context.hasAnyPermission(['voucher:add', 'voucher:edit'])" type="primary" :icon="DocumentChecked" :loading="saving" @click="submit">保存凭证</el-button>
       </div>
     </div>
   </div>
 
-  <el-dialog v-model="auxDialogVisible" :title="isReadonly ? '辅助核算查看' : '辅助核算录入'" width="560px" :close-on-click-modal="false">
+  <el-dialog v-model="auxDialogVisible" :title="isReadonly ? '辅助核算查看' : '辅助核算录入'" width="560px" class="finance-dialog" :close-on-click-modal="false">
     <template v-if="currentLine">
       <el-alert
         v-if="!isReadonly"

@@ -19,7 +19,7 @@
   />
 
   <div class="carry-layout">
-    <section class="panel carry-form-panel">
+    <section class="panel management-panel carry-form-panel">
       <div class="panel-header">
         <strong>方案参数</strong>
         <el-tag :type="form.enabled_flag === 1 ? 'success' : 'info'">{{ form.enabled_flag === 1 ? '已启用' : '未启用' }}</el-tag>
@@ -54,7 +54,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel management-panel">
       <div class="panel-header">
         <strong>结转规则</strong>
         <div class="page-actions">

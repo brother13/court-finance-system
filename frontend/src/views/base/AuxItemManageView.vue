@@ -80,7 +80,7 @@
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel management-panel">
         <div class="panel-header">
           <strong>{{ selectedTypeName }}档案</strong>
           <div class="page-actions">
@@ -141,7 +141,7 @@
     </section>
   </div>
 
-  <el-dialog v-model="typeDialogVisible" :title="typeForm.aux_type_id ? '编辑辅助维度' : '新增自定义辅助维度'" width="560px">
+  <el-dialog v-model="typeDialogVisible" :title="typeForm.aux_type_id ? '编辑辅助维度' : '新增自定义辅助维度'" width="560px" class="finance-dialog">
     <el-alert
       class="mb-16"
       type="warning"
@@ -177,7 +177,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="archiveDialogVisible" :title="archiveForm.archive_id ? `编辑${selectedTypeName}档案` : `新增${selectedTypeName}档案`" width="560px">
+  <el-dialog v-model="archiveDialogVisible" :title="archiveForm.archive_id ? `编辑${selectedTypeName}档案` : `新增${selectedTypeName}档案`" width="560px" class="finance-dialog">
     <el-form label-position="top" :model="archiveForm">
       <div class="form-grid two">
         <el-form-item label="所属维度">

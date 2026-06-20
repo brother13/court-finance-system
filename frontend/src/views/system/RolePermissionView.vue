@@ -13,7 +13,7 @@
   </div>
 
   <div class="rbac-layout">
-    <aside class="rbac-side panel">
+    <aside class="rbac-side panel management-panel">
       <div class="panel-header">
         <strong>角色</strong>
       </div>
@@ -27,7 +27,7 @@
       </div>
     </aside>
 
-    <section class="rbac-main panel">
+    <section class="rbac-main panel management-panel">
       <div class="panel-header">
         <strong>{{ selectedRole?.role_name || '请选择角色' }}</strong>
         <span class="muted">{{ selectedRole?.view_scope === 'SELF' ? '仅本人制单' : '全部数据' }}</span>

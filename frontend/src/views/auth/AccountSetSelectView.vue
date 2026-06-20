@@ -126,40 +126,56 @@ onMounted(async () => {
 
 <style scoped>
 .account-select-page {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 40px 24px;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
+  padding: 38px 46px;
+  background: var(--bg-main);
 }
 
 .account-select-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 32px;
+  gap: 24px;
+  max-width: 1180px;
+  margin: 0 auto 24px;
 }
 
 .account-select-header h1 {
-  margin: 8px 0 4px;
-  font-size: 22px;
-  font-weight: 600;
+  margin: 14px 0 8px;
+  font-size: 26px;
+  font-weight: 750;
 }
 
 .account-select-header p {
   margin: 0;
   color: var(--text-secondary);
   font-size: 14px;
+  line-height: 1.7;
+  max-width: 680px;
 }
 
 .login-kicker {
-  color: var(--primary);
+  display: inline-flex;
+  padding: 6px 10px;
+  border: 1px solid #C7D5EA;
+  border-radius: var(--finance-radius);
+  background: var(--brand-blue-soft);
+  color: var(--brand-blue);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .account-select-user {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 220px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--border-light);
+  border-radius: var(--finance-radius);
 }
 
 .account-select-user strong {
@@ -180,9 +196,11 @@ onMounted(async () => {
 }
 
 .account-set-grid {
+  max-width: 1180px;
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
 }
 
 .account-set-card-wrapper {
@@ -195,40 +213,43 @@ onMounted(async () => {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  padding: 20px;
+  min-height: 164px;
+  padding: 18px 18px 18px 20px;
   background: var(--card-bg);
-  border: 2px solid var(--border-light);
-  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  border-left: 4px solid transparent;
+  border-radius: var(--finance-radius);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
   text-align: left;
   width: 100%;
 }
 
 .account-set-card:hover {
-  border-color: var(--primary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-color: var(--brand-blue);
+  background: #F8FAFD;
 }
 
 .account-set-card.active {
-  border-color: var(--primary);
-  background: var(--primary-bg);
+  border-color: var(--brand-blue);
+  border-left-color: var(--brand-blue);
+  background: #F3F7FC;
 }
 
 .account-set-type {
   display: inline-block;
-  padding: 2px 10px;
-  background: var(--primary);
-  color: #fff;
+  padding: 3px 8px;
+  background: var(--brand-blue-soft);
+  color: var(--brand-blue);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 700;
   border-radius: 4px;
 }
 
 .account-set-card h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  margin: 10px 0 2px;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--text-main);
 }
 
@@ -246,10 +267,11 @@ onMounted(async () => {
 
 .year-select-panel {
   margin-top: 8px;
-  padding: 16px 20px;
+  padding: 14px 16px;
   background: var(--card-bg);
-  border: 2px solid var(--primary);
-  border-radius: 10px;
+  border: 1px solid var(--brand-blue);
+  border-left: 4px solid var(--brand-blue);
+  border-radius: var(--finance-radius);
 }
 
 .year-select-content {

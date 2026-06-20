@@ -453,121 +453,8 @@ onMounted(load)
   min-width: 0;
 }
 
-.balance-query-form :deep(.el-form-item) {
-  margin-bottom: 14px;
-}
-
-.balance-query-form :deep(.el-form-item__label) {
-  color: var(--text-regular);
-  font-weight: 600;
-}
-
-.filter-form-row {
-  width: 100%;
-}
-
-.filter-form-row.two-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.balance-query-form :deep(.el-input),
-.balance-query-form :deep(.el-select) {
-  width: 100%;
-}
-
-.period-range,
-.level-range {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-}
-
-.period-range :deep(.el-select),
-.level-range :deep(.el-select) {
-  width: 100%;
-}
-
-.period-range span,
-.level-range span {
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.balance-report-panel {
-  border-radius: 8px;
-}
-
-.balance-report-toolbar {
-  align-items: center;
-  gap: 16px;
-}
-
-.balance-toolbar-left {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  min-width: 0;
-}
-
-.balance-filter-button {
-  min-width: 290px;
-  justify-content: space-between;
-  font-weight: 600;
-}
-
-.filter-button-caret {
-  margin-left: 10px;
-}
-
-.balance-filter-popover {
-  padding: 4px 2px 2px;
-}
-
-.filter-popover-actions {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  padding-top: 2px;
-}
-
 :global(.subject-balance-filter-popper) {
   padding: 18px 20px 16px;
-}
-
-.subject-code {
-  color: var(--brand-blue-active);
-  font-weight: 600;
-}
-
-.subject-name {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-}
-
-.subject-name-toggle {
-  cursor: pointer;
-  user-select: none;
-}
-
-.subject-name-toggle:hover {
-  color: var(--brand-blue-active);
-}
-
-.tree-caret {
-  margin-right: 4px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.leaf-spacer {
-  display: inline-block;
-  width: 17px;
 }
 
 .subtotal-label {
@@ -592,16 +479,5 @@ onMounted(load)
 
 :deep(.el-table .cell) {
   font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 1100px) {
-  .filter-form-row.two-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .balance-filter-button {
-    width: 100%;
-    min-width: 0;
-  }
 }
 </style>

@@ -28,12 +28,14 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-header">
-      <strong>
-        <el-icon><Tickets /></el-icon>
-        明细账记录 · {{ selectedSubjectLabel }}
-      </strong>
+  <div class="panel ledger-report-panel">
+    <div class="panel-header ledger-report-toolbar">
+      <div class="ledger-toolbar-left">
+        <strong>
+          <el-icon><Tickets /></el-icon>
+          明细账记录 · {{ selectedSubjectLabel }}
+        </strong>
+      </div>
       <span class="muted">共 {{ pageTotal }} 条记录 · 借方合计 ¥ {{ totalDebit.toFixed(2) }} · 贷方合计 ¥ {{ totalCredit.toFixed(2) }}</span>
     </div>
     <div class="panel-body compact detail-ledger-body">
@@ -610,66 +612,6 @@ onMounted(loadSubjects)
 </script>
 
 <style scoped>
-.detail-period-range {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 24px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  min-width: 320px;
-  width: 100%;
-}
-
-.detail-period-range :deep(.el-select) {
-  width: 100%;
-}
-
-.detail-period-range span {
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.detail-period-label {
-  white-space: nowrap;
-}
-
-.detail-ledger-body {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 14px;
-}
-
-.ledger-subject-panel {
-  border-right: 1px solid #e5e7eb;
-  padding-right: 12px;
-  min-width: 0;
-}
-
-.ledger-subject-header {
-  color: var(--text-secondary);
-  font-weight: 600;
-  margin-bottom: 10px;
-}
-
-.ledger-subject-tree {
-  height: calc(100vh - 330px);
-  overflow: auto;
-  background: transparent;
-}
-
-.ledger-subject-tree :deep(.el-tree-node__content) {
-  height: 34px;
-}
-
-.ledger-table-panel {
-  min-width: 0;
-}
-
-.pagination-bar {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 12px;
-}
-
 .pdf-progress-content {
   display: grid;
   gap: 12px;
@@ -685,22 +627,5 @@ onMounted(loadSubjects)
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0;
-}
-
-@media (max-width: 960px) {
-  .detail-ledger-body {
-    grid-template-columns: 1fr;
-  }
-
-  .ledger-subject-panel {
-    border-right: 0;
-    border-bottom: 1px solid #e5e7eb;
-    padding-right: 0;
-    padding-bottom: 12px;
-  }
-
-  .ledger-subject-tree {
-    height: 220px;
-  }
 }
 </style>

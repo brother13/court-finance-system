@@ -15,7 +15,6 @@
         <el-select v-model="filters.voucher_status" placeholder="制证状态" clearable class="status-select">
           <el-option label="未生成凭证" value="UNGENERATED" />
           <el-option label="已生成凭证" value="GENERATED" />
-          <el-option label="已作废" value="VOIDED" />
         </el-select>
         <el-select v-model="filters.invoice_type" placeholder="开票种类" clearable class="type-select">
           <el-option label="执行、调解款" value="执行、调解款" />
@@ -462,45 +461,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.case-fund-board {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
-.case-fund-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.case-fund-filters,
-.case-fund-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.quick-range-select {
-  width: 128px;
-}
-
-.date-filter-label,
-.date-separator {
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.payment-date-picker {
-  width: 142px;
-}
-
 .status-select,
 .type-select {
   width: 132px;
@@ -508,52 +468,5 @@ onMounted(load)
 
 .case-fund-search {
   width: 320px;
-}
-
-.case-fund-file-input {
-  display: none;
-}
-
-.case-fund-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
-  gap: 12px;
-}
-
-.case-fund-summary > div {
-  padding: 12px 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.case-fund-summary span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.case-fund-summary strong {
-  display: block;
-  margin-top: 4px;
-  color: var(--text-primary);
-  font-size: 20px;
-}
-
-.case-fund-table-shell {
-  min-height: 0;
-}
-
-.case-fund-pagination {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.muted-text {
-  color: var(--text-placeholder);
-}
-
-.subject-config-alert {
-  margin-bottom: 12px;
 }
 </style>

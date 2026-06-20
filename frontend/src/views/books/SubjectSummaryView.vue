@@ -376,110 +376,8 @@ onMounted(load)
   align-items: center;
 }
 
-.subject-summary-panel {
-  border-radius: 8px;
-}
-
-.summary-report-toolbar {
-  align-items: center;
-  gap: 16px;
-}
-
-.summary-toolbar-left {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  min-width: 0;
-}
-
-.summary-filter-button {
-  min-width: 290px;
-  justify-content: space-between;
-  font-weight: 600;
-}
-
-.filter-button-caret {
-  margin-left: 10px;
-}
-
-.summary-filter-popover {
-  padding: 4px 2px 2px;
-}
-
-.summary-query-form :deep(.el-form-item) {
-  margin-bottom: 14px;
-}
-
-.summary-query-form :deep(.el-form-item__label) {
-  color: var(--text-regular);
-  font-weight: 600;
-}
-
-.summary-query-form :deep(.el-input),
-.summary-query-form :deep(.el-select),
-.summary-query-form :deep(.el-date-editor) {
-  width: 100%;
-}
-
-.period-range {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-}
-
-.period-range span {
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.filter-form-row {
-  width: 100%;
-}
-
-.filter-form-row.two-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.filter-popover-actions {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  padding-top: 2px;
-}
-
 :global(.subject-summary-filter-popper) {
   padding: 18px 20px 16px;
-}
-
-.subject-name {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-}
-
-.subject-name-toggle {
-  cursor: pointer;
-  user-select: none;
-}
-
-.subject-name-toggle:hover {
-  color: var(--brand-blue-active);
-}
-
-.tree-caret {
-  margin-right: 4px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.leaf-spacer {
-  display: inline-block;
-  width: 17px;
 }
 
 .subject-summary-table :deep(.el-table__cell) {
@@ -488,22 +386,5 @@ onMounted(load)
 
 .subject-summary-table :deep(.cell) {
   line-height: 20px;
-}
-
-@media (max-width: 1180px) {
-  .filter-form-row.two-columns {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 760px) {
-  .filter-form-row.two-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .summary-filter-button {
-    width: 100%;
-    min-width: 0;
-  }
 }
 </style>
