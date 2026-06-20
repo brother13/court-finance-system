@@ -10,7 +10,7 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel management-panel">
     <div class="panel-header">
       <strong>账套列表</strong>
       <span class="muted">共 {{ total }} 个账套</span>
@@ -248,15 +248,3 @@ const save = async () => {
 
 onMounted(load)
 </script>
-
-<style scoped>
-.form-section-title {
-  margin: 4px 0 14px;
-  padding-left: 10px;
-  border-left: 3px solid var(--el-color-primary);
-  color: var(--el-text-color-primary);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1;
-}
-</style>

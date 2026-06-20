@@ -62,7 +62,7 @@
     </div>
   </div>
 
-  <el-dialog v-model="dialogVisible" :title="form.subject_id ? '编辑科目' : '新增科目'" width="720px">
+  <el-dialog v-model="dialogVisible" :title="form.subject_id ? '编辑科目' : '新增科目'" width="720px" class="finance-dialog">
     <el-alert
       class="mb-16"
       type="warning"
@@ -131,7 +131,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="codeRuleVisible" title="编码设置" width="700px" class="code-rule-dialog">
+  <el-dialog v-model="codeRuleVisible" title="编码设置" width="700px" class="finance-dialog code-rule-dialog">
     <div class="code-rule-editor">
       <span>科目编码规则：</span>
       <template v-for="(segment, index) in codeRuleSegments" :key="index">

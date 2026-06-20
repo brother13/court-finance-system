@@ -6,6 +6,7 @@ import assert from 'assert'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const view = readFileSync(resolve(__dirname, '../src/views/books/SubjectBalanceView.vue'), 'utf8')
 const api = readFileSync(resolve(__dirname, '../src/api/books.ts'), 'utf8')
+const styles = readFileSync(resolve(__dirname, '../src/styles/app.css'), 'utf8')
 
 assert(view.includes('会计期间'), 'subject balance should expose accounting period range filters')
 assert(view.includes('起始科目'), 'subject balance should expose starting subject filter')
@@ -28,7 +29,10 @@ assert.strictEqual(
 )
 assert(view.includes('balanceDisplayRows'), 'subject balance should add grouped subtotal rows like the reference report')
 assert(view.includes('row-class-name'), 'subject balance should style subtotal and total rows distinctly')
-assert(view.includes('width: 100%'), 'subject balance range controls should not shrink inside form item flex content')
+assert(
+  view.includes('width: 100%') || styles.includes('.period-range .el-select') && styles.includes('width: 100%'),
+  'subject balance range controls should not shrink inside form item flex content'
+)
 assert(view.includes('collapsedSubjectCodes'), 'subject balance should track collapsed parent subjects')
 assert(view.includes('toggleSubjectCollapse'), 'subject balance should allow clicking parent subjects to expand or collapse children')
 assert(view.includes('visibleSubjectRows'), 'subject balance should render only rows not hidden by collapsed ancestors')

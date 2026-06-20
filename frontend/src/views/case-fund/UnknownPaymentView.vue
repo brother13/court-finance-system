@@ -15,7 +15,6 @@
         <el-select v-model="filters.voucher_status" placeholder="制证状态" clearable class="status-select">
           <el-option label="未生成凭证" value="UNGENERATED" />
           <el-option label="已生成凭证" value="GENERATED" />
-          <el-option label="已作废" value="VOIDED" />
         </el-select>
         <el-select v-model="filters.claim_status" placeholder="认领状态" clearable class="status-select">
           <el-option label="未认领" value="未认领" />
@@ -465,121 +464,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.case-fund-board {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
-.case-fund-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.case-fund-filters,
-.case-fund-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.quick-range-select {
-  width: 128px;
-}
-
-.date-filter-label,
-.date-separator {
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.payment-date-picker {
-  width: 142px;
-}
-
 .status-select {
   width: 132px;
-}
-
-.case-fund-search {
-  width: 300px;
-}
-
-.case-fund-file-input {
-  display: none;
-}
-
-.case-fund-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.case-fund-summary > div {
-  padding: 14px 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.case-fund-summary span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.case-fund-summary strong {
-  display: block;
-  margin-top: 6px;
-  color: var(--text-main);
-  font-size: 20px;
-  line-height: 1.2;
-}
-
-.case-fund-table-shell {
-  background: var(--card-bg);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.case-fund-pagination {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 0;
-}
-
-.muted-text {
-  color: var(--text-mute);
-}
-
-.subject-config-options {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 12px;
-  margin-bottom: 12px;
-  color: var(--text-main);
-}
-
-@media (max-width: 1200px) {
-  .case-fund-toolbar {
-    flex-direction: column;
-  }
-
-  .case-fund-filters {
-    flex-wrap: wrap;
-  }
-
-  .case-fund-search {
-    width: min(100%, 360px);
-  }
 }
 </style>

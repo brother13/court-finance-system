@@ -3,9 +3,7 @@
   <el-container v-else class="app-shell">
     <el-aside :width="sidebarWidth" class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed }">
       <div class="brand">
-        <div class="brand-mark">
-          <span class="brand-mark-core" />
-        </div>
+        <img class="brand-logo" :src="raspberryLogo" alt="树莓软件" />
         <div class="brand-info">
           <strong>树莓法衡</strong>
           <small>{{ context.accountSetName || context.unitName || '账套未选择' }}</small>
@@ -22,10 +20,14 @@
       </div>
 
       <el-menu
+        :key="sidebarMenuKey"
         router
         :collapse="sidebarCollapsed"
         :default-active="$route.path"
+        :default-openeds="openedSidebarMenus"
         class="nav-menu"
+        @open="handleSidebarMenuOpen"
+        @close="handleSidebarMenuClose"
       >
         <el-menu-item v-if="context.hasPermission('menu:dashboard')" index="/dashboard">
           <el-icon><DataLine /></el-icon>
@@ -102,11 +104,12 @@
         </div>
         <div class="topbar-actions">
           <div class="topbar-account-set">
-            <span class="account-set-chip">
-              <span class="dot" />
-              {{ context.accountSetName || '未选账套' }}
-            </span>
-            <small>{{ bizTypeLabel }} · {{ context.year }}年 · {{ context.period }}</small>
+            <span class="account-set-chip">{{ context.accountSetName || '未选账套' }}</span>
+            <small>
+              <span>{{ bizTypeLabel }}</span>
+              <span>{{ context.year }}年</span>
+              <span>{{ context.period }} 期间</span>
+            </small>
           </div>
           <span class="topbar-divider" />
           <el-button type="primary" plain @click="switchAccountSet">切换账套</el-button>
@@ -150,6 +153,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Calendar, Close, Coin, DataLine, Expand, Fold, Grid, Key, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
+import raspberryLogo from './assets/raspberry-logo.png'
 
 const route = useRoute()
 const router = useRouter()
@@ -199,10 +203,13 @@ const isAuthPage = computed(() => route.path === '/login' || route.path === '/se
 const defaultTabs: PageTab[] = [{ path: '/dashboard', title: '首页看板', closable: false }]
 const openedTabs = ref<PageTab[]>(loadTabs())
 const sidebarCollapsed = ref(false)
+const openedSidebarMenus = ref<string[]>([])
+const maxOpenedSidebarMenus = 2
 const changePasswordDialogVisible = ref(false)
 const sidebarWidth = computed(() => sidebarCollapsed.value ? '64px' : '200px')
 const sidebarToggleTitle = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
+const sidebarMenuKey = computed(() => `${sidebarCollapsed.value ? 'collapsed' : 'expanded'}-${openedSidebarMenus.value.join('|')}`)
 const bizTypeLabel = computed(() => {
   const map: Record<string, string> = {
     CASE_FUND: '案款',
@@ -284,6 +291,23 @@ const openChangePasswordDialog = () => {
 
 const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value
+  if (sidebarCollapsed.value) {
+    openedSidebarMenus.value = []
+  }
+}
+
+const handleSidebarMenuOpen = (index: string) => {
+  openedSidebarMenus.value = [
+    ...openedSidebarMenus.value.filter((item) => item !== index),
+    index
+  ]
+  while (openedSidebarMenus.value.length > maxOpenedSidebarMenus) {
+    openedSidebarMenus.value.shift()
+  }
+}
+
+const handleSidebarMenuClose = (index: string) => {
+  openedSidebarMenus.value = openedSidebarMenus.value.filter((item) => item !== index)
 }
 
 watch(
