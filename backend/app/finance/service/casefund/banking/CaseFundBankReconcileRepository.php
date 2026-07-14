@@ -85,6 +85,25 @@ class CaseFundBankReconcileRepository
         ];
     }
 
+    public function existingBankStatementFingerprints($fingerprints)
+    {
+        $fingerprints = array_values(array_unique($fingerprints));
+        if (empty($fingerprints)) {
+            return [];
+        }
+        $rows = $this->db($this->tables['statement'])->where([
+            'account_set_id' => $this->accountSetId(),
+            'del_flag' => 0,
+        ])->where('source_fingerprint', 'in', $fingerprints)
+            ->field(['source_fingerprint'])
+            ->select();
+        $existing = [];
+        foreach ($rows as $row) {
+            $existing[$row['source_fingerprint']] = true;
+        }
+        return $existing;
+    }
+
     public function bankStatementsInScope($bankCode, $dateStart, $dateEnd)
     {
         $query = $this->db($this->tables['statement'])->where($this->activeYearWhere());

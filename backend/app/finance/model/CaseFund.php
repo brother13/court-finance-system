@@ -3,6 +3,7 @@
 namespace app\finance\model;
 
 use app\finance\service\casefund\banking\CaseFundBankingRule;
+use app\finance\service\casefund\banking\CaseFundBankStatementImportService;
 use app\finance\service\casefund\banking\CaseFundBankReconcileRepository;
 use app\finance\service\casefund\banking\CaseFundBankReconcileMatcher;
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
@@ -22,6 +23,7 @@ use think\Db;
 class CaseFund extends Common
 {
     protected $bankingRule;
+    protected $bankStatementImportService;
     protected $bankReconcileRepository;
     protected $bankReconcileMatcher;
     protected $businessPolicy;
@@ -548,64 +550,32 @@ class CaseFund extends Common
             return $this->error('导入文件没有银行对账单数据');
         }
 
-        $parsedRows = [];
-        $errors = [];
-        foreach ($rows as $index => $row) {
-            $normalized = $this->normalizeBankStatementRow($row, $bankCode, $banks[$bankCode], $index + 1);
-            if (!empty($normalized['error'])) {
-                $errors[] = $normalized['error'];
-                continue;
-            }
-            $parsedRows[] = $normalized;
+        $prepared = $this->bankStatementImportService()->prepare(
+            $rows,
+            $bankCode,
+            $banks[$bankCode],
+            $data['filename'] ?? '',
+            $data['remark'] ?? ''
+        );
+        if (!empty($prepared['errors'])) {
+            return $this->error('导入校验失败', $prepared['errors']);
         }
-        if (!empty($errors)) {
-            return $this->error('导入校验失败', $errors);
-        }
-        if (empty($parsedRows)) {
+        if ($prepared['parsed_count'] === 0) {
             return $this->error('导入文件没有可保存的银行对账单数据');
         }
-
-        $fingerprints = [];
-        foreach ($parsedRows as $row) {
-            $fingerprints[] = $row['source_fingerprint'];
-        }
-        $existing = [];
-        $existingRows = $this->getdb(self::TABLE_BANK_STATEMENT)->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->select();
-        foreach ($existingRows as $row) {
-            $existing[$row['source_fingerprint']] = true;
-        }
-
-        $created = 0;
-        $skipped = 0;
-        $seen = [];
+        $created = $prepared['created'];
+        $skipped = $prepared['skipped'];
         Db::startTrans();
         try {
-            foreach ($parsedRows as $row) {
-                $fingerprint = $row['source_fingerprint'];
-                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
-                    $skipped++;
-                    $seen[$fingerprint] = true;
-                    continue;
-                }
-                $seen[$fingerprint] = true;
-                $insert = $row;
-                $insert['statement_id'] = uuid();
-                $insert['account_set_id'] = $this->accountSetId;
-                $insert['source_file_name'] = $data['filename'] ?? '';
-                $insert['reconcile_status'] = 'UNMATCHED';
-                $insert['remark'] = $data['remark'] ?? '';
+            foreach ($prepared['insert_rows'] as $insert) {
                 $this->fillCreate($insert);
                 $this->getdb(self::TABLE_BANK_STATEMENT)->insert($insert);
-                $created++;
             }
             $this->logAudit('CASE_FUND_BANK_STATEMENT', 'IMPORT', 'IMPORT', null, [
                 'bank_code' => $bankCode,
                 'bank_name' => $banks[$bankCode],
                 'filename' => $data['filename'] ?? '',
-                'total' => count($parsedRows),
+                'total' => $prepared['parsed_count'],
                 'created' => $created,
                 'skipped' => $skipped,
             ]);
@@ -616,10 +586,10 @@ class CaseFund extends Common
         }
 
         return $this->ok([
-            'total' => count($parsedRows),
+            'total' => $prepared['parsed_count'],
             'created' => $created,
             'skipped' => $skipped,
-        ], '导入成功', count($parsedRows));
+        ], '导入成功', $prepared['parsed_count']);
     }
 
     public function paymentDelete($data = [])
@@ -2680,6 +2650,11 @@ class CaseFund extends Common
         return $this->bankingRule()->bankStatementFingerprint($row);
     }
 
+    protected function existingBankStatementFingerprints($fingerprints)
+    {
+        return $this->bankReconcileRepository()->existingBankStatementFingerprints($fingerprints);
+    }
+
     protected function buildBankReconcileRow($statement, $bizType, $biz, $status, $bankCents, $bizCents, $matchRule = 'SERIAL_NO')
     {
         return $this->bankingRule()->buildBankReconcileRow(
@@ -3089,6 +3064,27 @@ class CaseFund extends Common
             ], self::BANK_RECONCILE_AUTO_MATCH_RULES);
         }
         return $this->bankReconcileRepository;
+    }
+
+    protected function bankStatementImportService()
+    {
+        if ($this->bankStatementImportService === null) {
+            $this->bankStatementImportService = new CaseFundBankStatementImportService([
+                'normalize_row' => function ($row, $bankCode, $bankName, $defaultRowNo) {
+                    return $this->normalizeBankStatementRow($row, $bankCode, $bankName, $defaultRowNo);
+                },
+                'existing_fingerprints' => function ($fingerprints) {
+                    return $this->existingBankStatementFingerprints($fingerprints);
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+            ]);
+        }
+        return $this->bankStatementImportService;
     }
 
     protected function bankReconcileMatcher()

@@ -2,6 +2,7 @@
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $bankingRulePath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankingRule.php';
+$bankImportPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankStatementImportService.php';
 $bankRepositoryPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php';
 $bankMatcherPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileMatcher.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
@@ -10,6 +11,7 @@ $rbacPath = __DIR__ . '/../database/migration_rbac.sql';
 
 $source = file_get_contents($modelPath);
 $bankingRuleSource = file_get_contents($bankingRulePath);
+$bankImportSource = file_get_contents($bankImportPath);
 $bankRepositorySource = file_get_contents($bankRepositoryPath);
 $bankMatcherSource = file_get_contents($bankMatcherPath);
 $bankImplementationSource = $source . "\n" . $bankRepositorySource . "\n" . $bankMatcherSource;
@@ -44,6 +46,8 @@ $checks = [
     [$bankingRuleSource, "'SHENGJING' => '盛京银行'", 'CaseFund should support Shengjing Bank'],
     [$bankingRuleSource, "'CCB' => '建设银行'", 'CaseFund should support CCB'],
     [$source, 'bankStatementFingerprint', 'CaseFund should fingerprint bank statement rows'],
+    [$bankImportSource, "'reconcile_status'", 'Bank statement import preparation should keep new rows unmatched'],
+    [$bankImportSource, "isset(\$existing[\$fingerprint]) || isset(\$seen[\$fingerprint])", 'Bank statement import should skip existing and in-file duplicate rows'],
     [$source, "logAudit('CASE_FUND_BANK_STATEMENT'", 'Bank statement import should write audit log'],
     [$ddl, 'create table fin_case_fund_bank_statement', 'DDL should create bank statement table'],
     [$ddl, 'create table fin_case_fund_bank_reconcile', 'DDL should create bank reconcile table'],

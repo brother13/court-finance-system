@@ -213,6 +213,35 @@ bankQueryAssertSame(['transaction_date', '<=', '2026-07-31'], $store->queries[0]
 bankQueryAssertSame('transaction_time asc, source_row_no asc', $store->queries[0]['order'], 'Bank statement scope order should remain stable');
 
 $store->queries = [];
+$store->rows['statement'] = [
+    ['source_fingerprint' => 'FP-EXISTING'],
+    ['source_fingerprint' => 'FP-OTHER'],
+];
+$existing = $repository->existingBankStatementFingerprints([
+    'FP-EXISTING',
+    'FP-EXISTING',
+    'FP-OTHER',
+]);
+bankQueryAssertSame([
+    'FP-EXISTING' => true,
+    'FP-OTHER' => true,
+], $existing, 'Existing bank statement fingerprints should be returned as a lookup map');
+bankQueryAssertSame(1, count($store->queries), 'Fingerprint lookup should use one query object');
+bankQueryAssertSame([
+    'account_set_id' => 'account-bank-query',
+    'del_flag' => 0,
+], $store->queries[0]['where'][0][1], 'Fingerprint lookup should preserve account-set and active-row scope');
+bankQueryAssertSame(
+    ['source_fingerprint', 'in', ['FP-EXISTING', 'FP-OTHER']],
+    $store->queries[0]['where'][1],
+    'Fingerprint lookup should de-duplicate its IN condition'
+);
+bankQueryAssertSame(['source_fingerprint'], $store->queries[0]['field'], 'Fingerprint lookup should only select its lookup field');
+$queryCount = count($store->queries);
+bankQueryAssertSame([], $repository->existingBankStatementFingerprints([]), 'Empty fingerprint lookup should return immediately');
+bankQueryAssertSame($queryCount, count($store->queries), 'Empty fingerprint lookup should not allocate a database query');
+
+$store->queries = [];
 $emptyCounts = [
     'MATCHED' => 0,
     'BANK_ONLY' => 0,
