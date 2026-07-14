@@ -2,6 +2,8 @@
 
 namespace app\finance\model;
 
+use app\finance\service\casefund\importing\CaseFundImportIdentity;
+use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
@@ -11,6 +13,8 @@ use think\Db;
 class CaseFund extends Common
 {
     protected $businessPolicy;
+    protected $importIdentity;
+    protected $importNormalizer;
     protected $importValidator;
     protected $legacySpreadsheetReader;
     protected $subjectConfigResolver;
@@ -4454,41 +4458,22 @@ class CaseFund extends Common
 
     protected function isEmptyPaymentRawRow($raw)
     {
-        foreach ($raw as $value) {
-            if ($value !== '') {
-                return false;
-            }
-        }
-        return true;
+        return $this->importNormalizer()->isEmptyPaymentRawRow($raw);
     }
 
     protected function isNonDetailPaymentRawRow($raw)
     {
-        $caseNo = trim((string)($raw['案号'] ?? ''));
-        $paymentDate = trim((string)($raw['缴费日期'] ?? ''));
-        $receiptNo = trim((string)($raw['票据号码'] ?? ''));
-        $bankSerialNo = trim((string)($raw['银行流水号'] ?? ''));
-        return $caseNo === '' && $paymentDate === '' && $receiptNo === '' && $bankSerialNo === '';
+        return $this->importNormalizer()->isNonDetailPaymentRawRow($raw);
     }
 
     protected function isNonDetailRefundRawRow($raw)
     {
-        $caseNo = trim((string)($raw['案号'] ?? ''));
-        $refundDate = trim((string)($raw['出账日期'] ?? ''));
-        $sourceReceiptNo = trim((string)($raw['来源票据号码'] ?? ''));
-        $outOrderNo = trim((string)($raw['出账单号'] ?? ''));
-        return $caseNo === '' && $refundDate === '' && $sourceReceiptNo === '' && $outOrderNo === '';
+        return $this->importNormalizer()->isNonDetailRefundRawRow($raw);
     }
 
     protected function isMalformedPaymentRawRow($raw)
     {
-        foreach ($raw as $value) {
-            $text = (string)$value;
-            if (strpos($text, "\0") !== false) {
-                return true;
-            }
-        }
-        return false;
+        return $this->importNormalizer()->isMalformedPaymentRawRow($raw);
     }
 
     protected function loadExistingPaymentsForImport($rows, $useReceiptNoAsDuplicateKey = true)
@@ -4548,16 +4533,7 @@ class CaseFund extends Common
     protected function rememberPaymentImportExistingRow(&$existing, $row, $useReceiptNoAsDuplicateKey = true)
     {
         $key = $this->paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey);
-        if ($key === '') {
-            return;
-        }
-        if (!isset($existing[$key])) {
-            $existing[$key] = $row;
-            return;
-        }
-        if ($existing[$key]['voucher_status'] === 'UNGENERATED' && $row['voucher_status'] !== 'UNGENERATED') {
-            $existing[$key] = $row;
-        }
+        return $this->importIdentity()->rememberPaymentImportExistingRowByKey($existing, $key, $row);
     }
 
     protected function updateExistingPaymentFromImport($existingRow, $row, $data)
@@ -4609,129 +4585,55 @@ class CaseFund extends Common
 
     protected function paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey = true)
     {
-        $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-        if ($useReceiptNoAsDuplicateKey && $receiptNo !== '') {
-            return 'receipt:' . $receiptNo;
-        }
-        $fingerprint = trim((string)($row['source_fingerprint'] ?? ''));
-        if (!$useReceiptNoAsDuplicateKey && $receiptNo !== '' && $fingerprint !== '') {
-            return 'fingerprint:' . $fingerprint;
-        }
-        $bankAccountNo = trim((string)($row['bank_account_no'] ?? ''));
-        if ($bankAccountNo !== '') {
-            $amount = $this->centsToDecimal($this->decimalToCents($row['payment_amount'] ?? '0'));
-            return 'account_amount:' . $bankAccountNo . '|' . $amount;
-        }
-        return $fingerprint === '' ? '' : 'fingerprint:' . $fingerprint;
+        return $this->importIdentity()->paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey);
     }
 
     protected function paymentFingerprint($row)
     {
-        $parts = [
-            $row['case_no'] ?? '',
-            $row['payment_time'] ?? '',
-            $row['payment_amount'] ?? '',
-            $row['receipt_no'] ?? '',
-            $row['bank_serial_no'] ?? '',
-            $row['payment_order_no'] ?? '',
-        ];
-        return md5(implode('|', $parts));
+        return $this->importIdentity()->paymentFingerprint($row);
     }
 
     protected function refundFingerprint($row)
     {
-        $parts = [
-            $row['case_no'] ?? '',
-            $row['refund_date'] ?? '',
-            $row['out_type'] ?? '',
-            $row['refund_amount'] ?? '',
-            $row['source_receipt_no'] ?? '',
-            $row['out_order_no'] ?? '',
-            $row['actual_payee_name'] ?? '',
-            $row['payee_bank_account_no'] ?? '',
-        ];
-        return hash('sha256', implode('|', $parts));
+        return $this->importIdentity()->refundFingerprint($row);
     }
 
     protected function unknownPaymentFingerprint($row)
     {
-        $parts = [
-            $row['transaction_time'] ?? '',
-            $row['unknown_amount'] ?? '',
-            $row['court_bank_account_no'] ?? '',
-            $row['payer_account_no'] ?? '',
-            $row['payer_name'] ?? '',
-            $row['bank_remark'] ?? '',
-            $row['bank_summary'] ?? '',
-        ];
-        return hash('sha256', implode('|', $parts));
+        return $this->importIdentity()->unknownPaymentFingerprint($row);
     }
 
     protected function distributionFingerprint($row)
     {
-        $parts = [
-            $row['distribution_no'] ?? '',
-            $row['in_case_no'] ?? '',
-            $row['out_case_no'] ?? '',
-            $row['invoice_type'] ?? '',
-            $row['receipt_no'] ?? '',
-            $row['distribution_amount'] ?? '',
-            $row['receive_date'] ?? '',
-        ];
-        return hash('sha256', implode('|', $parts));
+        return $this->importIdentity()->distributionFingerprint($row);
     }
 
     protected function yesNoFlagFromText($text)
     {
-        $text = trim((string)$text);
-        if ($text === '') {
-            return 0;
-        }
-        if (in_array($text, ['√', '是', 'Y', 'YES', '1', 'true', 'TRUE'], true)) {
-            return 1;
-        }
-        return 0;
+        return $this->importNormalizer()->yesNoFlagFromText($text);
     }
 
     protected function normalizeDateTimeValue($value)
     {
         $text = $this->normalizeImportCellText($value);
-        if ($text === '') {
-            return '';
-        }
-        if (is_numeric($text) && (float)$text > 1000) {
-            return date('Y-m-d H:i:s', ((float)$text - 25569) * 86400);
-        }
-        $text = str_replace('/', '-', $text);
-        $timestamp = strtotime($text);
-        if ($timestamp === false) {
-            return '';
-        }
-        return date('Y-m-d H:i:s', $timestamp);
+        return $this->importNormalizer()->normalizeDateTimeText($text);
     }
 
     protected function normalizeDateValue($value)
     {
         $datetime = $this->normalizeDateTimeValue($value);
-        return $datetime === '' ? '' : substr($datetime, 0, 10);
+        return $this->importNormalizer()->dateValueFromDateTime($datetime);
     }
 
     protected function nullableDateValue($value)
     {
         $date = $this->normalizeDateValue($value);
-        return $date === '' ? null : $date;
+        return $this->importNormalizer()->nullableDateFromDate($date);
     }
 
     protected function normalizeImportCellText($value)
     {
-        if (is_float($value) || is_int($value)) {
-            return floor((float)$value) == (float)$value ? (string)(int)$value : (string)$value;
-        }
-        $text = trim((string)$value);
-        if (preg_match('/^\d+\.0$/', $text)) {
-            return substr($text, 0, -2);
-        }
-        return $text;
+        return $this->importNormalizer()->normalizeImportCellText($value);
     }
 
     protected function parseSpreadsheetRows($binary)
@@ -4755,6 +4657,24 @@ class CaseFund extends Common
             $this->businessPolicy = new CaseFundBusinessPolicy();
         }
         return $this->businessPolicy;
+    }
+
+    protected function importIdentity()
+    {
+        if ($this->importIdentity === null) {
+            $this->importIdentity = new CaseFundImportIdentity(function ($amount) {
+                return $this->centsToDecimal($this->decimalToCents($amount));
+            });
+        }
+        return $this->importIdentity;
+    }
+
+    protected function importNormalizer()
+    {
+        if ($this->importNormalizer === null) {
+            $this->importNormalizer = new CaseFundImportNormalizer();
+        }
+        return $this->importNormalizer;
     }
 
     protected function importValidator()
