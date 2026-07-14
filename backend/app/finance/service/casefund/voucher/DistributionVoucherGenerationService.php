@@ -148,8 +148,8 @@ class DistributionVoucherGenerationService
         }
 
         $groups = $this->rule->groupDistributionRowsForVoucher($rows);
-        $generatedCount = 0;
-        $voucherInfos = [];
+        $voucherPlans = [];
+        $allDetailsData = [];
         foreach ($groups as $groupRows) {
             $firstRow = $groupRows[0];
             $period = substr($firstRow['receive_date'], 0, 7);
@@ -161,9 +161,6 @@ class DistributionVoucherGenerationService
                 }
             }
 
-            $fiscalYear = $this->callHook('fiscal_year', [$period]);
-            $voucherId = $this->callHook('new_id');
-            $voucherNo = $this->callHook('generate_next_voucher_no', [$period]);
             $detailBuildResult = $this->rule->buildDistributionVoucherDetailsData(
                 $groupRows,
                 $subjectConfigMap
@@ -173,7 +170,45 @@ class DistributionVoucherGenerationService
             if ($totalDebit <= 0) {
                 throw new \Exception('凭证金额必须大于0');
             }
-            $this->callHook('ensure_aux_archives', [$detailsData]);
+
+            $voucherPlans[] = [
+                'group_rows' => $groupRows,
+                'first_row' => $firstRow,
+                'period' => $period,
+                'voucher_date' => $voucherDate,
+                'total_cents' => $totalDebit,
+                'details' => $detailsData,
+            ];
+            $allDetailsData = array_merge($allDetailsData, $detailsData);
+        }
+
+        // 与通用凭证保存保持一致：先按期间稳定顺序取完本批凭证号，再准备辅助档案。
+        $planIndexesByPeriod = [];
+        foreach ($voucherPlans as $index => $plan) {
+            $planIndexesByPeriod[$plan['period']][] = $index;
+        }
+        ksort($planIndexesByPeriod, SORT_STRING);
+        foreach ($planIndexesByPeriod as $period => $planIndexes) {
+            foreach ($planIndexes as $index) {
+                $voucherPlans[$index]['fiscal_year'] = $this->callHook('fiscal_year', [$period]);
+                $voucherPlans[$index]['voucher_id'] = $this->callHook('new_id');
+                $voucherPlans[$index]['voucher_no'] = $this->callHook('generate_next_voucher_no', [$period]);
+            }
+        }
+        $this->callHook('ensure_aux_archives', [$allDetailsData]);
+
+        $generatedCount = 0;
+        $voucherInfos = [];
+        foreach ($voucherPlans as $plan) {
+            $groupRows = $plan['group_rows'];
+            $firstRow = $plan['first_row'];
+            $period = $plan['period'];
+            $voucherDate = $plan['voucher_date'];
+            $totalDebit = $plan['total_cents'];
+            $detailsData = $plan['details'];
+            $fiscalYear = $plan['fiscal_year'];
+            $voucherId = $plan['voucher_id'];
+            $voucherNo = $plan['voucher_no'];
 
             $this->persistence->persistVoucher([
                 'voucher_id' => $voucherId,

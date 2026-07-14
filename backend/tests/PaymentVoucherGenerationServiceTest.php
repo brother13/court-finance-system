@@ -155,6 +155,8 @@ class PaymentVoucherRuntimeState
     public $guardSnapshots = [];
     public $voucherNoCalls = 0;
     public $idSequence = 0;
+    public $lockEvents = [];
+    public $auxiliaryDetailCounts = [];
 }
 
 class PaymentFailingPersistenceStub
@@ -215,10 +217,14 @@ function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $upda
         },
         'fiscal_year' => function ($period) { return substr($period, 0, 4); },
         'generate_next_voucher_no' => function ($period) use ($state) {
+            $state->lockEvents[] = 'voucher_no:' . $period;
             $state->voucherNoCalls++;
             return $state->voucherNoCalls;
         },
-        'ensure_aux_archives' => function ($details) {},
+        'ensure_aux_archives' => function ($details) use ($state) {
+            $state->lockEvents[] = 'aux_archives';
+            $state->auxiliaryDetailCounts[] = count($details);
+        },
         'cents_to_decimal' => function ($cents) { return number_format($cents / 100, 2, '.', ''); },
         'new_id' => function () use ($state) { return 'payment-id-' . (++$state->idSequence); },
         'prepare_create' => function ($row) { return $row; },
@@ -310,7 +316,7 @@ paymentServiceAssertSame('QUERY', $prepared['generate_scope'], 'Generation scope
 $initialRows = [
     [
         'payment_id' => 'payment-1',
-        'payment_date' => '2026-07-14',
+        'payment_date' => '2026-08-14',
         'payment_amount' => '10.00',
         'payment_method' => 'POS',
         'business_type' => '执行、调解款',
@@ -333,6 +339,12 @@ $lockedRows[1]['voucher_id'] = 'deleted-voucher';
 [$runtimeService, $runtimeDbs, $runtimeRule, $runtimeState] = paymentRuntimeFixture($lockedRows);
 $runtimePrepared = $runtimeService->prepareGeneration($initialRows, 'QUERY');
 $runtimeResult = $runtimeService->generatePrepared($runtimePrepared);
+paymentServiceAssertSame(
+    ['voucher_no:2026-07', 'voucher_no:2026-08', 'aux_archives'],
+    $runtimeState->lockEvents,
+    'Payment voucher numbers must lock by stable period before complete auxiliary preparation'
+);
+paymentServiceAssertSame([4], $runtimeState->auxiliaryDetailCounts, 'All payment voucher groups should prepare auxiliary archives in one call');
 paymentServiceAssertSame([true], $runtimeDbs['fin_case_fund_payment']->lockValues, 'Payment source rows should be locked inside generation');
 paymentServiceAssertSame(
     ['payment_date asc, source_row_no asc'],

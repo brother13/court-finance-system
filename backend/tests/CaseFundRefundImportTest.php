@@ -38,12 +38,6 @@ use app\finance\model\CaseFund;
 
 class CaseFundRefundImportTestModel extends CaseFund
 {
-    public $receiptTraceRequired = true;
-
-    protected function refundImportRequiresReceiptTrace($bizType, $rows = [])
-    {
-        return $this->receiptTraceRequired;
-    }
 }
 
 $xlsPath = '/Users/apple/Documents/出账查询 2024(收据号).xls';
@@ -160,7 +154,7 @@ if (in_array('总出账金额', $caseFundHeaders, true) || in_array('总出账�
 
 $validateMethod = new ReflectionMethod(CaseFund::class, 'validateRefundRows');
 $validateMethod->setAccessible(true);
-$errors = $validateMethod->invoke($caseFund, [$first], 'CASE_FUND');
+$errors = $validateMethod->invoke($caseFund, [$first], 'CASE_FUND', true);
 if (!empty($errors)) {
     fwrite(STDERR, 'CASE_FUND validation should accept sample refund rows: ' . implode('; ', array_slice($errors, 0, 5)) . PHP_EOL);
     exit(1);
@@ -170,7 +164,7 @@ $messageMethod = new ReflectionMethod(CaseFund::class, 'refundImportErrorMessage
 $messageMethod->setAccessible(true);
 $wrongCaseFundRows = [$first];
 $wrongCaseFundRows[0]['out_type'] = '诉讼费退费';
-$errors = $validateMethod->invoke($caseFund, $wrongCaseFundRows, 'CASE_FUND');
+$errors = $validateMethod->invoke($caseFund, $wrongCaseFundRows, 'CASE_FUND', true);
 if (empty($errors) || $messageMethod->invoke($caseFund, $errors, 'CASE_FUND') !== '导入的不是案款数据') {
     fwrite(STDERR, 'CASE_FUND wrong out type should use case fund specific import error message' . PHP_EOL);
     exit(1);
@@ -178,7 +172,7 @@ if (empty($errors) || $messageMethod->invoke($caseFund, $errors, 'CASE_FUND') !=
 
 $litigationRows = [$first];
 $litigationRows[0]['out_type'] = '诉讼费退费';
-$errors = $validateMethod->invoke($caseFund, $litigationRows, 'LITIGATION_FEE');
+$errors = $validateMethod->invoke($caseFund, $litigationRows, 'LITIGATION_FEE', false);
 if (!empty($errors)) {
     fwrite(STDERR, 'LITIGATION_FEE validation should accept litigation fee refund rows' . PHP_EOL);
     exit(1);
@@ -188,7 +182,7 @@ $litigationRowsWithoutReceipt = [$litigationRows[0]];
 $litigationRowsWithoutReceipt[0]['receipt_no'] = '';
 $litigationRowsWithoutReceipt[0]['source_receipt_no'] = '';
 $litigationRowsWithoutReceipt[0]['out_order_no'] = '';
-$errors = $validateMethod->invoke($caseFund, $litigationRowsWithoutReceipt, 'LITIGATION_FEE');
+$errors = $validateMethod->invoke($caseFund, $litigationRowsWithoutReceipt, 'LITIGATION_FEE', false);
 if (!empty($errors)) {
     fwrite(STDERR, 'LITIGATION_FEE refund import should not require receipt fields for auxiliary accounting' . PHP_EOL);
     exit(1);
@@ -198,15 +192,13 @@ $caseFundRowsWithoutReceipt = [$first];
 $caseFundRowsWithoutReceipt[0]['receipt_no'] = '';
 $caseFundRowsWithoutReceipt[0]['source_receipt_no'] = '';
 $caseFundRowsWithoutReceipt[0]['out_order_no'] = '';
-$errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND');
+$errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND', true);
 if (empty($errors) || strpos(implode("\n", $errors), '至少填写一项用于追溯') === false) {
     fwrite(STDERR, 'CASE_FUND refund import should still require receipt or out-order trace fields' . PHP_EOL);
     exit(1);
 }
 
-$caseFund->receiptTraceRequired = false;
-$errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND');
-$caseFund->receiptTraceRequired = true;
+$errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND', false);
 if (!empty($errors)) {
     fwrite(STDERR, 'CASE_FUND refund import should not require receipt or out-order trace fields when refund subjects do not use receipt_no auxiliary accounting' . PHP_EOL);
     exit(1);
@@ -214,7 +206,7 @@ if (!empty($errors)) {
 
 $wrongLitigationRows = [$first];
 $wrongLitigationRows[0]['out_type'] = '执行、调解款发放';
-$errors = $validateMethod->invoke($caseFund, $wrongLitigationRows, 'LITIGATION_FEE');
+$errors = $validateMethod->invoke($caseFund, $wrongLitigationRows, 'LITIGATION_FEE', false);
 if (empty($errors) || $messageMethod->invoke($caseFund, $errors, 'LITIGATION_FEE') !== '导入的不是诉讼费数据') {
     fwrite(STDERR, 'LITIGATION_FEE wrong out type should use litigation fee specific import error message' . PHP_EOL);
     exit(1);

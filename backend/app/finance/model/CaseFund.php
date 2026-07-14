@@ -13,6 +13,7 @@ use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\importing\CaseFundImportParser;
 use app\finance\service\casefund\importing\CaseFundImportPersistence;
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
+use app\finance\service\casefund\policy\CaseFundReceiptTracePolicy;
 use app\finance\service\casefund\persistence\CaseFundBusinessDeletionService;
 use app\finance\service\casefund\query\CaseFundBusinessQueryRepository;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
@@ -22,6 +23,7 @@ use app\finance\service\casefund\subject\SubjectConfigApplicationService;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
 use app\finance\service\casefund\voucher\CaseFundVoucherRule;
 use app\finance\service\casefund\voucher\CaseFundVoucherPersistenceService;
+use app\finance\service\casefund\voucher\CaseFundVoucherAuxiliaryService;
 use app\finance\service\casefund\voucher\PaymentVoucherGenerationService;
 use app\finance\service\casefund\voucher\RefundVoucherGenerationService;
 use app\finance\service\casefund\voucher\UnknownPaymentVoucherGenerationService;
@@ -37,6 +39,7 @@ class CaseFund extends Common
     protected $bankReconcileMatcher;
     protected $bankingPersistenceService;
     protected $businessPolicy;
+    protected $receiptTracePolicy;
     protected $businessDeletionService;
     protected $businessQueryRepository;
     protected $importIdentity;
@@ -50,6 +53,7 @@ class CaseFund extends Common
     protected $subjectConfigApplicationService;
     protected $voucherRule;
     protected $voucherPersistenceService;
+    protected $voucherAuxiliaryService;
     protected $paymentVoucherGenerationService;
     protected $refundVoucherGenerationService;
     protected $unknownPaymentVoucherGenerationService;
@@ -234,7 +238,8 @@ class CaseFund extends Common
         }
 
         $bizType = $this->currentAccountSetBizType();
-        $receiptNoDuplicateCheckRequired = $this->paymentImportRequiresReceiptNoDuplicateCheck($bizType);
+        $receiptNoDuplicateCheckRequired = $this->receiptTracePolicy()
+            ->paymentImportRequiresReceiptNoDuplicateCheck($bizType);
         $errors = $this->validatePaymentRows($rows, $bizType, $receiptNoDuplicateCheckRequired);
         if (!empty($errors)) {
             return $this->error($this->paymentImportErrorMessage($errors, $bizType), $errors);
@@ -493,7 +498,7 @@ class CaseFund extends Common
         }
 
         $bizType = $this->currentAccountSetBizType();
-        $receiptTraceRequired = $this->refundImportRequiresReceiptTrace($bizType);
+        $receiptTraceRequired = $this->receiptTracePolicy()->refundImportRequiresReceiptTrace($bizType);
         try {
             $rows = $this->parseRefundImportRowsFromXls($binary, $bizType, $receiptTraceRequired);
         } catch (\Exception $e) {
@@ -1208,133 +1213,6 @@ class CaseFund extends Common
         );
     }
 
-    protected function ensureAuxArchives($rows)
-    {
-        $caseNos = [];
-        $receiptNos = [];
-        foreach ($rows as $row) {
-            if (!empty($row['case_no'])) {
-                $caseNos[] = $row['case_no'];
-            }
-            if (!empty($row['receipt_no'])) {
-                $receiptNos[] = $row['receipt_no'];
-            }
-            if (!empty($row['source_receipt_no'])) {
-                $receiptNos[] = $row['source_receipt_no'];
-            }
-        }
-        $this->ensureAuxType('case_no', '案号');
-        $this->ensureAuxType('receipt_no', '收据号');
-        $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
-        $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
-    }
-
-    protected function ensureAuxArchivesForVoucherDetails($detailsData)
-    {
-        $caseNos = [];
-        $receiptNos = [];
-        foreach ($detailsData as $detail) {
-            foreach (($detail['aux_values'] ?? []) as $aux) {
-                $typeCode = trim((string)($aux['aux_type_code'] ?? ''));
-                $value = trim((string)($aux['aux_value'] ?? ''));
-                if ($value === '') {
-                    continue;
-                }
-                if ($typeCode === 'case_no') {
-                    $caseNos[] = $value;
-                } elseif ($typeCode === 'receipt_no') {
-                    $receiptNos[] = $value;
-                }
-            }
-        }
-        if (!empty($caseNos)) {
-            $this->ensureAuxType('case_no', '案号');
-            $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
-        }
-        if (!empty($receiptNos)) {
-            $this->ensureAuxType('receipt_no', '收据号');
-            $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
-        }
-    }
-
-    protected function ensureDistributionAuxArchives($rows)
-    {
-        $caseNos = [];
-        $receiptNos = [];
-        foreach ($rows as $row) {
-            if (!empty($row['in_case_no'])) {
-                $caseNos[] = $row['in_case_no'];
-            }
-            if (!empty($row['out_case_no'])) {
-                $caseNos[] = $row['out_case_no'];
-            }
-            if (!empty($row['receipt_no'])) {
-                $receiptNos[] = $row['receipt_no'];
-            }
-        }
-        $this->ensureAuxType('case_no', '案号');
-        $this->ensureAuxType('receipt_no', '收据号');
-        $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
-        $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
-    }
-
-    protected function ensureAuxType($typeCode, $typeName)
-    {
-        $exists = $this->getdb('fin_aux_type')->where([
-            'account_set_id' => $this->accountSetId,
-            'aux_type_code' => $typeCode,
-            'del_flag' => 0,
-        ])->find();
-        if (!$exists) {
-            $this->getdb('fin_aux_type')->insert([
-                'aux_type_id' => uuid(),
-                'account_set_id' => $this->accountSetId,
-                'aux_type_code' => $typeCode,
-                'aux_type_name' => $typeName,
-                'value_source' => 'MANUAL',
-                'required_flag' => 0,
-                'status' => 1,
-                'del_flag' => 0,
-                'created_by' => $this->userid,
-                'created_time' => $this->now(),
-                'updated_by' => $this->userid,
-                'updated_time' => $this->now(),
-                'version' => 0,
-            ]);
-        }
-    }
-
-    protected function ensureAuxArchivesByType($typeCode, $codes)
-    {
-        foreach ($codes as $code) {
-            if ($code === '') {
-                continue;
-            }
-            $exists = $this->getdb('fin_aux_archive')->where([
-                'account_set_id' => $this->accountSetId,
-                'aux_type_code' => $typeCode,
-                'archive_code' => $code,
-                'del_flag' => 0,
-            ])->find();
-            if (!$exists) {
-                $this->getdb('fin_aux_archive')->insert([
-                    'archive_id' => uuid(),
-                    'account_set_id' => $this->accountSetId,
-                    'aux_type_code' => $typeCode,
-                    'archive_code' => $code,
-                    'archive_name' => $code,
-                    'status' => 1,
-                    'del_flag' => 0,
-                    'created_by' => $this->userid,
-                    'created_time' => $this->now(),
-                    'updated_by' => $this->userid,
-                    'updated_time' => $this->now(),
-                    'version' => 0,
-                ]);
-            }
-        }
-    }
-
     protected function getSubjectAuxConfigs($subjectCode)
     {
         return $this->getdb('fin_subject_aux_config')->where([
@@ -1490,39 +1368,6 @@ class CaseFund extends Common
         return $errors;
     }
 
-    protected function paymentImportRequiresReceiptNoDuplicateCheck($bizType)
-    {
-        $businessItems = $this->allowedSubjectConfigItems($bizType, 'PAYMENT');
-        if (empty($businessItems)) {
-            return true;
-        }
-
-        $configs = $this->subjectConfigResolver()->configsByBusinessItems(
-            $bizType,
-            'PAYMENT',
-            $businessItems
-        );
-
-        $creditSubjectCodes = [];
-        foreach ($businessItems as $businessItem) {
-            $creditSubjectCode = trim((string)($configs[$businessItem]['credit_subject_code'] ?? ''));
-            if ($creditSubjectCode !== '') {
-                $creditSubjectCodes[] = $creditSubjectCode;
-            }
-        }
-        $creditSubjectCodes = array_values(array_unique($creditSubjectCodes));
-        if (empty($creditSubjectCodes)) {
-            return true;
-        }
-
-        $exists = $this->getdb('fin_subject_aux_config')->where([
-            'account_set_id' => $this->accountSetId,
-            'aux_type_code' => 'receipt_no',
-            'del_flag' => 0,
-        ])->where('subject_code', 'in', $creditSubjectCodes)->find();
-        return !empty($exists);
-    }
-
     protected function paymentReceiptNoDuplicateErrors($rows)
     {
         return $this->importPersistence()->paymentReceiptNoDuplicateErrors($rows);
@@ -1581,72 +1426,14 @@ class CaseFund extends Common
     {
         $allowedOutTypes = $this->allowedRefundOutTypes($bizType);
         if ($receiptTraceRequired === null) {
-            $receiptTraceRequired = $this->refundImportRequiresReceiptTrace($bizType, $rows);
+            $receiptTraceRequired = $this->receiptTracePolicy()
+                ->refundImportRequiresReceiptTrace($bizType, $rows);
         }
         return $this->importValidator()->validateRefundRows(
             $rows,
             $bizType,
             $receiptTraceRequired,
             $allowedOutTypes
-        );
-    }
-
-    protected function refundImportRequiresReceiptTrace($bizType, $rows = [])
-    {
-        if ($bizType === 'LITIGATION_FEE') {
-            return false;
-        }
-        if ($bizType !== 'CASE_FUND') {
-            return true;
-        }
-
-        $configs = $this->refundSubjectConfigsForImport($bizType, $rows);
-        if (empty($configs)) {
-            return true;
-        }
-
-        $subjectCodes = [];
-        foreach ($configs as $config) {
-            if (!empty($config['debit_subject_code'])) {
-                $subjectCodes[] = $config['debit_subject_code'];
-            }
-            if (!empty($config['credit_subject_code'])) {
-                $subjectCodes[] = $config['credit_subject_code'];
-            }
-        }
-        $subjectCodes = array_values(array_unique(array_filter($subjectCodes)));
-        if (empty($subjectCodes)) {
-            return true;
-        }
-
-        $exists = $this->getdb('fin_subject_aux_config')->where([
-            'account_set_id' => $this->accountSetId,
-            'aux_type_code' => 'receipt_no',
-            'del_flag' => 0,
-        ])->where('subject_code', 'in', $subjectCodes)->find();
-        return !empty($exists);
-    }
-
-    protected function refundSubjectConfigsForImport($bizType, $rows = [])
-    {
-        $businessItems = [];
-        foreach ($rows as $row) {
-            $outType = trim((string)($row['out_type'] ?? ''));
-            if ($outType !== '') {
-                $businessItems[] = $this->voucherSubjectConfigKey($bizType, 'REFUND', $outType);
-            }
-        }
-        if (empty($businessItems)) {
-            $businessItems = $this->allowedSubjectConfigItems($bizType, 'REFUND');
-        }
-        if (empty($businessItems)) {
-            return [];
-        }
-
-        return $this->subjectConfigResolver()->orderedConfigsByBusinessItems(
-            $bizType,
-            'REFUND',
-            $businessItems
         );
     }
 
@@ -2377,6 +2164,28 @@ class CaseFund extends Common
         return $this->voucherPersistenceService;
     }
 
+    protected function voucherAuxiliaryService()
+    {
+        if ($this->voucherAuxiliaryService === null) {
+            $this->voucherAuxiliaryService = new CaseFundVoucherAuxiliaryService([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'prepare_create' => function ($row) {
+                    $this->fillCreate($row);
+                    return $row;
+                },
+            ]);
+        }
+        return $this->voucherAuxiliaryService;
+    }
+
     protected function paymentVoucherGenerationService()
     {
         if ($this->paymentVoucherGenerationService === null) {
@@ -2412,7 +2221,7 @@ class CaseFund extends Common
                         return $this->generateNextVoucherNo($period);
                     },
                     'ensure_aux_archives' => function ($detailsData) {
-                        $this->ensureAuxArchivesForVoucherDetails($detailsData);
+                        $this->voucherAuxiliaryService()->ensureArchivesForVoucherDetails($detailsData);
                     },
                     'new_id' => function () {
                         return uuid();
@@ -2469,7 +2278,7 @@ class CaseFund extends Common
                         return $this->generateNextVoucherNo($period);
                     },
                     'ensure_aux_archives' => function ($detailsData) {
-                        $this->ensureAuxArchivesForVoucherDetails($detailsData);
+                        $this->voucherAuxiliaryService()->ensureArchivesForVoucherDetails($detailsData);
                     },
                     'new_id' => function () {
                         return uuid();
@@ -2585,7 +2394,7 @@ class CaseFund extends Common
                         return $this->buildDistributionVoucherHeaderSummary($row);
                     },
                     'ensure_aux_archives' => function ($detailsData) {
-                        $this->ensureAuxArchivesForVoucherDetails($detailsData);
+                        $this->voucherAuxiliaryService()->ensureArchivesForVoucherDetails($detailsData);
                     },
                     'fiscal_year' => function ($period) {
                         return $this->fiscalYear($period);
@@ -2616,6 +2425,25 @@ class CaseFund extends Common
             $this->businessPolicy = new CaseFundBusinessPolicy();
         }
         return $this->businessPolicy;
+    }
+
+    protected function receiptTracePolicy()
+    {
+        if ($this->receiptTracePolicy === null) {
+            $this->receiptTracePolicy = new CaseFundReceiptTracePolicy(
+                $this->businessPolicy(),
+                $this->subjectConfigResolver(),
+                [
+                    'get_db' => function ($table) {
+                        return $this->getdb($table);
+                    },
+                    'account_set_id' => function () {
+                        return $this->accountSetId;
+                    },
+                ]
+            );
+        }
+        return $this->receiptTracePolicy;
     }
 
     protected function businessDeletionService()

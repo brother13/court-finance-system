@@ -5,7 +5,8 @@ $source = file_get_contents($modelPath);
 $voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
 $refundServiceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');
 $persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
-$implementationSource = $source . "\n" . $voucherRuleSource . "\n" . $refundServiceSource . "\n" . $persistenceSource;
+$auxiliarySource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherAuxiliaryService.php');
+$implementationSource = $source . "\n" . $voucherRuleSource . "\n" . $refundServiceSource . "\n" . $persistenceSource . "\n" . $auxiliarySource;
 $ddl = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');
 $patch = file_get_contents(__DIR__ . '/../database/finance_standard_patch.sql');
 
@@ -23,7 +24,7 @@ $checks = [
     ["requirePermission('case_fund:generate_voucher')", 'Refund voucher generation should check generate_voucher permission'],
     ["'UNGENERATED'", 'Refund voucher generation should reject generated rows'],
     ["'GENERATED'", 'Refund voucher generation should mark generated rows'],
-    ['ensureAuxArchives', 'Refund voucher generation should ensure case and receipt aux archives'],
+    ['ensureArchivesForVoucherDetails', 'Refund voucher generation should ensure case and receipt aux archives'],
     ['fin_voucher', 'Refund voucher generation should write voucher table'],
     ['fin_voucher_detail', 'Refund voucher generation should write voucher detail table'],
     ['fin_voucher_aux_value', 'Refund voucher generation should write voucher aux values'],

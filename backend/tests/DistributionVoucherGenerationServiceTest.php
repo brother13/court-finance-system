@@ -160,7 +160,10 @@ $hooks = [
     'assert_rows_can_generate' => function ($rows, $label) { return null; },
     'validate_period' => function ($row, $period) use (&$events) { $events[] = 'period:' . $row['distribution_id']; return null; },
     'build_header_summary' => function ($row) { return '分配 ' . $row['distribution_no'] . ' 合计'; },
-    'ensure_aux_archives' => function ($details) use (&$ensuredDetailCount) { $ensuredDetailCount = count($details); },
+    'ensure_aux_archives' => function ($details) use (&$ensuredDetailCount, &$events) {
+        $events[] = 'aux_archives';
+        $ensuredDetailCount = count($details);
+    },
     'fiscal_year' => function ($period) { return substr($period, 0, 4); },
     'generate_next_voucher_no' => function ($period) use (&$events) { $events[] = 'voucher_no'; return 8; },
     'cents_to_decimal' => function ($cents) { return number_format($cents / 100, 2, '.', ''); },
@@ -194,7 +197,7 @@ $result = $service->generatePrepared($prepared);
 distributionServiceAssertSame([true], $dbs['fin_case_fund_distribution']->lockValues, 'Distribution source rows should be locked inside generation');
 distributionServiceAssertSame(['receive_date asc, distribution_no asc, source_row_no asc'], $dbs['fin_case_fund_distribution']->orders, 'Distribution source order should remain stable');
 distributionServiceAssertSame('出案一', $rule->groupRows[0]['case_no'], 'Transfer-out case number should feed common regeneration errors');
-distributionServiceAssertSame(['period:d1', 'period:d2', 'voucher_no'], $events, 'Period validation should finish before voucher number allocation');
+distributionServiceAssertSame(['period:d1', 'period:d2', 'voucher_no', 'aux_archives'], $events, 'Period validation and voucher number allocation should finish before complete auxiliary preparation');
 distributionServiceAssertSame(1, $result['generated_count'], 'One distribution number should create one voucher');
 distributionServiceAssertSame(2, $result['distribution_count'], 'Result should report locked source row count');
 distributionServiceAssertSame(4, $ensuredDetailCount, 'Aux archives should be prepared from final voucher details');

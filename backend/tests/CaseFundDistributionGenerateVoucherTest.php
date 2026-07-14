@@ -5,7 +5,8 @@ $source = file_get_contents($modelPath);
 $serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/DistributionVoucherGenerationService.php');
 $voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
 $persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
-$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource . "\n" . $persistenceSource;
+$auxiliarySource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherAuxiliaryService.php');
+$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource . "\n" . $persistenceSource . "\n" . $auxiliarySource;
 
 $checks = [
     ["case 'distributionGenerateVoucher'", 'CaseFund should route distributionGenerateVoucher'],
@@ -15,7 +16,7 @@ $checks = [
     ['groupDistributionRowsForVoucher', 'Distribution generation should group rows by distribution number'],
     ['buildDistributionVoucherDetailsData', 'Distribution generation should use distribution detail builder'],
     ['validateDistributionVoucherPeriod', 'Distribution generation should validate source period and period status'],
-    ['ensureDistributionAuxArchives', 'Distribution generation should create case/receipt auxiliary archives'],
+    ['ensureArchivesForVoucherDetails', 'Distribution generation should create case/receipt auxiliary archives'],
     ['CASE_FUND_DISTRIBUTION', 'Distribution generation should write audit log'],
     ["'DISTRIBUTION'", 'Distribution generation should use DISTRIBUTION business type'],
     ["'BUSINESS'", 'Distribution vouchers should use BUSINESS source type'],

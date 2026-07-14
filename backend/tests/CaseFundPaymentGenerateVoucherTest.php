@@ -4,14 +4,15 @@ $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
 $serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php');
 $persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
-$implementationSource = $source . "\n" . $serviceSource . "\n" . $persistenceSource;
+$auxiliarySource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherAuxiliaryService.php');
+$implementationSource = $source . "\n" . $serviceSource . "\n" . $persistenceSource . "\n" . $auxiliarySource;
 
 $checks = [
     ["case 'paymentGenerateVoucher'", 'CaseFund should route paymentGenerateVoucher'],
     ['public function paymentGenerateVoucher', 'CaseFund should expose paymentGenerateVoucher method'],
-    ['ensureAuxArchives', 'CaseFund should ensure aux archives before voucher generation'],
-    ['ensureAuxType', 'CaseFund should ensure aux type exists'],
-    ['ensureAuxArchivesByType', 'CaseFund should ensure aux archives by type'],
+    ['ensureArchivesForVoucherDetails', 'CaseFund should ensure aux archives before voucher generation'],
+    ['ensureAuxTypeAndLock', 'CaseFund should ensure and lock aux type'],
+    ['ensureArchivesByType', 'CaseFund should ensure aux archives by type'],
     ['generateNextVoucherNo', 'CaseFund should generate next voucher number'],
     ['getSubjectAuxConfigs', 'CaseFund should get subject aux configs'],
     ['needVerification', 'CaseFund should check verification need'],

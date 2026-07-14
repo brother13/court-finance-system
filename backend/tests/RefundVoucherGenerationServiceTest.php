@@ -130,6 +130,8 @@ class RefundVoucherRuntimeState
     public $guardSnapshots = [];
     public $voucherNoCalls = 0;
     public $idSequence = 0;
+    public $lockEvents = [];
+    public $auxiliaryDetailCounts = [];
 }
 
 class RefundFailingPersistenceStub
@@ -191,10 +193,14 @@ function refundRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updat
         },
         'fiscal_year' => function ($period) { return substr($period, 0, 4); },
         'generate_next_voucher_no' => function ($period) use ($state) {
+            $state->lockEvents[] = 'voucher_no:' . $period;
             $state->voucherNoCalls++;
             return $state->voucherNoCalls;
         },
-        'ensure_aux_archives' => function ($details) {},
+        'ensure_aux_archives' => function ($details) use ($state) {
+            $state->lockEvents[] = 'aux_archives';
+            $state->auxiliaryDetailCounts[] = count($details);
+        },
         'cents_to_decimal' => function ($cents) { return number_format($cents / 100, 2, '.', ''); },
         'new_id' => function () use ($state) { return 'refund-id-' . (++$state->idSequence); },
         'prepare_create' => function ($row) { return $row; },
@@ -308,6 +314,12 @@ $lockedRows[1]['voucher_id'] = 'deleted-voucher';
 [$runtimeService, $runtimeDbs, $runtimeRule, $runtimeState] = refundRuntimeFixture($lockedRows);
 $runtimePrepared = $runtimeService->prepareGeneration($initialRows, 'QUERY');
 $runtimeResult = $runtimeService->generatePrepared($runtimePrepared);
+refundServiceAssertSame(
+    ['voucher_no:2026-07', 'aux_archives'],
+    $runtimeState->lockEvents,
+    'Refund voucher numbers must lock before complete auxiliary preparation'
+);
+refundServiceAssertSame([2], $runtimeState->auxiliaryDetailCounts, 'All refund voucher groups should prepare auxiliary archives in one call');
 refundServiceAssertSame([true], $runtimeDbs['fin_case_fund_refund']->lockValues, 'Refund source rows should be locked inside generation');
 refundServiceAssertSame(
     ['refund_date asc, source_row_no asc'],
