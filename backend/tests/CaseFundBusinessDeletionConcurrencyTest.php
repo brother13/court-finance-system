@@ -10,6 +10,9 @@ class CaseFundDeletionConcurrencyStore
     public $deleteResult = 1;
     public $updateResult = 1;
     public $queries = [];
+    public $activeVoucher = false;
+    public $activeHookCalls = 0;
+    public $activeLockObserved = false;
 
     public function db($table)
     {
@@ -109,7 +112,12 @@ function deletionConcurrencyService($store)
             $row['updated_by'] = 'user-1';
             return $row;
         },
-        'has_active_generated_voucher' => function () { return false; },
+        'has_active_generated_voucher' => function () use ($store) {
+            $store->activeHookCalls++;
+            $lastQuery = end($store->queries);
+            $store->activeLockObserved = !empty($lastQuery['locked']);
+            return $store->activeVoucher;
+        },
         'assert_rows_can_delete' => function ($rows, $label) use (&$service) {
             return $service->assertRowsCanDeleteBusinessData($rows, $label);
         },
@@ -140,6 +148,25 @@ $prepared = $service->prepareBusinessDeletion(
 if (!empty($prepared['error']) || empty($store->queries[0]['locked'])) {
     deletionConcurrencyFail('Deletion validation should lock selected source rows before checking status');
 }
+
+$store->rows['business'][0]['voucher_status'] = 'GENERATED';
+$store->activeVoucher = true;
+$store->queries = [];
+$blocked = $service->prepareBusinessDeletion(
+    'business',
+    'payment_id',
+    ['P-1'],
+    'PAYMENT',
+    '缴费记录'
+);
+if (strpos((string)($blocked['error'] ?? ''), '原凭证仍有效') === false
+    || $store->activeHookCalls !== 1
+    || !$store->activeLockObserved
+) {
+    deletionConcurrencyFail('Locked latest source state should block deletion when the generated voucher remains active');
+}
+$store->rows['business'][0]['voucher_status'] = 'UNGENERATED';
+$store->activeVoucher = false;
 
 $affectedRows = $service->executeBusinessDeletion('business', 'payment_id', ['P-1'], true);
 if ($affectedRows !== 1) {

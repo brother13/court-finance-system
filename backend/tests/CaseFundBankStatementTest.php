@@ -5,6 +5,7 @@ $bankingRulePath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundB
 $bankImportPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankStatementImportService.php';
 $bankRepositoryPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php';
 $bankMatcherPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileMatcher.php';
+$bankPersistencePath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankingPersistenceService.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $rbacPath = __DIR__ . '/../database/migration_rbac.sql';
@@ -14,7 +15,8 @@ $bankingRuleSource = file_get_contents($bankingRulePath);
 $bankImportSource = file_get_contents($bankImportPath);
 $bankRepositorySource = file_get_contents($bankRepositoryPath);
 $bankMatcherSource = file_get_contents($bankMatcherPath);
-$bankImplementationSource = $source . "\n" . $bankRepositorySource . "\n" . $bankMatcherSource;
+$bankPersistenceSource = file_get_contents($bankPersistencePath);
+$bankImplementationSource = $source . "\n" . $bankRepositorySource . "\n" . $bankMatcherSource . "\n" . $bankPersistenceSource;
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $rbac = file_get_contents($rbacPath);
@@ -39,7 +41,7 @@ $checks = [
     [$bankImplementationSource, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
     [$bankImplementationSource, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
     [$source, "const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']", 'Bank reconcile rerun should clean legacy and current automatic match rules'],
-    [$bankRepositorySource, "->where('match_rule', 'in', \$this->autoMatchRules)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
+    [$bankPersistenceSource, "->where('match_rule', 'in', \$this->autoMatchRules)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
     [$bankImplementationSource, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
     [$bankImplementationSource, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
     [$source, 'supportedBankStatementBanks', 'CaseFund should validate supported banks'],

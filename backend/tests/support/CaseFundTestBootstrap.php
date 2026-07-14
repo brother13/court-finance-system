@@ -7,6 +7,7 @@ require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankS
 require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankStatementImportService.php';
 require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php';
 require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankReconcileMatcher.php';
+require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankingPersistenceService.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportIdentity.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportNormalizer.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportParser.php';

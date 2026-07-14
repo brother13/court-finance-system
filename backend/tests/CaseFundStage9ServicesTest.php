@@ -261,7 +261,6 @@ $repository = new CaseFundBankReconcileRepository([
     'current_year' => function () {
         return 2026;
     },
-    'prepare_update' => $prepareUpdate,
 ], [
     'payment' => 'payment',
     'refund' => 'refund',
@@ -272,7 +271,7 @@ $repository = new CaseFundBankReconcileRepository([
     'refund' => ['refund_id'],
     'statement' => ['statement_id'],
     'reconcile' => ['reconcile_id'],
-], ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']);
+]);
 
 stage9AssertSame('payment-1', $repository->paymentCandidatesByBankStatement([
     'transaction_date' => '2026-07-10',
@@ -285,10 +284,6 @@ stage9AssertSame('refund-1', $repository->refundCandidatesByBankStatement([
 ])[0]['refund_id'], 'Refund candidate query should prefer exact payee account matching');
 stage9AssertSame(true, $repository->bankStatementExistsByPayment($store->rows['payment'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Payment bank existence query should preserve bank and date scope');
 stage9AssertSame(true, $repository->bankStatementExistsByRefundPayee($store->rows['refund'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Refund bank existence query should preserve payee, bank and date scope');
-$repository->softDeleteBankReconcileScope('2026-07-01', '2026-07-31');
-$reconcileUpdate = $store->updates[0];
-stage9AssertSame(1, $reconcileUpdate['row']['del_flag'], 'Reconcile rerun cleanup should soft delete old automatic rows');
-stage9AssertSame('stage9-user', $reconcileUpdate['row']['updated_by'], 'Reconcile cleanup should use update metadata hook');
 $summary = $repository->bankReconcileSummary([
     'account_set_id' => 'account-set-stage9',
     'fiscal_year' => 2026,

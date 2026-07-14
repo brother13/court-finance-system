@@ -85,7 +85,7 @@ class CaseFundBusinessDeletionService
                 ->where($idField, 'in', $ids)
                 ->update($update);
         }
-        if ($affectedRows !== count($ids)) {
+        if ((int)$affectedRows !== count($ids)) {
             throw new \RuntimeException('案款业务记录状态已变化，请刷新后重试');
         }
         return $affectedRows;

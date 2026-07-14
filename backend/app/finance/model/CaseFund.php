@@ -7,6 +7,7 @@ use app\finance\service\casefund\banking\CaseFundBankStatementDeletionService;
 use app\finance\service\casefund\banking\CaseFundBankStatementImportService;
 use app\finance\service\casefund\banking\CaseFundBankReconcileRepository;
 use app\finance\service\casefund\banking\CaseFundBankReconcileMatcher;
+use app\finance\service\casefund\banking\CaseFundBankingPersistenceService;
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
 use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\importing\CaseFundImportParser;
@@ -34,6 +35,7 @@ class CaseFund extends Common
     protected $bankStatementImportService;
     protected $bankReconcileRepository;
     protected $bankReconcileMatcher;
+    protected $bankingPersistenceService;
     protected $businessPolicy;
     protected $businessDeletionService;
     protected $businessQueryRepository;
@@ -581,10 +583,7 @@ class CaseFund extends Common
         $skipped = $prepared['skipped'];
         Db::startTrans();
         try {
-            foreach ($prepared['insert_rows'] as $insert) {
-                $this->fillCreate($insert);
-                $this->getdb(self::TABLE_BANK_STATEMENT)->insert($insert);
-            }
+            $this->bankingPersistenceService()->insertStatements($prepared['insert_rows']);
             $this->logAudit('CASE_FUND_BANK_STATEMENT', 'IMPORT', 'IMPORT', null, [
                 'bank_code' => $bankCode,
                 'bank_name' => $banks[$bankCode],
@@ -705,20 +704,15 @@ class CaseFund extends Common
             return $this->error('请选择要删除的银行对账单流水');
         }
 
-        $prepared = $this->bankStatementDeletionService()->prepare($ids);
-        if (!empty($prepared['error'])) {
-            return $this->error($prepared['error']);
-        }
-        $rows = $prepared['rows'];
-
-        $update = ['del_flag' => 1];
-        $this->fillUpdate($update);
         Db::startTrans();
         try {
-            $this->getdb(self::TABLE_BANK_STATEMENT)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('statement_id', 'in', $ids)->update($update);
+            $prepared = $this->bankStatementDeletionService()->prepare($ids);
+            if (!empty($prepared['error'])) {
+                Db::rollback();
+                return $this->error($prepared['error']);
+            }
+            $rows = $prepared['rows'];
+            $this->bankingPersistenceService()->deleteStatements($ids);
             $this->logAudit('CASE_FUND_BANK_STATEMENT', 'DELETE', 'DELETE', $rows, [
                 'statement_ids' => $ids,
                 'deleted_count' => count($rows),
@@ -738,55 +732,48 @@ class CaseFund extends Common
         if ($auth) {
             return $auth;
         }
-        $bankCode = trim((string)($data['bank_code'] ?? ''));
+        $requestedBankCode = trim((string)($data['bank_code'] ?? ''));
         $dateStart = trim((string)($data['date_start'] ?? ''));
         $dateEnd = trim((string)($data['date_end'] ?? ''));
-        $statements = $this->bankReconcileRepository()->bankStatementsInScope(
-            $bankCode,
-            $dateStart,
-            $dateEnd
-        );
-        $matchResult = $this->bankReconcileMatcher()->match(
-            $statements,
-            $bankCode,
-            $dateStart,
-            $dateEnd
-        );
-        $statementIds = $matchResult['statement_ids'];
-        $resultRows = $matchResult['result_rows'];
-        $statementStatuses = $matchResult['statement_statuses'];
-
         $counts = $this->emptyBankReconcileCounts();
         Db::startTrans();
         try {
-            $this->softDeleteBankReconcileScope($dateStart, $dateEnd);
-            if (!empty($statementIds)) {
-                $this->getdb(self::TABLE_BANK_STATEMENT)
-                    ->where(['account_set_id' => $this->accountSetId])
-                    ->where('statement_id', 'in', $statementIds)
-                    ->update([
-                        'reconcile_status' => 'UNMATCHED',
-                        'updated_by' => $this->userid,
-                        'updated_time' => $this->now(),
-                    ]);
+            $this->bankingPersistenceService()->lockReconcileScope();
+            // 对账结果表当前没有银行编码，必须按账套+日期全范围重算，避免单银行重跑
+            // 清除其他银行结果后却未同步其流水状态。请求银行仅用于审计追溯。
+            $statements = $this->bankReconcileRepository()->bankStatementsInScope(
+                '',
+                $dateStart,
+                $dateEnd,
+                true
+            );
+            $currentStatementStatuses = [];
+            foreach ($statements as $statement) {
+                $currentStatementStatuses[$statement['statement_id']] = $statement['reconcile_status'] ?? 'UNMATCHED';
             }
-
+            $matchResult = $this->bankReconcileMatcher()->match(
+                $statements,
+                '',
+                $dateStart,
+                $dateEnd
+            );
+            $statementIds = $matchResult['statement_ids'];
+            $resultRows = $matchResult['result_rows'];
+            $statementStatuses = $matchResult['statement_statuses'];
             foreach ($resultRows as $row) {
-                $this->fillCreate($row);
-                $this->getdb(self::TABLE_BANK_RECONCILE)->insert($row);
                 $counts[$row['match_status']] = ($counts[$row['match_status']] ?? 0) + 1;
             }
-            foreach ($statementStatuses as $statementId => $status) {
-                $this->getdb(self::TABLE_BANK_STATEMENT)
-                    ->where(['account_set_id' => $this->accountSetId, 'statement_id' => $statementId])
-                    ->update([
-                        'reconcile_status' => $status,
-                        'updated_by' => $this->userid,
-                        'updated_time' => $this->now(),
-                    ]);
-            }
+            $this->bankingPersistenceService()->persistReconcileResult(
+                $dateStart,
+                $dateEnd,
+                $statementIds,
+                $resultRows,
+                $statementStatuses,
+                $currentStatementStatuses
+            );
             $this->logAudit('CASE_FUND_BANK_RECONCILE', 'RUN', 'RECONCILE', null, [
-                'bank_code' => $bankCode,
+                'bank_code' => '',
+                'requested_bank_code' => $requestedBankCode,
                 'date_start' => $dateStart,
                 'date_end' => $dateEnd,
                 'counts' => $counts,
@@ -1786,22 +1773,22 @@ class CaseFund extends Common
 
     protected function paymentCandidatesByBankStatement($statement)
     {
-        return $this->bankReconcileRepository()->paymentCandidatesByBankStatement($statement);
+        return $this->bankReconcileRepository()->paymentCandidatesByBankStatement($statement, true);
     }
 
     protected function refundCandidatesByBankStatement($statement)
     {
-        return $this->bankReconcileRepository()->refundCandidatesByBankStatement($statement);
+        return $this->bankReconcileRepository()->refundCandidatesByBankStatement($statement, true);
     }
 
     protected function paymentCandidatesInScope($dateStart, $dateEnd)
     {
-        return $this->bankReconcileRepository()->paymentCandidatesInScope($dateStart, $dateEnd);
+        return $this->bankReconcileRepository()->paymentCandidatesInScope($dateStart, $dateEnd, true);
     }
 
     protected function refundCandidatesInScope($dateStart, $dateEnd)
     {
-        return $this->bankReconcileRepository()->refundCandidatesInScope($dateStart, $dateEnd);
+        return $this->bankReconcileRepository()->refundCandidatesInScope($dateStart, $dateEnd, true);
     }
 
     protected function bankStatementExistsByPayment($payment, $bankCode = '', $dateStart = '', $dateEnd = '')
@@ -1847,11 +1834,6 @@ class CaseFund extends Common
     protected function bankReconcileBizSummary($bizType, $biz)
     {
         return $this->bankingRule()->bankReconcileBizSummary($bizType, $biz);
-    }
-
-    protected function softDeleteBankReconcileScope($dateStart, $dateEnd)
-    {
-        return $this->bankReconcileRepository()->softDeleteBankReconcileScope($dateStart, $dateEnd);
     }
 
     protected function emptyBankReconcileCounts()
@@ -2163,10 +2145,6 @@ class CaseFund extends Common
                 'current_year' => function () {
                     return $this->currentYear();
                 },
-                'prepare_update' => function ($row) {
-                    $this->fillUpdate($row);
-                    return $row;
-                },
             ], [
                 'payment' => self::TABLE_PAYMENT,
                 'refund' => self::TABLE_REFUND,
@@ -2177,9 +2155,39 @@ class CaseFund extends Common
                 'refund' => self::REFUND_FIELD,
                 'statement' => self::BANK_STATEMENT_FIELD,
                 'reconcile' => self::BANK_RECONCILE_FIELD,
-            ], self::BANK_RECONCILE_AUTO_MATCH_RULES);
+            ]);
         }
         return $this->bankReconcileRepository;
+    }
+
+    protected function bankingPersistenceService()
+    {
+        if ($this->bankingPersistenceService === null) {
+            $this->bankingPersistenceService = new CaseFundBankingPersistenceService([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'current_year' => function () {
+                    return $this->currentYear();
+                },
+                'prepare_create' => function ($row) {
+                    $this->fillCreate($row);
+                    return $row;
+                },
+                'prepare_update' => function ($row) {
+                    $this->fillUpdate($row);
+                    return $row;
+                },
+            ], [
+                'account_set' => 'fin_account_set',
+                'statement' => self::TABLE_BANK_STATEMENT,
+                'reconcile' => self::TABLE_BANK_RECONCILE,
+            ], self::BANK_RECONCILE_AUTO_MATCH_RULES);
+        }
+        return $this->bankingPersistenceService;
     }
 
     protected function bankStatementImportService()

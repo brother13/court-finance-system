@@ -10,11 +10,10 @@ class CaseFundBankReconcileRepository
     protected $hooks;
     protected $tables;
     protected $fields;
-    protected $autoMatchRules;
 
-    public function __construct(array $hooks, array $tables, array $fields, array $autoMatchRules)
+    public function __construct(array $hooks, array $tables, array $fields)
     {
-        foreach (['get_db', 'account_set_id', 'current_year', 'prepare_update'] as $name) {
+        foreach (['get_db', 'account_set_id', 'current_year'] as $name) {
             if (!isset($hooks[$name]) || !is_callable($hooks[$name])) {
                 throw new \InvalidArgumentException('案款银行对账仓储缺少回调：' . $name);
             }
@@ -30,21 +29,22 @@ class CaseFundBankReconcileRepository
         $this->hooks = $hooks;
         $this->tables = $tables;
         $this->fields = $fields;
-        $this->autoMatchRules = $autoMatchRules;
     }
 
-    public function paymentCandidatesByBankStatement($statement)
+    public function paymentCandidatesByBankStatement($statement, $forUpdate = false)
     {
         $bankSerialNo = trim((string)($statement['bank_serial_no'] ?? ''));
         if ($bankSerialNo === '' || empty($statement['transaction_date'])) {
             return [];
         }
-        return $this->db($this->tables['payment'])
+        $query = $this->db($this->tables['payment'])
             ->where($this->activeYearWhere())
             ->where('payment_date', $statement['transaction_date'])
-            ->where('bank_serial_no', $bankSerialNo)
-            ->field($this->fields['payment'])
-            ->select();
+            ->where('bank_serial_no', $bankSerialNo);
+        if ($forUpdate) {
+            $query->lock(true);
+        }
+        return $query->field($this->fields['payment'])->select();
     }
 
     public function bankStatementList($data, $page, $pageSize)
@@ -112,6 +112,7 @@ class CaseFundBankReconcileRepository
             ->where($where)
             ->where('statement_id', 'in', $ids)
             ->field($this->fields['statement'])
+            ->lock(true)
             ->select();
     }
 
@@ -119,20 +120,24 @@ class CaseFundBankReconcileRepository
     {
         return (int)$this->db($this->tables['reconcile'])->where([
             'account_set_id' => $this->accountSetId(),
+            'fiscal_year' => $this->currentYear(),
             'del_flag' => 0,
         ])->where('statement_id', 'in', $ids)->count();
     }
 
-    public function bankStatementsInScope($bankCode, $dateStart, $dateEnd)
+    public function bankStatementsInScope($bankCode, $dateStart, $dateEnd, $forUpdate = false)
     {
         $query = $this->db($this->tables['statement'])->where($this->activeYearWhere());
         if ($bankCode !== '') {
             $query->where('bank_code', $bankCode);
         }
         $this->applyDateScope($query, 'transaction_date', $dateStart, $dateEnd);
-        return $query->field($this->fields['statement'])
-            ->order('transaction_time asc, source_row_no asc')
-            ->select();
+        $query->field($this->fields['statement'])
+            ->order('transaction_time asc, source_row_no asc');
+        if ($forUpdate) {
+            $query->lock(true);
+        }
+        return $query->select();
     }
 
     public function bankReconcileList($data, $page, $pageSize, $emptyCounts)
@@ -166,7 +171,7 @@ class CaseFundBankReconcileRepository
         ];
     }
 
-    public function refundCandidatesByBankStatement($statement)
+    public function refundCandidatesByBankStatement($statement, $forUpdate = false)
     {
         if (empty($statement['transaction_date'])) {
             return [];
@@ -183,22 +188,31 @@ class CaseFundBankReconcileRepository
         } else {
             return [];
         }
+        if ($forUpdate) {
+            $query->lock(true);
+        }
         return $query->field($this->fields['refund'])->select();
     }
 
-    public function paymentCandidatesInScope($dateStart, $dateEnd)
+    public function paymentCandidatesInScope($dateStart, $dateEnd, $forUpdate = false)
     {
         $query = $this->db($this->tables['payment'])
             ->where($this->activeYearWhere())
             ->where('bank_serial_no', 'neq', '');
         $this->applyDateScope($query, 'payment_date', $dateStart, $dateEnd);
+        if ($forUpdate) {
+            $query->lock(true);
+        }
         return $query->field($this->fields['payment'])->select();
     }
 
-    public function refundCandidatesInScope($dateStart, $dateEnd)
+    public function refundCandidatesInScope($dateStart, $dateEnd, $forUpdate = false)
     {
         $query = $this->db($this->tables['refund'])->where($this->activeYearWhere());
         $this->applyDateScope($query, 'refund_date', $dateStart, $dateEnd);
+        if ($forUpdate) {
+            $query->lock(true);
+        }
         return $query->field($this->fields['refund'])->select();
     }
 
@@ -249,16 +263,6 @@ class CaseFundBankReconcileRepository
             $query->where('counterparty_account_name', 'like', '%' . $accountName . '%');
         }
         return $query->count() > 0;
-    }
-
-    public function softDeleteBankReconcileScope($dateStart, $dateEnd)
-    {
-        $query = $this->db($this->tables['reconcile'])
-            ->where($this->activeYearWhere())
-            ->where('match_rule', 'in', $this->autoMatchRules);
-        $this->applyDateScope($query, 'reconcile_date', $dateStart, $dateEnd);
-        $update = $this->callHook('prepare_update', [['del_flag' => 1]]);
-        $query->update($update);
     }
 
     public function bankReconcileSummary($where, $emptyCounts)

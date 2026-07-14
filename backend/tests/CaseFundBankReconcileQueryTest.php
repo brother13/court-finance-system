@@ -22,6 +22,7 @@ class CaseFundBankQueryStore
             'order' => null,
             'page' => null,
             'group' => null,
+            'lock' => false,
             'operation' => null,
         ];
         return new CaseFundBankQueryFake($this, $index);
@@ -75,6 +76,12 @@ class CaseFundBankQueryFake
         return $this;
     }
 
+    public function lock($lock = true)
+    {
+        $this->store->queries[$this->index]['lock'] = $lock;
+        return $this;
+    }
+
     public function count()
     {
         $this->store->queries[$this->index]['operation'] = 'count';
@@ -124,9 +131,6 @@ $hooks = [
     'current_year' => function () {
         return 2026;
     },
-    'prepare_update' => function ($row) {
-        return $row;
-    },
 ];
 $tables = [
     'payment' => 'payment',
@@ -136,7 +140,7 @@ $tables = [
 ];
 
 try {
-    new CaseFundBankReconcileRepository($hooks, $tables, [], []);
+    new CaseFundBankReconcileRepository($hooks, $tables, []);
     fwrite(STDERR, 'Bank reconcile repository should reject an empty field map' . PHP_EOL);
     exit(1);
 } catch (\InvalidArgumentException $e) {
@@ -167,13 +171,12 @@ $repository = new CaseFundBankReconcileRepository([
     },
     'account_set_id' => $hooks['account_set_id'],
     'current_year' => $hooks['current_year'],
-    'prepare_update' => $hooks['prepare_update'],
 ], $tables, [
     'payment' => ['payment_id'],
     'refund' => ['refund_id'],
     'statement' => ['statement_id'],
     'reconcile' => ['reconcile_id'],
-], ['SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']);
+]);
 
 $statementList = $repository->bankStatementList([
     'period' => '2026-07',
@@ -252,14 +255,16 @@ bankQueryAssertSame([
 ], $store->queries[0]['where'][0][1], 'Bank deletion lookup should preserve account, year, active and unmatched scope');
 bankQueryAssertSame(['statement_id', 'in', ['S-1', 'S-2']], $store->queries[0]['where'][1], 'Bank deletion lookup should limit selected ids');
 bankQueryAssertSame(['statement_id'], $store->queries[0]['field'], 'Bank deletion lookup should preserve the configured statement field list');
+bankQueryAssertSame(true, $store->queries[0]['lock'], 'Bank deletion lookup should lock validated statement rows');
 
 $store->queries = [];
 $reconcileCount = $repository->activeBankReconcileCountForStatements(['S-1', 'S-2']);
 bankQueryAssertSame(4, $reconcileCount, 'Bank deletion guard should return the active reconcile count');
 bankQueryAssertSame([
     'account_set_id' => 'account-bank-query',
+    'fiscal_year' => 2026,
     'del_flag' => 0,
-], $store->queries[0]['where'][0][1], 'Bank deletion reconcile lookup should preserve account and active-row scope');
+], $store->queries[0]['where'][0][1], 'Bank deletion reconcile lookup should preserve account, year and active-row scope');
 bankQueryAssertSame(['statement_id', 'in', ['S-1', 'S-2']], $store->queries[0]['where'][1], 'Bank deletion reconcile lookup should use selected statement ids');
 
 $store->queries = [];
