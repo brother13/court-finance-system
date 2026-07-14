@@ -2,6 +2,8 @@
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
+$voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
+$implementationSource = $source . "\n" . $voucherRuleSource;
 $ddl = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');
 $patch = file_get_contents(__DIR__ . '/../database/finance_standard_patch.sql');
 
@@ -35,7 +37,7 @@ $checks = [
 ];
 
 foreach ($checks as [$needle, $message]) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }

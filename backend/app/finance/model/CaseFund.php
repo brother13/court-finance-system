@@ -10,6 +10,7 @@ use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
+use app\finance\service\casefund\voucher\CaseFundVoucherRule;
 use think\Db;
 
 class CaseFund extends Common
@@ -22,6 +23,7 @@ class CaseFund extends Common
     protected $importValidator;
     protected $legacySpreadsheetReader;
     protected $subjectConfigResolver;
+    protected $voucherRule;
 
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
@@ -1695,146 +1697,28 @@ class CaseFund extends Common
 
     protected function buildPaymentVoucherDetailsData($groupRows, $subjectConfigMap, $paymentMethodConfigMap, $byPaymentMethod, $bizType)
     {
-        $detailsData = [];
-        $totalDebit = 0;
-        $lineNo = 1;
-        $firstRow = $groupRows[0];
-        $paymentMethod = $this->normalizePaymentMethodCode($firstRow['payment_method'] ?? '');
-
-        if ($byPaymentMethod && $paymentMethod === 'POS') {
-            $methodConfig = $paymentMethodConfigMap[$paymentMethod];
-            $posTotalCents = 0;
-            foreach ($groupRows as $row) {
-                $posTotalCents += $this->decimalToCents($row['payment_amount']);
-            }
-            $totalDebit = $posTotalCents;
-            $debitConfigs = $this->getSubjectAuxConfigs($methodConfig['debit_subject_code']);
-            $detailsData[] = [
-                'detail_id' => uuid(),
-                'line_no' => $lineNo++,
-                'subject_code' => $methodConfig['debit_subject_code'],
-                'summary' => $this->buildPaymentMethodVoucherSummary($paymentMethod, $groupRows),
-                'debit_amount' => $this->centsToDecimal($posTotalCents),
-                'credit_amount' => '0.00',
-                'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => '',
-                'aux_values' => [],
-            ];
-
-            foreach ($groupRows as $row) {
-                $businessType = $row['business_type'];
-                $businessTypeConfigKey = $this->voucherSubjectConfigKey($bizType, 'PAYMENT', $businessType);
-                $config = $subjectConfigMap[$businessTypeConfigKey];
-                $summary = $this->buildPaymentVoucherSummary($row);
-                $amountCents = $this->decimalToCents($row['payment_amount']);
-                $amountDecimal = $this->centsToDecimal($amountCents);
-                $rawAuxValues = $this->paymentVoucherAuxValues($row);
-                $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-                $creditAuxValues = $this->filterAuxValuesBySubjectConfigs($rawAuxValues, $creditConfigs);
-                $detailsData[] = [
-                    'detail_id' => uuid(),
-                    'line_no' => $lineNo++,
-                    'subject_code' => $config['credit_subject_code'],
-                    'summary' => $summary,
-                    'debit_amount' => '0.00',
-                    'credit_amount' => $amountDecimal,
-                    'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                    'aux_desc' => $this->buildAuxDesc($creditAuxValues),
-                    'aux_values' => $creditAuxValues,
-                ];
-            }
-
-            return ['total_debit' => $totalDebit, 'details' => $detailsData];
-        }
-
-        foreach ($groupRows as $row) {
-            $businessType = $row['business_type'];
-            $businessTypeConfigKey = $this->voucherSubjectConfigKey($bizType, 'PAYMENT', $businessType);
-            $config = $subjectConfigMap[$businessTypeConfigKey];
-            $summary = $this->buildPaymentVoucherSummary($row);
-            $amountCents = $this->decimalToCents($row['payment_amount']);
-            $amountDecimal = $this->centsToDecimal($amountCents);
-            $totalDebit += $amountCents;
-
-            $debitSubjectCode = $config['debit_subject_code'];
-            if ($byPaymentMethod) {
-                $rowPaymentMethod = $this->normalizePaymentMethodCode($row['payment_method'] ?? '');
-                $debitSubjectCode = $paymentMethodConfigMap[$rowPaymentMethod]['debit_subject_code'];
-            }
-
-            $rawAuxValues = $this->paymentVoucherAuxValues($row);
-            $debitConfigs = $this->getSubjectAuxConfigs($debitSubjectCode);
-            $debitAuxValues = $this->filterAuxValuesBySubjectConfigs($rawAuxValues, $debitConfigs);
-            $detailsData[] = [
-                'detail_id' => uuid(),
-                'line_no' => $lineNo++,
-                'subject_code' => $debitSubjectCode,
-                'summary' => $summary,
-                'debit_amount' => $amountDecimal,
-                'credit_amount' => '0.00',
-                'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($debitAuxValues),
-                'aux_values' => $debitAuxValues,
-            ];
-
-            $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-            $creditAuxValues = $this->filterAuxValuesBySubjectConfigs($rawAuxValues, $creditConfigs);
-            $detailsData[] = [
-                'detail_id' => uuid(),
-                'line_no' => $lineNo++,
-                'subject_code' => $config['credit_subject_code'],
-                'summary' => $summary,
-                'debit_amount' => '0.00',
-                'credit_amount' => $amountDecimal,
-                'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($creditAuxValues),
-                'aux_values' => $creditAuxValues,
-            ];
-        }
-
-        return ['total_debit' => $totalDebit, 'details' => $detailsData];
+        return $this->voucherRule()->buildPaymentVoucherDetailsData(
+            $groupRows,
+            $subjectConfigMap,
+            $paymentMethodConfigMap,
+            $byPaymentMethod,
+            $bizType
+        );
     }
 
     protected function paymentVoucherAuxValues($row)
     {
-        return [
-            ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
-            ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'] ?? '', 'aux_label' => $row['receipt_no'] ?? ''],
-        ];
+        return $this->voucherRule()->paymentVoucherAuxValues($row);
     }
 
     protected function filterAuxValuesBySubjectConfigs($auxValues, $configs)
     {
-        $allowed = [];
-        foreach ($configs as $config) {
-            $typeCode = trim((string)($config['aux_type_code'] ?? ''));
-            if ($typeCode !== '') {
-                $allowed[$typeCode] = true;
-            }
-        }
-        if (empty($allowed)) {
-            return [];
-        }
-
-        $result = [];
-        foreach ($auxValues as $aux) {
-            $typeCode = trim((string)($aux['aux_type_code'] ?? ''));
-            if ($typeCode === '' || empty($allowed[$typeCode])) {
-                continue;
-            }
-            if (!isset($aux['aux_value']) || $aux['aux_value'] === '') {
-                continue;
-            }
-            $result[] = $aux;
-        }
-        return $result;
+        return $this->voucherRule()->filterAuxValuesBySubjectConfigs($auxValues, $configs);
     }
 
     protected function buildPaymentMethodVoucherSummary($paymentMethod, $groupRows)
     {
-        $date = $groupRows[0]['payment_date'] ?? '';
-        $label = $this->normalizePaymentMethodCode($paymentMethod);
-        return trim($date . ' 收 ' . $label . ' 合计');
+        return $this->voucherRule()->buildPaymentMethodVoucherSummary($paymentMethod, $groupRows);
     }
 
     public function unknownPaymentGenerateVoucher($data = [])
@@ -2601,291 +2485,84 @@ class CaseFund extends Common
 
     protected function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
     {
-        $groups = [];
-        if ((int)$byDayFlag === 1) {
-            foreach ($rows as $row) {
-                $date = $row['refund_date'];
-                if (!isset($groups[$date])) {
-                    $groups[$date] = [];
-                }
-                $groups[$date][] = $row;
-            }
-            return $groups;
-        }
-
-        foreach ($rows as $row) {
-            $groups[$row['refund_id']] = [$row];
-        }
-        return $groups;
+        return $this->voucherRule()->groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag);
     }
 
     protected function groupDistributionRowsForVoucher($rows)
     {
-        $groups = [];
-        foreach ($rows as $row) {
-            $distributionNo = trim((string)($row['distribution_no'] ?? ''));
-            if ($distributionNo === '') {
-                $distributionNo = $row['distribution_id'] ?? uuid();
-            }
-            if (!isset($groups[$distributionNo])) {
-                $groups[$distributionNo] = [];
-            }
-            $groups[$distributionNo][] = $row;
-        }
-        return $groups;
+        return $this->voucherRule()->groupDistributionRowsForVoucher($rows);
     }
 
     protected function buildRefundVoucherDetailsData($groupRows, $subjectConfigMap, $aggregateByOutOrderNo, $bizType = '')
     {
-        $detailsData = [];
-        $totalDebit = 0;
-        $lineNo = 1;
-        $outOrderCounts = [];
-        $processedOutOrders = [];
-
-        if ($aggregateByOutOrderNo) {
-            foreach ($groupRows as $row) {
-                $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
-                if ($outOrderNo === '') {
-                    continue;
-                }
-                $outOrderCounts[$outOrderNo] = ($outOrderCounts[$outOrderNo] ?? 0) + 1;
-            }
-        }
-
-        foreach ($groupRows as $row) {
-            $outOrderNo = trim((string)($row['out_order_no'] ?? ''));
-            $shouldAggregate = $aggregateByOutOrderNo
-                && $outOrderNo !== ''
-                && ($outOrderCounts[$outOrderNo] ?? 0) > 1;
-
-            if ($shouldAggregate) {
-                if (isset($processedOutOrders[$outOrderNo])) {
-                    continue;
-                }
-                $processedOutOrders[$outOrderNo] = true;
-                $aggregateAmountCents = 0;
-                $aggregateCreditSubjectCode = '';
-                $aggregateCreditConfigs = [];
-
-                foreach ($groupRows as $bucketRow) {
-                    if (trim((string)($bucketRow['out_order_no'] ?? '')) !== $outOrderNo) {
-                        continue;
-                    }
-                    $outType = $bucketRow['out_type'];
-                    $outTypeConfigKey = $this->voucherSubjectConfigKey($bizType, 'REFUND', $outType);
-                    $config = $subjectConfigMap[$outTypeConfigKey];
-                    $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-                    if ($aggregateCreditSubjectCode === '') {
-                        $aggregateCreditSubjectCode = $config['credit_subject_code'];
-                        $aggregateCreditConfigs = $creditConfigs;
-                    } elseif ($aggregateCreditSubjectCode !== $config['credit_subject_code']) {
-                        throw new \Exception('同一出账单号【' . $bucketRow['out_order_no'] . '】存在不同贷方科目配置，不允许汇总生成一张凭证');
-                    }
-                    if ($this->hasRequiredAuxConfigs($creditConfigs)) {
-                        throw new \Exception('贷方科目【' . $config['credit_subject_code'] . '】存在必填辅助核算，不允许按出账单号合并为一条贷方分录');
-                    }
-
-                    $debitResult = $this->buildRefundDebitDetailData($bucketRow, $config, $lineNo++, true);
-                    $detailsData[] = $debitResult['detail'];
-                    $aggregateAmountCents += $debitResult['amount_cents'];
-                    $totalDebit += $debitResult['amount_cents'];
-                }
-
-                $detailsData[] = $this->buildRefundAggregateCreditDetail(
-                    uuid(),
-                    $lineNo++,
-                    $aggregateCreditSubjectCode,
-                    $this->buildRefundAggregateCreditSummary($outOrderNo),
-                    $aggregateAmountCents,
-                    $aggregateCreditConfigs
-                );
-                continue;
-            }
-
-            $outType = $row['out_type'];
-            $outTypeConfigKey = $this->voucherSubjectConfigKey($bizType, 'REFUND', $outType);
-            $config = $subjectConfigMap[$outTypeConfigKey];
-            $debitResult = $this->buildRefundDebitDetailData($row, $config, $lineNo++, true);
-            $detailsData[] = $debitResult['detail'];
-            $totalDebit += $debitResult['amount_cents'];
-
-            $creditDetailId = uuid();
-            $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-            $creditAuxValues = $this->filterAuxValuesBySubjectConfigs($debitResult['raw_aux_values'], $creditConfigs);
-            $detailsData[] = [
-                'detail_id' => $creditDetailId,
-                'line_no' => $lineNo++,
-                'subject_code' => $config['credit_subject_code'],
-                'summary' => $debitResult['summary'],
-                'debit_amount' => '0.00',
-                'credit_amount' => $debitResult['amount_decimal'],
-                'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($creditAuxValues),
-                'aux_values' => $creditAuxValues,
-            ];
-        }
-
-        return [
-            'details' => $detailsData,
-            'total_cents' => $totalDebit,
-        ];
+        return $this->voucherRule()->buildRefundVoucherDetailsData(
+            $groupRows,
+            $subjectConfigMap,
+            $aggregateByOutOrderNo,
+            $bizType
+        );
     }
 
     protected function buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap)
     {
-        $detailsData = [];
-        $totalDebit = 0;
-        $lineNo = 1;
-
-        foreach ($groupRows as $row) {
-            $invoiceType = $row['invoice_type'];
-            $config = $subjectConfigMap[$invoiceType];
-            $amountCents = $this->decimalToCents($row['distribution_amount']);
-            $amountDecimal = $this->centsToDecimal($amountCents);
-            $totalDebit += $amountCents;
-
-            $outAuxValues = [
-                ['aux_type_code' => 'case_no', 'aux_value' => $row['out_case_no'], 'aux_label' => $row['out_case_no']],
-                ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'], 'aux_label' => $row['receipt_no']],
-            ];
-            $inAuxValues = [
-                ['aux_type_code' => 'case_no', 'aux_value' => $row['in_case_no'], 'aux_label' => $row['in_case_no']],
-                ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'], 'aux_label' => $row['receipt_no']],
-            ];
-
-            $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
-            $outAuxValues = $this->filterAuxValuesBySubjectConfigs($outAuxValues, $debitConfigs);
-            $detailsData[] = [
-                'detail_id' => uuid(),
-                'line_no' => $lineNo++,
-                'subject_code' => $config['debit_subject_code'],
-                'summary' => $this->buildDistributionTransferOutSummary($row),
-                'debit_amount' => $amountDecimal,
-                'credit_amount' => '0.00',
-                'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($outAuxValues),
-                'aux_values' => $outAuxValues,
-            ];
-
-            $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
-            $inAuxValues = $this->filterAuxValuesBySubjectConfigs($inAuxValues, $creditConfigs);
-            $detailsData[] = [
-                'detail_id' => uuid(),
-                'line_no' => $lineNo++,
-                'subject_code' => $config['credit_subject_code'],
-                'summary' => $this->buildDistributionTransferInSummary($row),
-                'debit_amount' => '0.00',
-                'credit_amount' => $amountDecimal,
-                'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($inAuxValues),
-                'aux_values' => $inAuxValues,
-            ];
-        }
-
-        return [
-            'details' => $detailsData,
-            'total_cents' => $totalDebit,
-        ];
+        return $this->voucherRule()->buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap);
     }
 
     protected function buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary = false)
     {
-        $summary = $useNormalSummary
-            ? $this->buildRefundNormalVoucherSummary($row)
-            : trim($row['case_no'] . ' ' . ($row['party_name'] ?: $row['actual_payee_name']) . ' 退付');
-        $amountCents = $this->decimalToCents($row['refund_amount']);
-        $amountDecimal = $this->centsToDecimal($amountCents);
-        $receiptNo = $row['source_receipt_no'] ?: ($row['receipt_no'] ?? '');
-        $auxValues = [
-            ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
-            ['aux_type_code' => 'receipt_no', 'aux_value' => $receiptNo, 'aux_label' => $receiptNo],
-        ];
-        $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
-        $filteredAuxValues = $this->filterAuxValuesBySubjectConfigs($auxValues, $debitConfigs);
-        $auxDesc = $this->buildAuxDesc($filteredAuxValues);
-
-        return [
-            'detail' => [
-                'detail_id' => uuid(),
-                'line_no' => $lineNo,
-                'subject_code' => $config['debit_subject_code'],
-                'summary' => $summary,
-                'debit_amount' => $amountDecimal,
-                'credit_amount' => '0.00',
-                'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $auxDesc,
-                'aux_values' => $filteredAuxValues,
-            ],
-            'summary' => $summary,
-            'amount_cents' => $amountCents,
-            'amount_decimal' => $amountDecimal,
-            'aux_desc' => $auxDesc,
-            'aux_values' => $filteredAuxValues,
-            'raw_aux_values' => $auxValues,
-        ];
+        return $this->voucherRule()->buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary);
     }
 
     protected function buildPaymentVoucherSummary($row)
     {
-        return trim('收 ' . ($row['case_no'] ?? '') . ' ' . ($row['party_name'] ?? ''));
+        return $this->voucherRule()->buildPaymentVoucherSummary($row);
     }
 
     protected function buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
     {
-        if ($aggregateByOutOrderNo) {
-            return $voucherDate . ' 付合计';
-        }
-        return $this->buildRefundNormalVoucherSummary($row);
+        return $this->voucherRule()->buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate);
     }
 
     protected function buildRefundNormalVoucherSummary($row)
     {
-        return trim('付 ' . ($row['case_no'] ?? '') . ' ' . (($row['party_name'] ?? '') ?: ($row['actual_payee_name'] ?? '')));
+        return $this->voucherRule()->buildRefundNormalVoucherSummary($row);
     }
 
     protected function buildRefundAggregateCreditSummary($outOrderNo)
     {
-        return trim('付 出账单号' . $outOrderNo . ' 合计');
+        return $this->voucherRule()->buildRefundAggregateCreditSummary($outOrderNo);
     }
 
     protected function buildDistributionVoucherHeaderSummary($row)
     {
-        return trim('分配 ' . ($row['distribution_no'] ?? '') . ' 合计');
+        return $this->voucherRule()->buildDistributionVoucherHeaderSummary($row);
     }
 
     protected function buildDistributionTransferOutSummary($row)
     {
-        return trim('分配 ' . ($row['distribution_no'] ?? '') . ' 转出 ' . ($row['out_case_no'] ?? '') . ' ' . ($row['out_party_name'] ?? ''));
+        return $this->voucherRule()->buildDistributionTransferOutSummary($row);
     }
 
     protected function buildDistributionTransferInSummary($row)
     {
-        return trim('分配 ' . ($row['distribution_no'] ?? '') . ' 转入 ' . ($row['in_case_no'] ?? '') . ' ' . ($row['in_party_name'] ?? ''));
+        return $this->voucherRule()->buildDistributionTransferInSummary($row);
     }
 
     protected function buildUnknownPaymentVoucherSummary($row)
     {
-        $remark = trim((string)($row['bank_remark'] ?? ''));
-        if ($remark === '') {
-            $remark = trim((string)($row['bank_summary'] ?? ''));
-        }
-        return trim('收 不明款 ' . ($row['payer_name'] ?? '') . ' ' . $remark);
+        return $this->voucherRule()->buildUnknownPaymentVoucherSummary($row);
     }
 
     protected function buildRefundAggregateCreditDetail($detailId, $lineNo, $subjectCode, $summary, $amountCents, $configs)
     {
-        return [
-            'detail_id' => $detailId,
-            'line_no' => $lineNo,
-            'subject_code' => $subjectCode,
-            'summary' => $summary,
-            'debit_amount' => '0.00',
-            'credit_amount' => $this->centsToDecimal($amountCents),
-            'verification_status' => $this->needVerification($configs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-            'aux_desc' => '',
-            'aux_values' => [],
-        ];
+        return $this->voucherRule()->buildRefundAggregateCreditDetail(
+            $detailId,
+            $lineNo,
+            $subjectCode,
+            $summary,
+            $amountCents,
+            $configs
+        );
     }
 
     protected function ensureAuxArchives($rows)
@@ -3090,14 +2767,7 @@ class CaseFund extends Common
 
     protected function buildAuxDesc($auxValues)
     {
-        $parts = [];
-        foreach ($auxValues as $aux) {
-            if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
-                continue;
-            }
-            $parts[] = $aux['aux_type_code'] . ':' . ($aux['aux_label'] ?? $aux['aux_value']);
-        }
-        return implode('; ', $parts);
+        return $this->voucherRule()->buildAuxDesc($auxValues);
     }
 
     protected function generateNextVoucherNo($period)
@@ -4305,6 +3975,76 @@ class CaseFund extends Common
             ]);
         }
         return $this->bankingRule;
+    }
+
+    protected function voucherRule()
+    {
+        if ($this->voucherRule === null) {
+            $this->voucherRule = new CaseFundVoucherRule([
+                'amount_to_cents' => function ($amount) {
+                    return $this->decimalToCents($amount);
+                },
+                'cents_to_decimal' => function ($cents) {
+                    return $this->centsToDecimal($cents);
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'normalize_payment_method' => function ($paymentMethod) {
+                    return $this->normalizePaymentMethodCode($paymentMethod);
+                },
+                'subject_config_key' => function ($bizType, $voucherBizType, $businessItemType) {
+                    return $this->voucherSubjectConfigKey($bizType, $voucherBizType, $businessItemType);
+                },
+                'get_subject_aux_configs' => function ($subjectCode) {
+                    return $this->getSubjectAuxConfigs($subjectCode);
+                },
+                'need_verification' => function ($configs) {
+                    return $this->needVerification($configs);
+                },
+                'has_required_aux_configs' => function ($configs) {
+                    return $this->hasRequiredAuxConfigs($configs);
+                },
+                'filter_aux_values' => function ($auxValues, $configs) {
+                    return $this->filterAuxValuesBySubjectConfigs($auxValues, $configs);
+                },
+                'build_aux_desc' => function ($auxValues) {
+                    return $this->buildAuxDesc($auxValues);
+                },
+                'build_payment_summary' => function ($row) {
+                    return $this->buildPaymentVoucherSummary($row);
+                },
+                'build_payment_method_summary' => function ($paymentMethod, $groupRows) {
+                    return $this->buildPaymentMethodVoucherSummary($paymentMethod, $groupRows);
+                },
+                'build_refund_debit_detail' => function ($row, $config, $lineNo, $useNormalSummary) {
+                    return $this->buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary);
+                },
+                'build_refund_normal_summary' => function ($row) {
+                    return $this->buildRefundNormalVoucherSummary($row);
+                },
+                'build_refund_aggregate_credit_summary' => function ($outOrderNo) {
+                    return $this->buildRefundAggregateCreditSummary($outOrderNo);
+                },
+                'build_refund_aggregate_credit_detail' => function ($detailId, $lineNo, $subjectCode, $summary, $amountCents, $configs) {
+                    return $this->buildRefundAggregateCreditDetail(
+                        $detailId,
+                        $lineNo,
+                        $subjectCode,
+                        $summary,
+                        $amountCents,
+                        $configs
+                    );
+                },
+                'build_distribution_out_summary' => function ($row) {
+                    return $this->buildDistributionTransferOutSummary($row);
+                },
+                'build_distribution_in_summary' => function ($row) {
+                    return $this->buildDistributionTransferInSummary($row);
+                },
+            ]);
+        }
+        return $this->voucherRule;
     }
 
     protected function businessPolicy()
