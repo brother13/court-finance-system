@@ -62,6 +62,16 @@ class CaseFundVoucherRuleProbe extends CaseFund
         return $this->voucherRule()->groupPaymentRowsForVoucher($rows, $byDay, $byMethod);
     }
 
+    public function unknownPaymentGroups($rows, $byDay)
+    {
+        return $this->voucherRule()->groupUnknownPaymentRowsForVoucher($rows, $byDay);
+    }
+
+    public function unknownPaymentDetails($rows, $subjectConfig)
+    {
+        return $this->voucherRule()->buildUnknownPaymentVoucherDetailsData($rows, $subjectConfig);
+    }
+
     public function distributionDetails($rows, $subjectConfigMap)
     {
         return $this->buildDistributionVoucherDetailsData($rows, $subjectConfigMap);
@@ -180,6 +190,43 @@ voucherRuleAssertSame(
     $probe->paymentGroups($paymentGroupRows, 0, 1),
     'Non-daily payment grouping should keep one voucher per payment row'
 );
+
+$unknownRows = [
+    [
+        'unknown_payment_id' => 'u1',
+        'transaction_date' => '2026-07-14',
+        'unknown_amount' => '10.005',
+        'payer_name' => '甲',
+        'bank_remark' => '备注一',
+        'bank_summary' => '',
+    ],
+    [
+        'unknown_payment_id' => 'u2',
+        'transaction_date' => '2026-07-14',
+        'unknown_amount' => '2.00',
+        'payer_name' => '乙',
+        'bank_remark' => '',
+        'bank_summary' => '摘要二',
+    ],
+];
+voucherRuleAssertSame(
+    ['2026-07-14' => $unknownRows],
+    $probe->unknownPaymentGroups($unknownRows, 1),
+    'Daily unknown-payment grouping should keep one group per transaction date'
+);
+voucherRuleAssertSame(
+    ['u1' => [$unknownRows[0]], 'u2' => [$unknownRows[1]]],
+    $probe->unknownPaymentGroups($unknownRows, 0),
+    'Non-daily unknown-payment grouping should keep one voucher per source row'
+);
+$unknownDetails = $probe->unknownPaymentDetails($unknownRows, [
+    'debit_subject_code' => '100201',
+    'credit_subject_code' => '224101',
+]);
+voucherRuleAssertSame(1201, $unknownDetails['total_cents'], 'Unknown-payment total should remain integer cents');
+voucherRuleAssertSame(4, count($unknownDetails['details']), 'Each unknown-payment row should create one debit and one credit detail');
+voucherRuleAssertSame('收 不明款 甲 备注一', $unknownDetails['details'][0]['summary'], 'Unknown-payment summary should prefer bank remark');
+voucherRuleAssertSame('收 不明款 乙 摘要二', $unknownDetails['details'][2]['summary'], 'Unknown-payment summary should fall back to bank summary');
 
 $override = new CaseFundVoucherRuleOverrideProbe();
 $override->setSubjectAuxConfigs(['100201' => [], '224101' => []]);

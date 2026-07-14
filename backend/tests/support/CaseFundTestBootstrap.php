@@ -18,6 +18,7 @@ require_once $backendRoot . '/app/finance/service/casefund/validation/CaseFundIm
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherRule.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/RefundVoucherGenerationService.php';
+require_once $backendRoot . '/app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigResolver.php';
 require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigManager.php';
 require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigApplicationService.php';

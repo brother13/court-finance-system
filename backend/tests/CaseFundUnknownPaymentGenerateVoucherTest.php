@@ -2,6 +2,9 @@
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
+$serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php');
+$voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
+$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource;
 
 $checks = [
     ["case 'unknownPaymentGenerateVoucher'", 'CaseFund should route unknownPaymentGenerateVoucher'],
@@ -25,7 +28,7 @@ $checks = [
     ['CASE_FUND_UNKNOWN_PAYMENT', 'Unknown payment generation should write audit log'],
 ];
 foreach ($checks as [$needle, $message]) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }

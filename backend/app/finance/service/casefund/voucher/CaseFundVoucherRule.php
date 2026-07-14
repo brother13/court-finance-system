@@ -24,6 +24,7 @@ class CaseFundVoucherRule
             'build_aux_desc',
             'build_payment_summary',
             'build_payment_method_summary',
+            'build_unknown_payment_summary',
             'build_refund_debit_detail',
             'build_refund_normal_summary',
             'build_refund_aggregate_credit_summary',
@@ -205,6 +206,60 @@ class CaseFundVoucherRule
             $groups[$row['payment_id'] . '|' . $methodKey] = [$row];
         }
         return $groups;
+    }
+
+    public function groupUnknownPaymentRowsForVoucher($rows, $byDayFlag)
+    {
+        $groups = [];
+        if ((int)$byDayFlag === 1) {
+            foreach ($rows as $row) {
+                $date = $row['transaction_date'];
+                if (!isset($groups[$date])) {
+                    $groups[$date] = [];
+                }
+                $groups[$date][] = $row;
+            }
+            return $groups;
+        }
+
+        foreach ($rows as $row) {
+            $groups[$row['unknown_payment_id']] = [$row];
+        }
+        return $groups;
+    }
+
+    public function buildUnknownPaymentVoucherDetailsData($groupRows, $subjectConfig)
+    {
+        $detailsData = [];
+        $totalCents = 0;
+        $lineNo = 1;
+        foreach ($groupRows as $row) {
+            $summary = $this->callHook('build_unknown_payment_summary', [$row]);
+            $amountCents = $this->callHook('amount_to_cents', [$row['unknown_amount']]);
+            $amountDecimal = $this->callHook('cents_to_decimal', [$amountCents]);
+            $totalCents += $amountCents;
+            $detailsData[] = [
+                'detail_id' => $this->callHook('new_id'),
+                'line_no' => $lineNo++,
+                'subject_code' => $subjectConfig['debit_subject_code'],
+                'summary' => $summary,
+                'debit_amount' => $amountDecimal,
+                'credit_amount' => '0.00',
+                'verification_status' => 'NOT_REQUIRED',
+                'aux_desc' => '',
+            ];
+            $detailsData[] = [
+                'detail_id' => $this->callHook('new_id'),
+                'line_no' => $lineNo++,
+                'subject_code' => $subjectConfig['credit_subject_code'],
+                'summary' => $summary,
+                'debit_amount' => '0.00',
+                'credit_amount' => $amountDecimal,
+                'verification_status' => 'NOT_REQUIRED',
+                'aux_desc' => '',
+            ];
+        }
+        return ['details' => $detailsData, 'total_cents' => $totalCents];
     }
 
     public function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
