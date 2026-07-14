@@ -8,7 +8,7 @@ $patch = file_get_contents(__DIR__ . '/../database/finance_standard_patch.sql');
 $checks = [
     ["case 'refundGenerateVoucher'", 'CaseFund should route refundGenerateVoucher'],
     ['public function refundGenerateVoucher', 'CaseFund should expose refundGenerateVoucher method'],
-    ["'voucher_biz_type' => 'REFUND'", 'Refund voucher generation should use REFUND subject configs'],
+    ["configsByBusinessItems(\$bizType, 'REFUND')", 'Refund voucher generation should use REFUND subject configs'],
     ["self::TABLE_REFUND", 'Refund voucher generation should read refund table'],
     ["'refund_ids'", 'Refund voucher generation should accept refund_ids'],
     ["'refund_date'", 'Refund voucher generation should group by refund date'],
@@ -92,8 +92,7 @@ if (!function_exists('uuid')) {
     }
 }
 
-require_once __DIR__ . '/../app/finance/model/Common.php';
-require_once $modelPath;
+require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 
 use app\finance\model\CaseFund;
 

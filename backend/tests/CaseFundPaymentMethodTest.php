@@ -27,12 +27,12 @@ function uuid()
 }
 
 $base = dirname(__DIR__);
-require_once $base . '/app/finance/model/Common.php';
-require_once $base . '/app/finance/model/CaseFund.php';
+require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 
 use app\finance\model\CaseFund;
 
 $source = file_get_contents($base . '/app/finance/model/CaseFund.php');
+$policySource = file_get_contents($base . '/app/finance/service/casefund/policy/CaseFundBusinessPolicy.php');
 $ddl = file_get_contents($base . '/database/court_finance_ddl.sql');
 $preset = file_get_contents($base . '/database/account_sets_preset.sql');
 $legacyPatch = file_get_contents($base . '/database/finance_standard_patch.sql');
@@ -73,11 +73,19 @@ foreach ([
     'inferPaymentMethodByBankSerialNo',
     'in_array($length, [10, 12], true)',
     'paymentMethodOptions',
-    '$paymentMethodFilter',
-    '$where[\'payment_method\']',
     "'POS'",
     "'TRANSFER'",
     "'UNKNOWN'",
+] as $needle) {
+    if (strpos($policySource, $needle) === false) {
+        fwrite(STDERR, 'Case fund business policy should implement payment-method rule: ' . $needle . PHP_EOL);
+        exit(1);
+    }
+}
+
+foreach ([
+    '$paymentMethodFilter',
+    '$where[\'payment_method\']',
     "'PAYMENT_METHOD'",
     'generatePaymentVoucherByMethodFlag',
     'buildPaymentVoucherDetailsData',

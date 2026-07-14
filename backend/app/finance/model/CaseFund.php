@@ -2,12 +2,16 @@
 
 namespace app\finance\model;
 
+use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
+use app\finance\service\casefund\subject\SubjectConfigResolver;
 use think\Db;
 
 class CaseFund extends Common
 {
+    protected $businessPolicy;
     protected $legacySpreadsheetReader;
+    protected $subjectConfigResolver;
 
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
@@ -1237,20 +1241,11 @@ class CaseFund extends Common
         $generatePaymentVoucherByMethodFlag = $this->generatePaymentVoucherByMethodFlag();
         $generateRefundVoucherByOutOrderNoFlag = $this->generateRefundVoucherByOutOrderNoFlag();
 
-        $configs = [];
-        $lookupBusinessItems = $this->subjectConfigLookupItems($bizType, $voucherBizType, $businessItems);
-        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
-            'account_set_id' => $this->accountSetId,
-            'biz_type' => $bizType,
-            'voucher_biz_type' => $voucherBizType,
-            'del_flag' => 0,
-        ])->where('business_item_type', 'in', $lookupBusinessItems)->field(self::SUBJECT_CONFIG_FIELD)->select();
-        foreach ($rows as $row) {
-            $businessItemKey = $this->voucherSubjectConfigKey($bizType, $voucherBizType, $row['business_item_type']);
-            if ($businessItemKey === $row['business_item_type'] || !isset($configs[$businessItemKey])) {
-                $configs[$businessItemKey] = $row;
-            }
-        }
+        $configs = $this->subjectConfigResolver()->configsByBusinessItems(
+            $bizType,
+            $voucherBizType,
+            $businessItems
+        );
 
         $subjectCodes = [];
         foreach ($configs as $config) {
@@ -1490,23 +1485,7 @@ class CaseFund extends Common
         }
 
         $bizType = $this->currentAccountSetBizType();
-        $configRows = $this->getdb(self::TABLE_SUBJECT_CONFIG)
-            ->where([
-                'account_set_id' => $this->accountSetId,
-                'biz_type' => $bizType,
-                'voucher_biz_type' => 'PAYMENT',
-                'del_flag' => 0,
-            ])
-            ->field(self::SUBJECT_CONFIG_FIELD)
-            ->select();
-
-        $subjectConfigMap = [];
-        foreach ($configRows as $config) {
-            $configKey = $this->voucherSubjectConfigKey($bizType, 'PAYMENT', $config['business_item_type']);
-            if ($configKey === $config['business_item_type'] || !isset($subjectConfigMap[$configKey])) {
-                $subjectConfigMap[$configKey] = $config;
-            }
-        }
+        $subjectConfigMap = $this->subjectConfigResolver()->configsByBusinessItems($bizType, 'PAYMENT');
 
         $byPaymentMethodFlag = $this->generatePaymentVoucherByMethodFlag();
         $paymentMethodConfigMap = $byPaymentMethodFlag === 1 ? $this->paymentMethodSubjectConfigMap($bizType) : [];
@@ -2103,20 +2082,10 @@ class CaseFund extends Common
             return $this->error('当前账套类型不支持案款分配生成凭证：' . $bizType);
         }
 
-        $configRows = $this->getdb(self::TABLE_SUBJECT_CONFIG)
-            ->where([
-                'account_set_id' => $this->accountSetId,
-                'biz_type' => 'CASE_FUND',
-                'voucher_biz_type' => 'DISTRIBUTION',
-                'del_flag' => 0,
-            ])
-            ->field(self::SUBJECT_CONFIG_FIELD)
-            ->select();
-
-        $subjectConfigMap = [];
-        foreach ($configRows as $config) {
-            $subjectConfigMap[$config['business_item_type']] = $config;
-        }
+        $subjectConfigMap = $this->subjectConfigResolver()->directConfigsByBusinessItems(
+            'CASE_FUND',
+            'DISTRIBUTION'
+        );
         if (empty($subjectConfigMap)) {
             return $this->error('案款分配未配置借方/贷方科目');
         }
@@ -2403,23 +2372,7 @@ class CaseFund extends Common
         }
 
         $bizType = $this->currentAccountSetBizType();
-        $configRows = $this->getdb(self::TABLE_SUBJECT_CONFIG)
-            ->where([
-                'account_set_id' => $this->accountSetId,
-                'biz_type' => $bizType,
-                'voucher_biz_type' => 'REFUND',
-                'del_flag' => 0,
-            ])
-            ->field(self::SUBJECT_CONFIG_FIELD)
-            ->select();
-
-        $subjectConfigMap = [];
-        foreach ($configRows as $config) {
-            $configKey = $this->voucherSubjectConfigKey($bizType, 'REFUND', $config['business_item_type']);
-            if ($configKey === $config['business_item_type'] || !isset($subjectConfigMap[$configKey])) {
-                $subjectConfigMap[$configKey] = $config;
-            }
-        }
+        $subjectConfigMap = $this->subjectConfigResolver()->configsByBusinessItems($bizType, 'REFUND');
 
         foreach ($rows as $row) {
             $outType = $row['out_type'];
@@ -3549,21 +3502,11 @@ class CaseFund extends Common
             return true;
         }
 
-        $lookupItems = $this->subjectConfigLookupItems($bizType, 'PAYMENT', $businessItems);
-        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
-            'account_set_id' => $this->accountSetId,
-            'biz_type' => $bizType,
-            'voucher_biz_type' => 'PAYMENT',
-            'del_flag' => 0,
-        ])->where('business_item_type', 'in', $lookupItems)->field(self::SUBJECT_CONFIG_FIELD)->select();
-
-        $configs = [];
-        foreach ($rows as $row) {
-            $key = $this->voucherSubjectConfigKey($bizType, 'PAYMENT', $row['business_item_type']);
-            if ($key === $row['business_item_type'] || !isset($configs[$key])) {
-                $configs[$key] = $row;
-            }
-        }
+        $configs = $this->subjectConfigResolver()->configsByBusinessItems(
+            $bizType,
+            'PAYMENT',
+            $businessItems
+        );
 
         $creditSubjectCodes = [];
         foreach ($businessItems as $businessItem) {
@@ -3903,29 +3846,11 @@ class CaseFund extends Common
             return [];
         }
 
-        $lookupItems = $this->subjectConfigLookupItems($bizType, 'REFUND', array_values(array_unique($businessItems)));
-        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
-            'account_set_id' => $this->accountSetId,
-            'biz_type' => $bizType,
-            'voucher_biz_type' => 'REFUND',
-            'del_flag' => 0,
-        ])->where('business_item_type', 'in', $lookupItems)->field(self::SUBJECT_CONFIG_FIELD)->select();
-
-        $configs = [];
-        foreach ($rows as $row) {
-            $key = $this->voucherSubjectConfigKey($bizType, 'REFUND', $row['business_item_type']);
-            if ($key === $row['business_item_type'] || !isset($configs[$key])) {
-                $configs[$key] = $row;
-            }
-        }
-
-        $result = [];
-        foreach ($businessItems as $businessItem) {
-            if (isset($configs[$businessItem])) {
-                $result[] = $configs[$businessItem];
-            }
-        }
-        return $result;
+        return $this->subjectConfigResolver()->orderedConfigsByBusinessItems(
+            $bizType,
+            'REFUND',
+            $businessItems
+        );
     }
 
     protected function currentAccountSetBizType()
@@ -3943,28 +3868,17 @@ class CaseFund extends Common
 
     protected function allowedPaymentBusinessTypes($bizType)
     {
-        $map = [
-            'CASE_FUND' => ['执行、调解款'],
-            'LITIGATION_FEE' => ['诉讼费直接结算', '诉讼费预收'],
-        ];
-        return $map[$bizType] ?? [];
+        return $this->businessPolicy()->allowedPaymentBusinessTypes($bizType);
     }
 
     protected function allowedRefundOutTypes($bizType)
     {
-        $map = [
-            'CASE_FUND' => ['执行、调解款发放'],
-            'LITIGATION_FEE' => ['诉讼费退费'],
-        ];
-        return $map[$bizType] ?? [];
+        return $this->businessPolicy()->allowedRefundOutTypes($bizType);
     }
 
     protected function allowedDistributionInvoiceTypes($bizType)
     {
-        $map = [
-            'CASE_FUND' => ['执行、调解款'],
-        ];
-        return $map[$bizType] ?? [];
+        return $this->businessPolicy()->allowedDistributionInvoiceTypes($bizType);
     }
 
     protected function normalizeIdList($value)
@@ -4383,147 +4297,61 @@ class CaseFund extends Common
 
     protected function allowedSubjectConfigItems($bizType, $voucherBizType)
     {
-        if ($voucherBizType === 'PAYMENT') {
-            return $this->subjectConfigPaymentBusinessTypes($bizType);
-        }
-        if ($voucherBizType === 'PAYMENT_METHOD') {
-            return array_keys($this->paymentMethodOptions());
-        }
-        if ($voucherBizType === 'REFUND') {
-            return $this->subjectConfigRefundBusinessTypes($bizType);
-        }
-        if ($voucherBizType === 'UNKNOWN_PAYMENT') {
-            return $bizType === 'CASE_FUND' ? ['不明款'] : [];
-        }
-        if ($voucherBizType === 'DISTRIBUTION') {
-            return $this->allowedDistributionInvoiceTypes($bizType);
-        }
-        return [];
+        return $this->businessPolicy()->allowedSubjectConfigItems($bizType, $voucherBizType);
     }
 
     protected function subjectConfigPaymentBusinessTypes($bizType)
     {
-        $map = [
-            'CASE_FUND' => ['缴费登记'],
-            'LITIGATION_FEE' => ['缴费登记'],
-        ];
-        return $map[$bizType] ?? [];
+        return $this->businessPolicy()->subjectConfigPaymentBusinessTypes($bizType);
     }
 
     protected function subjectConfigRefundBusinessTypes($bizType)
     {
-        $map = [
-            'CASE_FUND' => ['出账查询'],
-            'LITIGATION_FEE' => ['出账查询'],
-        ];
-        return $map[$bizType] ?? [];
+        return $this->businessPolicy()->subjectConfigRefundBusinessTypes($bizType);
     }
 
     protected function voucherSubjectConfigAliases($bizType, $voucherBizType)
     {
-        $map = [
-            'PAYMENT' => [
-                'CASE_FUND' => [
-                    '执行、调解款' => '缴费登记',
-                ],
-                'LITIGATION_FEE' => [
-                    '诉讼费直接结算' => '缴费登记',
-                    '诉讼费预收' => '缴费登记',
-                    '预收诉讼费' => '缴费登记',
-                    '诉讼费收款' => '缴费登记',
-                ],
-            ],
-            'REFUND' => [
-                'CASE_FUND' => [
-                    '执行、调解款发放' => '出账查询',
-                ],
-                'LITIGATION_FEE' => [
-                    '诉讼费退费' => '出账查询',
-                ],
-            ],
-        ];
-        return $map[$voucherBizType][$bizType] ?? [];
+        return $this->businessPolicy()->voucherSubjectConfigAliases($bizType, $voucherBizType);
     }
 
     protected function voucherSubjectConfigKey($bizType, $voucherBizType, $businessItemType)
     {
-        $businessItemType = trim((string)$businessItemType);
-        $aliases = $this->voucherSubjectConfigAliases($bizType, $voucherBizType);
-        return $aliases[$businessItemType] ?? $businessItemType;
+        return $this->businessPolicy()->voucherSubjectConfigKey($bizType, $voucherBizType, $businessItemType);
     }
 
     protected function subjectConfigLookupItems($bizType, $voucherBizType, $businessItems)
     {
-        if (!in_array($voucherBizType, ['PAYMENT', 'REFUND'], true)) {
-            return $businessItems;
-        }
-        return array_values(array_unique(array_merge($businessItems, array_keys($this->voucherSubjectConfigAliases($bizType, $voucherBizType)))));
+        return $this->businessPolicy()->subjectConfigLookupItems($bizType, $voucherBizType, $businessItems);
     }
 
     protected function normalizeVoucherBizType($value)
     {
-        $value = strtoupper(trim((string)$value));
-        return in_array($value, ['PAYMENT', 'PAYMENT_METHOD', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION'], true) ? $value : '';
+        return $this->businessPolicy()->normalizeVoucherBizType($value);
     }
 
     protected function paymentMethodOptions()
     {
-        return [
-            'POS' => 'POS 收款',
-            'TRANSFER' => '银行转账',
-            'UNKNOWN' => '不明款认领',
-        ];
+        return $this->businessPolicy()->paymentMethodOptions();
     }
 
     protected function normalizePaymentMethodCode($value)
     {
-        $value = trim((string)$value);
-        if ($value === '') {
-            return 'UNKNOWN';
-        }
-        $upper = strtoupper($value);
-        if (in_array($upper, ['POS', 'TRANSFER', 'UNKNOWN'], true)) {
-            return $upper;
-        }
-        $compact = preg_replace('/\s+/u', '', $value);
-        if (in_array($compact, ['POS收款', 'POS刷卡'], true)) {
-            return 'POS';
-        }
-        if (in_array($compact, ['银行转账', '转账'], true)) {
-            return 'TRANSFER';
-        }
-        if (in_array($compact, ['不明款认领', '不明款', '未知'], true)) {
-            return 'UNKNOWN';
-        }
-        return $value;
+        return $this->businessPolicy()->normalizePaymentMethodCode($value);
     }
 
     protected function inferPaymentMethodByBankSerialNo($bankSerialNo, $rawPaymentMethod = '')
     {
-        $serial = preg_replace('/\s+/u', '', trim((string)$bankSerialNo));
-        if ($serial === '') {
-            return 'UNKNOWN';
-        }
-        $length = strlen($serial);
-        if (in_array($length, [10, 12], true)) {
-            return 'POS';
-        }
-        if ($length > 15) {
-            return 'TRANSFER';
-        }
-        return trim((string)$rawPaymentMethod);
+        return $this->businessPolicy()->inferPaymentMethodByBankSerialNo($bankSerialNo, $rawPaymentMethod);
     }
 
     protected function paymentMethodLabel($method)
     {
-        $code = $this->normalizePaymentMethodCode($method);
-        $options = $this->paymentMethodOptions();
-        return $options[$code] ?? (string)$method;
+        return $this->businessPolicy()->paymentMethodLabel($method);
     }
 
     protected function paymentMethodSubjectConfigItems($bizType, $paymentItems)
     {
-        $methodCodes = array_keys($this->paymentMethodOptions());
         $defaultDebitSubjectCode = '';
         foreach ($paymentItems as $item) {
             if (!empty($item['debit_subject_code'])) {
@@ -4532,17 +4360,9 @@ class CaseFund extends Common
             }
         }
 
-        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
-            'account_set_id' => $this->accountSetId,
-            'biz_type' => $bizType,
-            'voucher_biz_type' => 'PAYMENT_METHOD',
-            'del_flag' => 0,
-        ])->where('business_item_type', 'in', $methodCodes)->field(self::SUBJECT_CONFIG_FIELD)->select();
-
-        $configs = [];
+        $configs = $this->subjectConfigResolver()->paymentMethodConfigMap($bizType);
         $subjectCodes = [];
-        foreach ($rows as $row) {
-            $configs[$row['business_item_type']] = $row;
+        foreach ($configs as $row) {
             if (!empty($row['debit_subject_code'])) {
                 $subjectCodes[] = $row['debit_subject_code'];
             }
@@ -4574,17 +4394,7 @@ class CaseFund extends Common
 
     protected function paymentMethodSubjectConfigMap($bizType)
     {
-        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
-            'account_set_id' => $this->accountSetId,
-            'biz_type' => $bizType,
-            'voucher_biz_type' => 'PAYMENT_METHOD',
-            'del_flag' => 0,
-        ])->where('business_item_type', 'in', array_keys($this->paymentMethodOptions()))->field(self::SUBJECT_CONFIG_FIELD)->select();
-        $map = [];
-        foreach ($rows as $row) {
-            $map[$row['business_item_type']] = $row;
-        }
-        return $map;
+        return $this->subjectConfigResolver()->paymentMethodConfigMap($bizType);
     }
 
     protected function savePaymentMethodSubjectConfigs($bizType, $methodItems, $paymentItems)
@@ -5079,12 +4889,35 @@ class CaseFund extends Common
         return $this->legacySpreadsheetReader()->parseBiffCells($stream);
     }
 
+    protected function businessPolicy()
+    {
+        if ($this->businessPolicy === null) {
+            $this->businessPolicy = new CaseFundBusinessPolicy();
+        }
+        return $this->businessPolicy;
+    }
+
     protected function legacySpreadsheetReader()
     {
         if ($this->legacySpreadsheetReader === null) {
             $this->legacySpreadsheetReader = new LegacySpreadsheetReader();
         }
         return $this->legacySpreadsheetReader;
+    }
+
+    protected function subjectConfigResolver()
+    {
+        if ($this->subjectConfigResolver === null) {
+            $this->subjectConfigResolver = new SubjectConfigResolver(
+                $this->accountSetId,
+                function ($table) {
+                    return $this->getdb($table);
+                },
+                $this->businessPolicy(),
+                self::SUBJECT_CONFIG_FIELD
+            );
+        }
+        return $this->subjectConfigResolver;
     }
 
 }

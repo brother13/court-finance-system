@@ -7,7 +7,7 @@ $checks = [
     ["case 'distributionGenerateVoucher'", 'CaseFund should route distributionGenerateVoucher'],
     ['public function distributionGenerateVoucher', 'CaseFund should expose distributionGenerateVoucher'],
     ["requirePermission('case_fund:generate_voucher')", 'Distribution generation should check permission'],
-    ["voucher_biz_type' => 'DISTRIBUTION'", 'Distribution generation should read DISTRIBUTION subject config'],
+    ['directConfigsByBusinessItems', 'Distribution generation should preserve direct subject-config keys through the resolver'],
     ['groupDistributionRowsForVoucher', 'Distribution generation should group rows by distribution number'],
     ['buildDistributionVoucherDetailsData', 'Distribution generation should use distribution detail builder'],
     ['validateDistributionVoucherPeriod', 'Distribution generation should validate source period and period status'],
@@ -43,8 +43,7 @@ if (!function_exists('getNowTime')) {
     function getNowTime() { return date('Y-m-d H:i:s'); }
 }
 
-require_once __DIR__ . '/../app/finance/model/Common.php';
-require_once $modelPath;
+require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 
 if (!function_exists('app\finance\model\uuid')) {
     eval('namespace app\finance\model; function uuid() { return uniqid("test-", true); }');

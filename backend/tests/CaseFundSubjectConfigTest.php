@@ -1,11 +1,13 @@
 <?php
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
+$policyPath = __DIR__ . '/../app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $accountSetPresetPath = __DIR__ . '/../database/account_sets_preset.sql';
 
 $source = file_get_contents($modelPath);
+$policySource = file_get_contents($policyPath);
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $accountSetPreset = file_get_contents($accountSetPresetPath);
@@ -51,25 +53,25 @@ foreach ([
     "'执行、调节款'",
     "'执行、调节款发放'",
 ] as $deprecatedAlias) {
-    if (strpos($source, $deprecatedAlias) !== false) {
-        fwrite(STDERR, 'Old typo compatibility alias should not appear in CaseFund subject config code: ' . $deprecatedAlias . PHP_EOL);
+    if (strpos($source . "\n" . $policySource, $deprecatedAlias) !== false) {
+        fwrite(STDERR, 'Old typo compatibility alias should not appear in case fund subject config code: ' . $deprecatedAlias . PHP_EOL);
         exit(1);
     }
 }
 
-if (strpos($source, "'UNKNOWN_PAYMENT'") === false || strpos($source, "['不明款']") === false) {
+if (strpos($policySource, "'UNKNOWN_PAYMENT'") === false || strpos($policySource, "['不明款']") === false) {
     fwrite(STDERR, 'Subject config should expose unknown payment config item' . PHP_EOL);
     exit(1);
 }
 
-if (strpos($source, "'DISTRIBUTION'") === false || strpos($source, 'allowedDistributionInvoiceTypes') === false) {
+if (strpos($policySource, "'DISTRIBUTION'") === false || strpos($policySource, 'allowedDistributionInvoiceTypes') === false) {
     fwrite(STDERR, 'Subject config should expose distribution config items' . PHP_EOL);
     exit(1);
 }
 
 if (
-    strpos($source, "'CASE_FUND' => ['缴费登记']") === false ||
-    strpos($source, "'LITIGATION_FEE' => ['缴费登记']") === false
+    strpos($policySource, "'CASE_FUND' => ['缴费登记']") === false ||
+    strpos($policySource, "'LITIGATION_FEE' => ['缴费登记']") === false
 ) {
     fwrite(STDERR, 'Payment subject config should only expose the payment-register default config item' . PHP_EOL);
     exit(1);
@@ -85,7 +87,7 @@ foreach ([
     "'诉讼费退费' => '出账查询'",
     "'执行、调解款发放' => '出账查询'",
 ] as $needle) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($policySource, $needle) === false) {
         fwrite(STDERR, 'Business import types should map to voucher default subject config items: ' . $needle . PHP_EOL);
         exit(1);
     }

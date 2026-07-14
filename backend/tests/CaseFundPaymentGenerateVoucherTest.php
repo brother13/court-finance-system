@@ -78,8 +78,7 @@ if (!function_exists('uuid')) {
     }
 }
 
-require_once __DIR__ . '/../app/finance/model/Common.php';
-require_once $modelPath;
+require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 
 use app\finance\model\CaseFund;
 

@@ -26,9 +26,7 @@ function uuid()
     return '12345678-1234-4000-8000-123456789abc';
 }
 
-require_once __DIR__ . '/../app/finance/service/casefund/support/LegacySpreadsheetReader.php';
-require_once __DIR__ . '/../app/finance/model/Common.php';
-require_once __DIR__ . '/../app/finance/model/CaseFund.php';
+require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 
 use app\finance\model\CaseFund;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
