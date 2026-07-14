@@ -2,12 +2,15 @@
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $bankingRulePath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankingRule.php';
+$bankRepositoryPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $rbacPath = __DIR__ . '/../database/migration_rbac.sql';
 
 $source = file_get_contents($modelPath);
 $bankingRuleSource = file_get_contents($bankingRulePath);
+$bankRepositorySource = file_get_contents($bankRepositoryPath);
+$bankImplementationSource = $source . "\n" . $bankRepositorySource;
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $rbac = file_get_contents($rbacPath);
@@ -28,11 +31,11 @@ $checks = [
     [$source, "\$bizType = 'REFUND'", 'Debit bank statement should reconcile to refund registration'],
     [$source, 'paymentCandidatesByBankStatement', 'Income bank statement should narrow payment candidates by transaction date before serial number'],
     [$source, 'refundCandidatesByBankStatement', 'Debit bank statement should reconcile refund rows by bank statement counterparty fields'],
-    [$source, "->where('payment_date', \$statement['transaction_date'])", 'Payment reconcile should first narrow by bank transaction date'],
-    [$source, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
+    [$bankImplementationSource, "->where('payment_date', \$statement['transaction_date'])", 'Payment reconcile should first narrow by bank transaction date'],
+    [$bankImplementationSource, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
     [$source, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
     [$source, "const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']", 'Bank reconcile rerun should clean legacy and current automatic match rules'],
-    [$source, "->where('match_rule', 'in', self::BANK_RECONCILE_AUTO_MATCH_RULES)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
+    [$bankRepositorySource, "->where('match_rule', 'in', \$this->autoMatchRules)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
     [$source, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
     [$source, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
     [$source, 'supportedBankStatementBanks', 'CaseFund should validate supported banks'],

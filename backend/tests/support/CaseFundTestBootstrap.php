@@ -3,14 +3,17 @@
 $backendRoot = dirname(__DIR__, 2);
 
 require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankingRule.php';
+require_once $backendRoot . '/app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportIdentity.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportNormalizer.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportParser.php';
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportPersistence.php';
 require_once $backendRoot . '/app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
+require_once $backendRoot . '/app/finance/service/casefund/persistence/CaseFundBusinessDeletionService.php';
 require_once $backendRoot . '/app/finance/service/casefund/validation/CaseFundImportValidator.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherRule.php';
 require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigResolver.php';
+require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigManager.php';
 require_once $backendRoot . '/app/finance/service/casefund/support/LegacySpreadsheetReader.php';
 require_once $backendRoot . '/app/finance/model/Common.php';
 require_once $backendRoot . '/app/finance/model/CaseFund.php';

@@ -1,6 +1,8 @@
 <?php
 
 $source = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
+$deletionSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/persistence/CaseFundBusinessDeletionService.php');
+$implementationSource = $source . "\n" . $deletionSource;
 $rbac = file_get_contents(__DIR__ . '/../database/migration_rbac.sql');
 
 $checks = [
@@ -11,13 +13,13 @@ $checks = [
     [$source, "case 'bankStatementDelete'", 'CaseFund should route bankStatementDelete'],
     [$source, "requirePermission('case_fund:delete')", 'Case fund delete should require delete permission'],
     [$source, 'assertRowsCanDeleteBusinessData', 'Payment/refund delete should validate generated rows against original voucher state'],
-    [$source, '已生成凭证且原凭证仍有效，不允许删除', 'Generated payment/refund rows should only block deletion when original voucher is still active'],
+    [$implementationSource, '已生成凭证且原凭证仍有效，不允许删除', 'Generated payment/refund rows should only block deletion when original voucher is still active'],
     [$source, "'PAYMENT',", 'Payment delete should check payment reconciliation rows'],
     [$source, "'REFUND',", 'Refund delete should check refund reconciliation rows'],
     [$source, "\$where['reconcile_status'] = 'UNMATCHED'", 'Bank statement delete should only load unmatched rows'],
     [$source, 'shouldPhysicalDeleteCaseFundBusinessRows', 'Business import delete should choose physical delete mode by business type'],
-    [$source, "['PAYMENT', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION']", 'Payment, refund, unknown payment, and distribution deletes should be physical deletes'],
-    [$source, "->delete()", 'Business import delete should physically delete allowed rows'],
+    [$implementationSource, "['PAYMENT', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION']", 'Payment, refund, unknown payment, and distribution deletes should be physical deletes'],
+    [$implementationSource, "->delete()", 'Business import delete should physically delete allowed rows'],
     [$source, "'CASE_FUND_PAYMENT',", 'Payment delete should write audit log'],
     [$source, "'CASE_FUND_REFUND',", 'Refund delete should write audit log'],
     [$source, "'CASE_FUND_UNKNOWN_PAYMENT',", 'Unknown payment delete should write audit log'],

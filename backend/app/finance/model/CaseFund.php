@@ -3,13 +3,16 @@
 namespace app\finance\model;
 
 use app\finance\service\casefund\banking\CaseFundBankingRule;
+use app\finance\service\casefund\banking\CaseFundBankReconcileRepository;
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
 use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\importing\CaseFundImportParser;
 use app\finance\service\casefund\importing\CaseFundImportPersistence;
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
+use app\finance\service\casefund\persistence\CaseFundBusinessDeletionService;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
+use app\finance\service\casefund\subject\SubjectConfigManager;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
 use app\finance\service\casefund\voucher\CaseFundVoucherRule;
 use think\Db;
@@ -17,7 +20,9 @@ use think\Db;
 class CaseFund extends Common
 {
     protected $bankingRule;
+    protected $bankReconcileRepository;
     protected $businessPolicy;
+    protected $businessDeletionService;
     protected $importIdentity;
     protected $importNormalizer;
     protected $importParser;
@@ -25,6 +30,7 @@ class CaseFund extends Common
     protected $importValidator;
     protected $legacySpreadsheetReader;
     protected $subjectConfigResolver;
+    protected $subjectConfigManager;
     protected $voucherRule;
 
     const ACTION = 'caseFund';
@@ -1193,63 +1199,19 @@ class CaseFund extends Common
             ?? ($data['generatePaymentVoucherByMethodFlag'] ?? $this->generatePaymentVoucherByMethodFlag())
         );
 
-        $before = [];
-        $after = [];
         $accountSetBefore = null;
         $accountSetAfter = null;
-        $seen = [];
         Db::startTrans();
         try {
             list($accountSetBefore, $accountSetAfter) = $this->saveSubjectConfigAccountSetFlag($generateVoucherByDayFlag, $generateRefundVoucherByOutOrderNoFlag, $generatePaymentVoucherByMethodFlag);
-            foreach ($items as $item) {
-                $businessItemType = trim($item['business_item_type'] ?? ($item['businessItemType'] ?? ''));
-                $debitSubjectCode = trim($item['debit_subject_code'] ?? ($item['debitSubjectCode'] ?? ''));
-                $creditSubjectCode = trim($item['credit_subject_code'] ?? ($item['creditSubjectCode'] ?? ''));
-                if ($businessItemType === '') {
-                    throw new \Exception('业务种类不能为空');
-                }
-                if (isset($seen[$businessItemType])) {
-                    throw new \Exception('业务种类重复配置：' . $businessItemType);
-                }
-                $seen[$businessItemType] = true;
-                if (!in_array($businessItemType, $allowedItems, true)) {
-                    throw new \Exception('当前账套不允许配置业务种类：' . $businessItemType);
-                }
-                $debitCheck = $this->validateVoucherSubjectCode($debitSubjectCode, '借方科目');
-                if ($debitCheck !== null) {
-                    throw new \Exception($debitCheck);
-                }
-                $creditCheck = $this->validateVoucherSubjectCode($creditSubjectCode, '贷方科目');
-                if ($creditCheck !== null) {
-                    throw new \Exception($creditCheck);
-                }
-
-                $where = [
-                    'account_set_id' => $this->accountSetId,
-                    'biz_type' => $bizType,
-                    'voucher_biz_type' => $voucherBizType,
-                    'business_item_type' => $businessItemType,
-                ];
-                $existing = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where($where)->find();
-                $save = [
-                    'debit_subject_code' => $debitSubjectCode,
-                    'credit_subject_code' => $creditSubjectCode,
-                    'remark' => $item['remark'] ?? '',
-                    'del_flag' => 0,
-                ];
-                if ($existing) {
-                    $before[] = $existing;
-                    $this->fillUpdate($save);
-                    $this->getdb(self::TABLE_SUBJECT_CONFIG)->where(['config_id' => $existing['config_id']])->update($save);
-                    $after[] = array_merge($existing, $save);
-                } else {
-                    $insert = array_merge($where, $save);
-                    $insert['config_id'] = uuid();
-                    $this->fillCreate($insert);
-                    $this->getdb(self::TABLE_SUBJECT_CONFIG)->insert($insert);
-                    $after[] = $insert;
-                }
-            }
+            $saveResult = $this->subjectConfigManager()->saveBusinessSubjectConfigs(
+                $bizType,
+                $voucherBizType,
+                $items,
+                $allowedItems
+            );
+            $before = $saveResult['before'];
+            $after = $saveResult['after'];
             if ($voucherBizType === 'PAYMENT') {
                 $methodItems = $data['payment_method_items'] ?? ($data['paymentMethodItems'] ?? []);
                 $methodSaveResult = $this->savePaymentMethodSubjectConfigs($bizType, $methodItems, $items);
@@ -2921,55 +2883,21 @@ class CaseFund extends Common
 
     protected function deleteCaseFundBusinessRows($table, $idField, $ids, $bizType, $auditBizType, $label)
     {
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if ($bizType === 'PAYMENT') {
-            $fields = self::PAYMENT_FIELD;
-        } elseif ($bizType === 'REFUND') {
-            $fields = self::REFUND_FIELD;
-        } elseif ($bizType === 'UNKNOWN_PAYMENT') {
-            $fields = self::UNKNOWN_PAYMENT_FIELD;
-        } elseif ($bizType === 'DISTRIBUTION') {
-            $fields = self::DISTRIBUTION_FIELD;
-        } else {
-            return $this->error('不支持删除该业务类型：' . $bizType);
+        $prepared = $this->businessDeletionService()->prepareBusinessDeletion(
+            $table,
+            $idField,
+            $ids,
+            $bizType,
+            $label
+        );
+        if (!empty($prepared['error'])) {
+            return $this->error($prepared['error']);
         }
-        $rows = $this->getdb($table)
-            ->where($where)
-            ->where($idField, 'in', $ids)
-            ->field($fields)
-            ->select();
-        if (count($rows) !== count($ids)) {
-            return $this->error($label . '不存在或已删除');
-        }
-        $deleteCheck = $this->assertRowsCanDeleteBusinessData($rows, $label);
-        if ($deleteCheck !== null) {
-            return $this->error($deleteCheck);
-        }
-        $reconcileCount = $this->getdb(self::TABLE_BANK_RECONCILE)->where([
-            'account_set_id' => $this->accountSetId,
-            'biz_type' => $bizType,
-            'del_flag' => 0,
-        ])->where('biz_id', 'in', $ids)->count();
-        if ((int)$reconcileCount > 0) {
-            return $this->error('只能删除未对账的' . $label);
-        }
-
-        $hardDelete = $this->shouldPhysicalDeleteCaseFundBusinessRows($bizType);
+        $rows = $prepared['rows'];
+        $hardDelete = $prepared['hard_delete'];
         Db::startTrans();
         try {
-            if ($hardDelete) {
-                $this->getdb($table)->where([
-                    'account_set_id' => $this->accountSetId,
-                ])->where($idField, 'in', $ids)->delete();
-            } else {
-                $update = ['del_flag' => 1];
-                $this->fillUpdate($update);
-                $this->getdb($table)->where([
-                    'account_set_id' => $this->accountSetId,
-                    'del_flag' => 0,
-                ])->where($idField, 'in', $ids)->update($update);
-            }
+            $this->businessDeletionService()->executeBusinessDeletion($table, $idField, $ids, $hardDelete);
             $this->logAudit($auditBizType, 'DELETE', 'DELETE', $rows, [
                 $idField . 's' => $ids,
                 'deleted_count' => count($rows),
@@ -2986,25 +2914,12 @@ class CaseFund extends Common
 
     protected function shouldPhysicalDeleteCaseFundBusinessRows($bizType)
     {
-        return in_array($bizType, ['PAYMENT', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION'], true);
+        return $this->businessDeletionService()->shouldPhysicalDeleteCaseFundBusinessRows($bizType);
     }
 
     protected function assertRowsCanDeleteBusinessData($rows, $label)
     {
-        foreach ($rows as $row) {
-            $status = $row['voucher_status'] ?? 'UNGENERATED';
-            if ($status === 'UNGENERATED') {
-                continue;
-            }
-            if ($status === 'GENERATED' && !$this->hasActiveGeneratedVoucher($row)) {
-                continue;
-            }
-            if ($status === 'GENERATED') {
-                return '案号【' . ($row['case_no'] ?? '') . '】的' . $label . '已生成凭证且原凭证仍有效，不允许删除';
-            }
-            return '案号【' . ($row['case_no'] ?? '') . '】的' . $label . '制证状态为【' . $status . '】，不允许删除';
-        }
-        return null;
+        return $this->businessDeletionService()->assertRowsCanDeleteBusinessData($rows, $label);
     }
 
     protected function supportedBankStatementBanks()
@@ -3037,133 +2952,42 @@ class CaseFund extends Common
 
     protected function paymentCandidatesByBankStatement($statement)
     {
-        $bankSerialNo = trim((string)($statement['bank_serial_no'] ?? ''));
-        if ($bankSerialNo === '' || empty($statement['transaction_date'])) {
-            return [];
-        }
-        return $this->getdb(self::TABLE_PAYMENT)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('payment_date', $statement['transaction_date'])
-            ->where('bank_serial_no', $bankSerialNo)
-            ->field(self::PAYMENT_FIELD)
-            ->select();
+        return $this->bankReconcileRepository()->paymentCandidatesByBankStatement($statement);
     }
 
     protected function refundCandidatesByBankStatement($statement)
     {
-        if (empty($statement['transaction_date'])) {
-            return [];
-        }
-
-        $accountNo = trim((string)($statement['counterparty_account_no'] ?? ''));
-        $accountName = trim((string)($statement['counterparty_account_name'] ?? ''));
-        $query = $this->getdb(self::TABLE_REFUND)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('refund_date', $statement['transaction_date']);
-
-        if ($accountNo !== '') {
-            $query->where('payee_bank_account_no', $accountNo);
-        } elseif ($accountName !== '') {
-            $query->where('payee_bank_account_name|actual_payee_name', 'like', '%' . $accountName . '%');
-        } else {
-            return [];
-        }
-
-        return $query->field(self::REFUND_FIELD)->select();
+        return $this->bankReconcileRepository()->refundCandidatesByBankStatement($statement);
     }
 
     protected function paymentCandidatesInScope($dateStart, $dateEnd)
     {
-        $query = $this->getdb(self::TABLE_PAYMENT)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('bank_serial_no', 'neq', '');
-        if ($dateStart !== '') {
-            $query->where('payment_date', '>=', $dateStart);
-        }
-        if ($dateEnd !== '') {
-            $query->where('payment_date', '<=', $dateEnd);
-        }
-        return $query->field(self::PAYMENT_FIELD)->select();
+        return $this->bankReconcileRepository()->paymentCandidatesInScope($dateStart, $dateEnd);
     }
 
     protected function refundCandidatesInScope($dateStart, $dateEnd)
     {
-        $query = $this->getdb(self::TABLE_REFUND)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0]);
-        if ($dateStart !== '') {
-            $query->where('refund_date', '>=', $dateStart);
-        }
-        if ($dateEnd !== '') {
-            $query->where('refund_date', '<=', $dateEnd);
-        }
-        return $query->field(self::REFUND_FIELD)->select();
+        return $this->bankReconcileRepository()->refundCandidatesInScope($dateStart, $dateEnd);
     }
 
     protected function bankStatementExistsByPayment($payment, $bankCode = '', $dateStart = '', $dateEnd = '')
     {
-        $bankSerialNo = trim((string)($payment['bank_serial_no'] ?? ''));
-        $paymentDate = trim((string)($payment['payment_date'] ?? ''));
-        if ($bankSerialNo === '' || $paymentDate === '') {
-            return false;
-        }
-        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where([
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->currentYear(),
-            'direction' => 'CREDIT',
-            'transaction_date' => $paymentDate,
-            'bank_serial_no' => $bankSerialNo,
-            'del_flag' => 0,
-        ]);
-        if ($bankCode !== '') {
-            $query->where('bank_code', $bankCode);
-        }
-        if ($dateStart !== '') {
-            $query->where('transaction_date', '>=', $dateStart);
-        }
-        if ($dateEnd !== '') {
-            $query->where('transaction_date', '<=', $dateEnd);
-        }
-        return $query->count() > 0;
+        return $this->bankReconcileRepository()->bankStatementExistsByPayment(
+            $payment,
+            $bankCode,
+            $dateStart,
+            $dateEnd
+        );
     }
 
     protected function bankStatementExistsByRefundPayee($refund, $bankCode = '', $dateStart = '', $dateEnd = '')
     {
-        $refundDate = trim((string)($refund['refund_date'] ?? ''));
-        if ($refundDate === '') {
-            return false;
-        }
-
-        $accountNo = trim((string)($refund['payee_bank_account_no'] ?? ''));
-        $accountName = trim((string)($refund['payee_bank_account_name'] ?? ''));
-        if ($accountName === '') {
-            $accountName = trim((string)($refund['actual_payee_name'] ?? ''));
-        }
-        if ($accountNo === '' && $accountName === '') {
-            return false;
-        }
-
-        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where([
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->currentYear(),
-            'direction' => 'DEBIT',
-            'transaction_date' => $refundDate,
-            'del_flag' => 0,
-        ]);
-        if ($bankCode !== '') {
-            $query->where('bank_code', $bankCode);
-        }
-        if ($dateStart !== '') {
-            $query->where('transaction_date', '>=', $dateStart);
-        }
-        if ($dateEnd !== '') {
-            $query->where('transaction_date', '<=', $dateEnd);
-        }
-        if ($accountNo !== '') {
-            $query->where('counterparty_account_no', $accountNo);
-        } else {
-            $query->where('counterparty_account_name', 'like', '%' . $accountName . '%');
-        }
-        return $query->count() > 0;
+        return $this->bankReconcileRepository()->bankStatementExistsByRefundPayee(
+            $refund,
+            $bankCode,
+            $dateStart,
+            $dateEnd
+        );
     }
 
     protected function bankReconcileBizAmountCents($bizType, $biz)
@@ -3193,23 +3017,7 @@ class CaseFund extends Common
 
     protected function softDeleteBankReconcileScope($dateStart, $dateEnd)
     {
-        $where = [
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->currentYear(),
-            'del_flag' => 0,
-        ];
-        $query = $this->getdb(self::TABLE_BANK_RECONCILE)
-            ->where($where)
-            ->where('match_rule', 'in', self::BANK_RECONCILE_AUTO_MATCH_RULES);
-        if ($dateStart !== '') {
-            $query->where('reconcile_date', '>=', $dateStart);
-        }
-        if ($dateEnd !== '') {
-            $query->where('reconcile_date', '<=', $dateEnd);
-        }
-        $update = ['del_flag' => 1];
-        $this->fillUpdate($update);
-        $query->update($update);
+        return $this->bankReconcileRepository()->softDeleteBankReconcileScope($dateStart, $dateEnd);
     }
 
     protected function emptyBankReconcileCounts()
@@ -3219,16 +3027,7 @@ class CaseFund extends Common
 
     protected function bankReconcileSummary($where)
     {
-        $rows = $this->getdb(self::TABLE_BANK_RECONCILE)
-            ->where($where)
-            ->field('match_status,count(*) as total')
-            ->group('match_status')
-            ->select();
-        $summary = $this->emptyBankReconcileCounts();
-        foreach ($rows as $row) {
-            $summary[$row['match_status']] = (int)$row['total'];
-        }
-        return $summary;
+        return $this->bankReconcileRepository()->bankReconcileSummary($where, $this->emptyBankReconcileCounts());
     }
 
     protected function allowedSubjectConfigItems($bizType, $voucherBizType)
@@ -3288,44 +3087,7 @@ class CaseFund extends Common
 
     protected function paymentMethodSubjectConfigItems($bizType, $paymentItems)
     {
-        $defaultDebitSubjectCode = '';
-        foreach ($paymentItems as $item) {
-            if (!empty($item['debit_subject_code'])) {
-                $defaultDebitSubjectCode = $item['debit_subject_code'];
-                break;
-            }
-        }
-
-        $configs = $this->subjectConfigResolver()->paymentMethodConfigMap($bizType);
-        $subjectCodes = [];
-        foreach ($configs as $row) {
-            if (!empty($row['debit_subject_code'])) {
-                $subjectCodes[] = $row['debit_subject_code'];
-            }
-        }
-        if ($defaultDebitSubjectCode !== '') {
-            $subjectCodes[] = $defaultDebitSubjectCode;
-        }
-        $subjectNames = $this->subjectNameMap($subjectCodes);
-
-        $items = [];
-        foreach ($this->paymentMethodOptions() as $code => $label) {
-            $config = $configs[$code] ?? [];
-            $debitSubjectCode = $config['debit_subject_code'] ?? $defaultDebitSubjectCode;
-            $items[] = [
-                'config_id' => $config['config_id'] ?? '',
-                'account_set_id' => $this->accountSetId,
-                'biz_type' => $bizType,
-                'voucher_biz_type' => 'PAYMENT_METHOD',
-                'business_item_type' => $code,
-                'business_item_label' => $label,
-                'debit_subject_code' => $debitSubjectCode,
-                'debit_subject_name' => $subjectNames[$debitSubjectCode] ?? '',
-                'credit_subject_code' => $config['credit_subject_code'] ?? $debitSubjectCode,
-                'credit_subject_name' => '',
-            ];
-        }
-        return $items;
+        return $this->subjectConfigManager()->paymentMethodSubjectConfigItems($bizType, $paymentItems);
     }
 
     protected function paymentMethodSubjectConfigMap($bizType)
@@ -3335,163 +3097,41 @@ class CaseFund extends Common
 
     protected function savePaymentMethodSubjectConfigs($bizType, $methodItems, $paymentItems)
     {
-        if (!is_array($methodItems)) {
-            $methodItems = [];
-        }
-        $defaultDebitSubjectCode = '';
-        foreach ($paymentItems as $item) {
-            $subjectCode = trim($item['debit_subject_code'] ?? ($item['debitSubjectCode'] ?? ''));
-            if ($subjectCode !== '') {
-                $defaultDebitSubjectCode = $subjectCode;
-                break;
-            }
-        }
-        $byMethod = [];
-        foreach ($methodItems as $item) {
-            $methodCode = $this->normalizePaymentMethodCode($item['business_item_type'] ?? ($item['businessItemType'] ?? ''));
-            if (isset($this->paymentMethodOptions()[$methodCode])) {
-                $byMethod[$methodCode] = $item;
-            }
-        }
-
-        $before = [];
-        $after = [];
-        foreach ($this->paymentMethodOptions() as $methodCode => $label) {
-            $item = $byMethod[$methodCode] ?? [];
-            $debitSubjectCode = trim($item['debit_subject_code'] ?? ($item['debitSubjectCode'] ?? $defaultDebitSubjectCode));
-            $debitCheck = $this->validateVoucherSubjectCode($debitSubjectCode, $label . '借方科目');
-            if ($debitCheck !== null) {
-                throw new \Exception($debitCheck);
-            }
-            $where = [
-                'account_set_id' => $this->accountSetId,
-                'biz_type' => $bizType,
-                'voucher_biz_type' => 'PAYMENT_METHOD',
-                'business_item_type' => $methodCode,
-            ];
-            $existing = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where($where)->find();
-            $save = [
-                'debit_subject_code' => $debitSubjectCode,
-                'credit_subject_code' => $debitSubjectCode,
-                'remark' => $item['remark'] ?? '',
-                'del_flag' => 0,
-            ];
-            if ($existing) {
-                $before[] = $existing;
-                $this->fillUpdate($save);
-                $this->getdb(self::TABLE_SUBJECT_CONFIG)->where(['config_id' => $existing['config_id']])->update($save);
-                $after[] = array_merge($existing, $save);
-            } else {
-                $insert = array_merge($where, $save);
-                $insert['config_id'] = uuid();
-                $this->fillCreate($insert);
-                $this->getdb(self::TABLE_SUBJECT_CONFIG)->insert($insert);
-                $after[] = $insert;
-            }
-        }
-        return ['before' => $before, 'after' => $after];
+        return $this->subjectConfigManager()->savePaymentMethodSubjectConfigs($bizType, $methodItems, $paymentItems);
     }
 
     protected function validateVoucherSubjectCode($subjectCode, $label)
     {
-        if ($subjectCode === '') {
-            return $label . '不能为空';
-        }
-        $subject = $this->getdb('fin_subject')->where([
-            'account_set_id' => $this->accountSetId,
-            'subject_code' => $subjectCode,
-            'del_flag' => 0,
-        ])->find();
-        if (!$subject) {
-            return $label . '不存在：' . $subjectCode;
-        }
-        if ((int)$subject['status'] !== 1) {
-            return $label . '未启用：' . $subjectCode;
-        }
-        if ((int)$subject['leaf_flag'] !== 1) {
-            return $label . '必须为末级科目：' . $subjectCode;
-        }
-        if (isset($subject['voucher_entry_flag']) && (int)$subject['voucher_entry_flag'] !== 1) {
-            return $label . '不允许录入凭证：' . $subjectCode;
-        }
-        return null;
+        return $this->subjectConfigManager()->validateVoucherSubjectCode($subjectCode, $label);
     }
 
     protected function subjectNameMap($subjectCodes)
     {
-        $subjectCodes = array_values(array_unique(array_filter($subjectCodes)));
-        if (empty($subjectCodes)) {
-            return [];
-        }
-        $rows = $this->getdb('fin_subject')->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->where('subject_code', 'in', $subjectCodes)->field('subject_code,subject_name')->select();
-        $map = [];
-        foreach ($rows as $row) {
-            $map[$row['subject_code']] = $row['subject_name'];
-        }
-        return $map;
+        return $this->subjectConfigManager()->subjectNameMap($subjectCodes);
     }
 
     protected function subjectConfigAccountSetFlag()
     {
-        $row = $this->getdb('fin_account_set')->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->field('generate_voucher_by_day_flag')->find();
-        if (!$row || !array_key_exists('generate_voucher_by_day_flag', $row)) {
-            return 1;
-        }
-        return (int)$row['generate_voucher_by_day_flag'] === 0 ? 0 : 1;
+        return $this->subjectConfigManager()->subjectConfigAccountSetFlag();
     }
 
     protected function generateRefundVoucherByOutOrderNoFlag()
     {
-        $row = $this->getdb('fin_account_set')->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->field('generate_refund_voucher_by_out_order_no_flag')->find();
-        if (!$row || !array_key_exists('generate_refund_voucher_by_out_order_no_flag', $row)) {
-            return 0;
-        }
-        return (int)$row['generate_refund_voucher_by_out_order_no_flag'] === 1 ? 1 : 0;
+        return $this->subjectConfigManager()->generateRefundVoucherByOutOrderNoFlag();
     }
 
     protected function generatePaymentVoucherByMethodFlag()
     {
-        $row = $this->getdb('fin_account_set')->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->field('generate_payment_voucher_by_method_flag')->find();
-        if (!$row || !array_key_exists('generate_payment_voucher_by_method_flag', $row)) {
-            return 0;
-        }
-        return (int)$row['generate_payment_voucher_by_method_flag'] === 1 ? 1 : 0;
+        return $this->subjectConfigManager()->generatePaymentVoucherByMethodFlag();
     }
 
     protected function saveSubjectConfigAccountSetFlag($flag, $refundOutOrderFlag = null, $paymentMethodFlag = null)
     {
-        $before = $this->getdb('fin_account_set')->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->field('account_set_id,generate_voucher_by_day_flag,generate_payment_voucher_by_method_flag,generate_refund_voucher_by_out_order_no_flag')->find();
-        if (!$before) {
-            throw new \Exception('账套不存在');
-        }
-        $update = ['generate_voucher_by_day_flag' => $this->normalizeDailyVoucherFlag($flag)];
-        if ($refundOutOrderFlag !== null) {
-            $update['generate_refund_voucher_by_out_order_no_flag'] = $this->normalizeDailyVoucherFlag($refundOutOrderFlag);
-        }
-        if ($paymentMethodFlag !== null) {
-            $update['generate_payment_voucher_by_method_flag'] = $this->normalizeDailyVoucherFlag($paymentMethodFlag);
-        }
-        $this->fillUpdate($update);
-        $this->getdb('fin_account_set')->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->update($update);
-        return [$before, array_merge($before, $update)];
+        return $this->subjectConfigManager()->saveSubjectConfigAccountSetFlag(
+            $flag,
+            $refundOutOrderFlag,
+            $paymentMethodFlag
+        );
     }
 
     protected function normalizeDailyVoucherFlag($value)
@@ -3676,6 +3316,36 @@ class CaseFund extends Common
         return $this->bankingRule;
     }
 
+    protected function bankReconcileRepository()
+    {
+        if ($this->bankReconcileRepository === null) {
+            $this->bankReconcileRepository = new CaseFundBankReconcileRepository([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'current_year' => function () {
+                    return $this->currentYear();
+                },
+                'prepare_update' => function ($row) {
+                    $this->fillUpdate($row);
+                    return $row;
+                },
+            ], [
+                'payment' => self::TABLE_PAYMENT,
+                'refund' => self::TABLE_REFUND,
+                'statement' => self::TABLE_BANK_STATEMENT,
+                'reconcile' => self::TABLE_BANK_RECONCILE,
+            ], [
+                'payment' => self::PAYMENT_FIELD,
+                'refund' => self::REFUND_FIELD,
+            ], self::BANK_RECONCILE_AUTO_MATCH_RULES);
+        }
+        return $this->bankReconcileRepository;
+    }
+
     protected function voucherRule()
     {
         if ($this->voucherRule === null) {
@@ -3752,6 +3422,45 @@ class CaseFund extends Common
             $this->businessPolicy = new CaseFundBusinessPolicy();
         }
         return $this->businessPolicy;
+    }
+
+    protected function businessDeletionService()
+    {
+        if ($this->businessDeletionService === null) {
+            $this->businessDeletionService = new CaseFundBusinessDeletionService([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_where' => function () {
+                    return $this->accountWhere();
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'current_year' => function () {
+                    return $this->currentYear();
+                },
+                'prepare_update' => function ($row) {
+                    $this->fillUpdate($row);
+                    return $row;
+                },
+                'has_active_generated_voucher' => function ($row) {
+                    return $this->hasActiveGeneratedVoucher($row);
+                },
+                'assert_rows_can_delete' => function ($rows, $label) {
+                    return $this->assertRowsCanDeleteBusinessData($rows, $label);
+                },
+                'should_physical_delete' => function ($bizType) {
+                    return $this->shouldPhysicalDeleteCaseFundBusinessRows($bizType);
+                },
+            ], self::TABLE_BANK_RECONCILE, [
+                'PAYMENT' => self::PAYMENT_FIELD,
+                'REFUND' => self::REFUND_FIELD,
+                'UNKNOWN_PAYMENT' => self::UNKNOWN_PAYMENT_FIELD,
+                'DISTRIBUTION' => self::DISTRIBUTION_FIELD,
+            ]);
+        }
+        return $this->businessDeletionService;
     }
 
     protected function importIdentity()
@@ -3903,6 +3612,50 @@ class CaseFund extends Common
             );
         }
         return $this->subjectConfigResolver;
+    }
+
+    protected function subjectConfigManager()
+    {
+        if ($this->subjectConfigManager === null) {
+            $this->subjectConfigManager = new SubjectConfigManager([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'prepare_create' => function ($row) {
+                    $this->fillCreate($row);
+                    return $row;
+                },
+                'prepare_update' => function ($row) {
+                    $this->fillUpdate($row);
+                    return $row;
+                },
+                'payment_method_options' => function () {
+                    return $this->paymentMethodOptions();
+                },
+                'normalize_payment_method' => function ($method) {
+                    return $this->normalizePaymentMethodCode($method);
+                },
+                'payment_method_config_map' => function ($bizType) {
+                    return $this->paymentMethodSubjectConfigMap($bizType);
+                },
+                'subject_name_map' => function ($subjectCodes) {
+                    return $this->subjectNameMap($subjectCodes);
+                },
+                'validate_subject_code' => function ($subjectCode, $label) {
+                    return $this->validateVoucherSubjectCode($subjectCode, $label);
+                },
+                'normalize_flag' => function ($value) {
+                    return $this->normalizeDailyVoucherFlag($value);
+                },
+            ], self::TABLE_SUBJECT_CONFIG);
+        }
+        return $this->subjectConfigManager;
     }
 
 }

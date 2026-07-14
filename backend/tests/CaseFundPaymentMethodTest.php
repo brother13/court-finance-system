@@ -32,6 +32,8 @@ require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 use app\finance\model\CaseFund;
 
 $source = file_get_contents($base . '/app/finance/model/CaseFund.php');
+$subjectManagerSource = file_get_contents($base . '/app/finance/service/casefund/subject/SubjectConfigManager.php');
+$implementationSource = $source . "\n" . $subjectManagerSource;
 $policySource = file_get_contents($base . '/app/finance/service/casefund/policy/CaseFundBusinessPolicy.php');
 $ddl = file_get_contents($base . '/database/court_finance_ddl.sql');
 $preset = file_get_contents($base . '/database/account_sets_preset.sql');
@@ -91,7 +93,7 @@ foreach ([
     'buildPaymentVoucherDetailsData',
     "'summary' => \$detailsData[0]['summary']",
 ] as $needle) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, 'CaseFund should implement payment-method behavior: ' . $needle . PHP_EOL);
         exit(1);
     }
