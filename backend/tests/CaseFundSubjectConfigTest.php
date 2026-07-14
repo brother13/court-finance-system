@@ -2,12 +2,15 @@
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $policyPath = __DIR__ . '/../app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
+$applicationPath = __DIR__ . '/../app/finance/service/casefund/subject/SubjectConfigApplicationService.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $accountSetPresetPath = __DIR__ . '/../database/account_sets_preset.sql';
 
 $source = file_get_contents($modelPath);
 $policySource = file_get_contents($policyPath);
+$applicationSource = file_get_contents($applicationPath);
+$implementationSource = $source . "\n" . $applicationSource;
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $accountSetPreset = file_get_contents($accountSetPresetPath);
@@ -94,9 +97,9 @@ foreach ([
 }
 
 if (
-    strpos($source, 'generate_voucher_by_day_flag') === false ||
-    strpos($source, 'subjectConfigAccountSetFlag') === false ||
-    strpos($source, 'saveSubjectConfigAccountSetFlag') === false
+    strpos($implementationSource, 'generate_voucher_by_day_flag') === false ||
+    strpos($implementationSource, 'subjectConfigAccountSetFlag') === false ||
+    strpos($implementationSource, 'saveSubjectConfigAccountSetFlag') === false
 ) {
     fwrite(STDERR, 'CaseFund should read and save the account-set daily voucher flag' . PHP_EOL);
     exit(1);

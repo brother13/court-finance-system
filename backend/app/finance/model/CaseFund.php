@@ -17,6 +17,7 @@ use app\finance\service\casefund\query\CaseFundBusinessQueryRepository;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
 use app\finance\service\casefund\subject\SubjectConfigManager;
+use app\finance\service\casefund\subject\SubjectConfigApplicationService;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
 use app\finance\service\casefund\voucher\CaseFundVoucherRule;
 use think\Db;
@@ -39,6 +40,7 @@ class CaseFund extends Common
     protected $legacySpreadsheetReader;
     protected $subjectConfigResolver;
     protected $subjectConfigManager;
+    protected $subjectConfigApplicationService;
     protected $voucherRule;
 
     const ACTION = 'caseFund';
@@ -819,57 +821,11 @@ class CaseFund extends Common
             return $this->error('科目配置类型不能为空');
         }
         $bizType = $this->currentAccountSetBizType();
-        $businessItems = $this->allowedSubjectConfigItems($bizType, $voucherBizType);
-        if (empty($businessItems)) {
-            return $this->error('当前账套类型不支持该科目配置：' . $bizType);
+        $result = $this->subjectConfigApplicationService()->listConfig($bizType, $voucherBizType);
+        if (!empty($result['error'])) {
+            return $this->error($result['error']);
         }
-        $generateVoucherByDayFlag = $this->subjectConfigAccountSetFlag();
-        $generatePaymentVoucherByMethodFlag = $this->generatePaymentVoucherByMethodFlag();
-        $generateRefundVoucherByOutOrderNoFlag = $this->generateRefundVoucherByOutOrderNoFlag();
-
-        $configs = $this->subjectConfigResolver()->configsByBusinessItems(
-            $bizType,
-            $voucherBizType,
-            $businessItems
-        );
-
-        $subjectCodes = [];
-        foreach ($configs as $config) {
-            if (!empty($config['debit_subject_code'])) {
-                $subjectCodes[] = $config['debit_subject_code'];
-            }
-            if (!empty($config['credit_subject_code'])) {
-                $subjectCodes[] = $config['credit_subject_code'];
-            }
-        }
-        $subjectNames = $this->subjectNameMap($subjectCodes);
-
-        $items = [];
-        foreach ($businessItems as $businessItem) {
-            $config = $configs[$businessItem] ?? [];
-            $debitSubjectCode = $config['debit_subject_code'] ?? '';
-            $creditSubjectCode = $config['credit_subject_code'] ?? '';
-            $items[] = [
-                'config_id' => $config['config_id'] ?? '',
-                'account_set_id' => $this->accountSetId,
-                'biz_type' => $bizType,
-                'voucher_biz_type' => $voucherBizType,
-                'business_item_type' => $businessItem,
-                'debit_subject_code' => $debitSubjectCode,
-                'debit_subject_name' => $subjectNames[$debitSubjectCode] ?? '',
-                'credit_subject_code' => $creditSubjectCode,
-                'credit_subject_name' => $subjectNames[$creditSubjectCode] ?? '',
-            ];
-        }
-        return $this->ok([
-            'items' => $items,
-            'biz_type' => $bizType,
-            'voucher_biz_type' => $voucherBizType,
-            'generate_voucher_by_day_flag' => $generateVoucherByDayFlag,
-            'generate_payment_voucher_by_method_flag' => $generatePaymentVoucherByMethodFlag,
-            'generate_refund_voucher_by_out_order_no_flag' => $generateRefundVoucherByOutOrderNoFlag,
-            'payment_method_items' => $voucherBizType === 'PAYMENT' ? $this->paymentMethodSubjectConfigItems($bizType, $items) : [],
-        ], 'OK', count($items));
+        return $this->ok($result['data'], 'OK', $result['total']);
     }
 
     public function subjectConfigSave($data = [])
@@ -883,49 +839,20 @@ class CaseFund extends Common
             return $this->error('科目配置类型不能为空');
         }
         $bizType = $this->currentAccountSetBizType();
-        $allowedItems = $this->allowedSubjectConfigItems($bizType, $voucherBizType);
-        if (empty($allowedItems)) {
-            return $this->error('当前账套类型不支持该科目配置：' . $bizType);
+        $prepared = $this->subjectConfigApplicationService()->prepareSave($data, $bizType, $voucherBizType);
+        if (!empty($prepared['error'])) {
+            return $this->error($prepared['error']);
         }
-        $items = $data['items'] ?? [];
-        if (!is_array($items) || empty($items)) {
-            return $this->error('科目配置明细不能为空');
-        }
-        $generateVoucherByDayFlag = $this->normalizeDailyVoucherFlag($data['generate_voucher_by_day_flag'] ?? ($data['generateVoucherByDayFlag'] ?? $this->subjectConfigAccountSetFlag()));
-        $generateRefundVoucherByOutOrderNoFlag = $this->normalizeDailyVoucherFlag(
-            $data['generate_refund_voucher_by_out_order_no_flag']
-            ?? ($data['generateRefundVoucherByOutOrderNoFlag'] ?? $this->generateRefundVoucherByOutOrderNoFlag())
-        );
-        $generatePaymentVoucherByMethodFlag = $this->normalizeDailyVoucherFlag(
-            $data['generate_payment_voucher_by_method_flag']
-            ?? ($data['generatePaymentVoucherByMethodFlag'] ?? $this->generatePaymentVoucherByMethodFlag())
-        );
 
-        $accountSetBefore = null;
-        $accountSetAfter = null;
         Db::startTrans();
         try {
-            list($accountSetBefore, $accountSetAfter) = $this->saveSubjectConfigAccountSetFlag($generateVoucherByDayFlag, $generateRefundVoucherByOutOrderNoFlag, $generatePaymentVoucherByMethodFlag);
-            $saveResult = $this->subjectConfigManager()->saveBusinessSubjectConfigs(
-                $bizType,
-                $voucherBizType,
-                $items,
-                $allowedItems
-            );
-            $before = $saveResult['before'];
-            $after = $saveResult['after'];
-            if ($voucherBizType === 'PAYMENT') {
-                $methodItems = $data['payment_method_items'] ?? ($data['paymentMethodItems'] ?? []);
-                $methodSaveResult = $this->savePaymentMethodSubjectConfigs($bizType, $methodItems, $items);
-                $before = array_merge($before, $methodSaveResult['before']);
-                $after = array_merge($after, $methodSaveResult['after']);
-            }
+            $saveResult = $this->subjectConfigApplicationService()->savePrepared($prepared);
             $this->logAudit('CASE_FUND_SUBJECT_CONFIG', $voucherBizType . '@' . $bizType, 'SAVE', [
-                'account_set' => $accountSetBefore,
-                'subject_configs' => $before,
+                'account_set' => $saveResult['account_set_before'],
+                'subject_configs' => $saveResult['before'],
             ], [
-                'account_set' => $accountSetAfter,
-                'subject_configs' => $after,
+                'account_set' => $saveResult['account_set_after'],
+                'subject_configs' => $saveResult['after'],
             ]);
             Db::commit();
         } catch (\Exception $e) {
@@ -933,7 +860,7 @@ class CaseFund extends Common
             return $this->error('保存科目配置失败：' . $e->getMessage());
         }
 
-        return $this->ok(['saved' => count($after)], '保存成功', count($after));
+        return $this->ok(['saved' => $saveResult['saved']], '保存成功', $saveResult['saved']);
     }
 
     public function paymentGenerateVoucher($data = [])
@@ -3485,6 +3412,23 @@ class CaseFund extends Common
             ], self::TABLE_SUBJECT_CONFIG);
         }
         return $this->subjectConfigManager;
+    }
+
+    protected function subjectConfigApplicationService()
+    {
+        if ($this->subjectConfigApplicationService === null) {
+            $this->subjectConfigApplicationService = new SubjectConfigApplicationService(
+                $this->businessPolicy(),
+                $this->subjectConfigResolver(),
+                $this->subjectConfigManager(),
+                [
+                    'account_set_id' => function () {
+                        return $this->accountSetId;
+                    },
+                ]
+            );
+        }
+        return $this->subjectConfigApplicationService;
     }
 
 }
