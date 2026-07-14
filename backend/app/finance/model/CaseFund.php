@@ -23,6 +23,7 @@ use app\finance\service\casefund\voucher\CaseFundVoucherRule;
 use app\finance\service\casefund\voucher\PaymentVoucherGenerationService;
 use app\finance\service\casefund\voucher\RefundVoucherGenerationService;
 use app\finance\service\casefund\voucher\UnknownPaymentVoucherGenerationService;
+use app\finance\service\casefund\voucher\DistributionVoucherGenerationService;
 use think\Db;
 
 class CaseFund extends Common
@@ -48,6 +49,7 @@ class CaseFund extends Common
     protected $paymentVoucherGenerationService;
     protected $refundVoucherGenerationService;
     protected $unknownPaymentVoucherGenerationService;
+    protected $distributionVoucherGenerationService;
 
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
@@ -1004,200 +1006,21 @@ class CaseFund extends Common
             return $auth;
         }
 
-        $distributionIds = $this->normalizeIdList($data['distribution_ids'] ?? ($data['ids'] ?? []));
-        if (empty($distributionIds)) {
-            return $this->error('请选择要生成凭证的案款分配记录');
-        }
-
-        $bizType = $this->currentAccountSetBizType();
-        if ($bizType !== 'CASE_FUND') {
-            return $this->error('当前账套类型不支持案款分配生成凭证：' . $bizType);
-        }
-
-        $subjectConfigMap = $this->subjectConfigResolver()->directConfigsByBusinessItems(
-            'CASE_FUND',
-            'DISTRIBUTION'
+        $prepared = $this->distributionVoucherGenerationService()->prepareGeneration(
+            $data['distribution_ids'] ?? ($data['ids'] ?? [])
         );
-        if (empty($subjectConfigMap)) {
-            return $this->error('案款分配未配置借方/贷方科目');
+        if (!empty($prepared['error'])) {
+            return $this->error($prepared['error']);
         }
-
-        $generatedCount = 0;
-        $voucherInfos = [];
-        $rows = [];
 
         Db::startTrans();
         try {
-            $rows = $this->getdb(self::TABLE_DISTRIBUTION)
-                ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-                ->where('distribution_id', 'in', $distributionIds)
-                ->field(self::DISTRIBUTION_FIELD)
-                ->order('receive_date asc, distribution_no asc, source_row_no asc')
-                ->lock(true)
-                ->select();
-
-            if (count($rows) !== count($distributionIds)) {
-                throw new \Exception('所选案款分配记录不存在或已被删除，请刷新后重试');
-            }
-
-            foreach ($rows as &$row) {
-                $row['case_no'] = $row['out_case_no'] ?? '';
-            }
-            unset($row);
-
-            $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '案款分配记录');
-            if ($generationCheck !== null) {
-                throw new \Exception($generationCheck);
-            }
-
-            foreach ($rows as $row) {
-                $invoiceType = $row['invoice_type'];
-                if (!isset($subjectConfigMap[$invoiceType])) {
-                    throw new \Exception('分配单号【' . $row['distribution_no'] . '】的开票种类【' . $invoiceType . '】未配置借方/贷方科目');
-                }
-                $debitCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$invoiceType]['debit_subject_code'], '借方科目');
-                if ($debitCheck !== null) {
-                    throw new \Exception('分配单号【' . $row['distribution_no'] . '】' . $debitCheck);
-                }
-                $creditCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$invoiceType]['credit_subject_code'], '贷方科目');
-                if ($creditCheck !== null) {
-                    throw new \Exception('分配单号【' . $row['distribution_no'] . '】' . $creditCheck);
-                }
-            }
-
-            $groups = $this->groupDistributionRowsForVoucher($rows);
-            foreach ($groups as $groupRows) {
-                $firstRow = $groupRows[0];
-                $period = substr($firstRow['receive_date'], 0, 7);
-                $voucherDate = $firstRow['receive_date'];
-                foreach ($groupRows as $row) {
-                    $periodCheck = $this->validateDistributionVoucherPeriod($row, $period);
-                    if ($periodCheck !== null) {
-                        throw new \Exception($periodCheck);
-                    }
-                }
-
-                $fiscalYear = $this->fiscalYear($period);
-                $voucherTable = 'fin_voucher';
-                $detailTable = 'fin_voucher_detail';
-                $auxTable = 'fin_voucher_aux_value';
-
-                $voucherId = uuid();
-                $voucherNo = $this->generateNextVoucherNo($period);
-
-                $detailBuildResult = $this->buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap);
-                $detailsData = $detailBuildResult['details'];
-                $totalDebit = $detailBuildResult['total_cents'];
-
-                if ($totalDebit <= 0) {
-                    throw new \Exception('凭证金额必须大于0');
-                }
-                $this->ensureAuxArchivesForVoucherDetails($detailsData);
-
-                $voucher = [
-                    'voucher_id' => $voucherId,
-                    'account_set_id' => $this->accountSetId,
-                    'fiscal_year' => $fiscalYear,
-                    'period' => $period,
-                    'voucher_date' => $voucherDate,
-                    'voucher_word' => '记',
-                    'voucher_no' => $voucherNo,
-                    'summary' => $this->buildDistributionVoucherHeaderSummary($firstRow),
-                    'debit_amount' => $this->centsToDecimal($totalDebit),
-                    'credit_amount' => $this->centsToDecimal($totalDebit),
-                    'attachment_count' => 0,
-                    'status' => 'SUBMITTED',
-                    'source_type' => 'BUSINESS',
-                    'printed_flag' => '0',
-                    'prepared_by' => $this->userid,
-                    'prepared_time' => $this->now(),
-                    'audit_by' => null,
-                    'audit_time' => null,
-                    'posted_by' => null,
-                    'posted_time' => null,
-                    'void_flag' => '0',
-                    'remark' => '',
-                ];
-                $this->fillCreate($voucher);
-                $this->getdb($voucherTable)->insert($voucher);
-
-                foreach ($detailsData as $detail) {
-                    $auxValues = $detail['aux_values'];
-                    unset($detail['aux_values']);
-
-                    $detailRow = [
-                        'detail_id' => $detail['detail_id'],
-                        'account_set_id' => $this->accountSetId,
-                        'fiscal_year' => $fiscalYear,
-                        'period' => $period,
-                        'voucher_id' => $voucherId,
-                        'line_no' => $detail['line_no'],
-                        'subject_code' => $detail['subject_code'],
-                        'summary' => $detail['summary'],
-                        'debit_amount' => $detail['debit_amount'],
-                        'credit_amount' => $detail['credit_amount'],
-                        'verification_status' => $detail['verification_status'],
-                        'aux_desc' => $detail['aux_desc'],
-                        'remark' => '',
-                    ];
-                    $this->fillCreate($detailRow);
-                    $this->getdb($detailTable)->insert($detailRow);
-
-                    foreach ($auxValues as $aux) {
-                        if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
-                            continue;
-                        }
-                        $auxRow = [
-                            'id' => uuid(),
-                            'account_set_id' => $this->accountSetId,
-                            'fiscal_year' => $fiscalYear,
-                            'period' => $period,
-                            'voucher_id' => $voucherId,
-                            'detail_id' => $detail['detail_id'],
-                            'aux_type_code' => $aux['aux_type_code'],
-                            'aux_value' => $aux['aux_value'],
-                            'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
-                            'remark' => '',
-                        ];
-                        $this->fillCreate($auxRow);
-                        $this->getdb($auxTable)->insert($auxRow);
-                    }
-                }
-
-                foreach ($groupRows as $row) {
-                    $affectedRows = $this->getdb(self::TABLE_DISTRIBUTION)->where([
-                        'distribution_id' => $row['distribution_id'],
-                        'account_set_id' => $this->accountSetId,
-                        'fiscal_year' => $this->currentYear(),
-                        'del_flag' => 0,
-                    ])->update([
-                        'voucher_status' => 'GENERATED',
-                        'voucher_id' => $voucherId,
-                        'voucher_no' => $voucherNo,
-                        'voucher_period' => $period,
-                        'voucher_generated_time' => $this->now(),
-                        'updated_by' => $this->userid,
-                        'updated_time' => $this->now(),
-                    ]);
-                    if ((int)$affectedRows !== 1) {
-                        throw new \Exception('案款分配记录状态已变化，请刷新后重试');
-                    }
-                }
-
-                $generatedCount++;
-                $voucherInfos[] = [
-                    'voucher_id' => $voucherId,
-                    'voucher_no' => $voucherNo,
-                    'period' => $period,
-                ];
-            }
-
+            $result = $this->distributionVoucherGenerationService()->generatePrepared($prepared);
             $this->logAudit('CASE_FUND_DISTRIBUTION', 'VOUCHER_GENERATE', 'GENERATE', null, [
-                'distribution_count' => count($rows),
-                'voucher_count' => $generatedCount,
-                'vouchers' => $voucherInfos,
+                'distribution_count' => $result['distribution_count'],
+                'voucher_count' => $result['generated_count'],
+                'vouchers' => $result['vouchers'],
             ]);
-
             Db::commit();
         } catch (\Exception $e) {
             Db::rollback();
@@ -1205,10 +1028,10 @@ class CaseFund extends Common
         }
 
         return $this->ok([
-            'generated_count' => $generatedCount,
-            'distribution_count' => count($rows),
-            'vouchers' => $voucherInfos,
-        ], '成功生成 ' . $generatedCount . ' 张凭证');
+            'generated_count' => $result['generated_count'],
+            'distribution_count' => $result['distribution_count'],
+            'vouchers' => $result['vouchers'],
+        ], '成功生成 ' . $result['generated_count'] . ' 张凭证');
     }
 
     public function refundGenerateVoucher($data = [])
@@ -2702,6 +2525,71 @@ class CaseFund extends Common
             );
         }
         return $this->unknownPaymentVoucherGenerationService;
+    }
+
+    protected function distributionVoucherGenerationService()
+    {
+        if ($this->distributionVoucherGenerationService === null) {
+            $this->distributionVoucherGenerationService = new DistributionVoucherGenerationService(
+                $this->subjectConfigResolver(),
+                $this->subjectConfigManager(),
+                $this->voucherRule(),
+                [
+                    'get_db' => function ($table) {
+                        return $this->getdb($table);
+                    },
+                    'account_set_id' => function () {
+                        return $this->accountSetId;
+                    },
+                    'current_year' => function () {
+                        return $this->currentYear();
+                    },
+                    'current_biz_type' => function () {
+                        return $this->currentAccountSetBizType();
+                    },
+                    'normalize_id_list' => function ($value) {
+                        return $this->normalizeIdList($value);
+                    },
+                    'assert_rows_can_generate' => function ($rows, $recordLabel) {
+                        return $this->assertRowsCanGenerateVoucher($rows, $recordLabel);
+                    },
+                    'validate_period' => function ($row, $period) {
+                        return $this->validateDistributionVoucherPeriod($row, $period);
+                    },
+                    'build_header_summary' => function ($row) {
+                        return $this->buildDistributionVoucherHeaderSummary($row);
+                    },
+                    'ensure_aux_archives' => function ($detailsData) {
+                        $this->ensureAuxArchivesForVoucherDetails($detailsData);
+                    },
+                    'fiscal_year' => function ($period) {
+                        return $this->fiscalYear($period);
+                    },
+                    'generate_next_voucher_no' => function ($period) {
+                        return $this->generateNextVoucherNo($period);
+                    },
+                    'cents_to_decimal' => function ($cents) {
+                        return $this->centsToDecimal($cents);
+                    },
+                    'new_id' => function () {
+                        return uuid();
+                    },
+                    'prepare_create' => function ($row) {
+                        $this->fillCreate($row);
+                        return $row;
+                    },
+                    'current_user_id' => function () {
+                        return $this->userid;
+                    },
+                    'now' => function () {
+                        return $this->now();
+                    },
+                ],
+                self::TABLE_DISTRIBUTION,
+                self::DISTRIBUTION_FIELD
+            );
+        }
+        return $this->distributionVoucherGenerationService;
     }
 
     protected function businessPolicy()
