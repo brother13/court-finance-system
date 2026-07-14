@@ -1,7 +1,9 @@
 <?php
 
+require_once __DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php';
 require_once __DIR__ . '/../app/finance/service/casefund/voucher/DistributionVoucherGenerationService.php';
 
+use app\finance\service\casefund\voucher\CaseFundVoucherPersistenceService;
 use app\finance\service\casefund\voucher\DistributionVoucherGenerationService;
 
 class DistributionVoucherResolverStub
@@ -87,6 +89,14 @@ class DistributionVoucherDbStub
     public function update($row) { $this->updates[] = $row; return $this->updateResult; }
 }
 
+class DistributionFailingPersistenceStub
+{
+    public function persistVoucher(array $context, array $detailsData)
+    {
+        throw new \RuntimeException('distribution persistence failed');
+    }
+}
+
 function distributionServiceAssertSame($expected, $actual, $message)
 {
     if ($expected !== $actual) {
@@ -159,9 +169,10 @@ $hooks = [
     'current_user_id' => function () { return 'user-1'; },
     'now' => function () { return '2026-07-14 12:00:00'; },
 ];
+$persistence = new CaseFundVoucherPersistenceService($hooks);
 
 try {
-    new DistributionVoucherGenerationService($resolver, $manager, $rule, [], 'distribution', []);
+    new DistributionVoucherGenerationService($resolver, $manager, $rule, $persistence, [], 'distribution', []);
     fwrite(STDERR, 'Distribution voucher service should reject incomplete hooks' . PHP_EOL);
     exit(1);
 } catch (\InvalidArgumentException $e) {
@@ -172,6 +183,7 @@ $service = new DistributionVoucherGenerationService(
     $resolver,
     $manager,
     $rule,
+    $persistence,
     $hooks,
     'fin_case_fund_distribution',
     ['distribution_id']
@@ -187,9 +199,35 @@ distributionServiceAssertSame(1, $result['generated_count'], 'One distribution n
 distributionServiceAssertSame(2, $result['distribution_count'], 'Result should report locked source row count');
 distributionServiceAssertSame(4, $ensuredDetailCount, 'Aux archives should be prepared from final voucher details');
 distributionServiceAssertSame(1, count($dbs['fin_voucher']->inserts), 'Distribution generation should insert one voucher header');
+distributionServiceAssertSame('分配 D-001 合计', $dbs['fin_voucher']->inserts[0]['summary'], 'Distribution persistence should keep group summary');
+distributionServiceAssertSame('30.00', $dbs['fin_voucher']->inserts[0]['debit_amount'], 'Distribution persistence should keep group total');
 distributionServiceAssertSame(4, count($dbs['fin_voucher_detail']->inserts), 'Distribution generation should insert balanced debit-credit details');
 distributionServiceAssertSame(8, count($dbs['fin_voucher_aux_value']->inserts), 'Distribution generation should persist configured case and receipt aux values');
 distributionServiceAssertSame(2, count($dbs['fin_case_fund_distribution']->updates), 'Every distribution row should be marked generated');
+
+$dbs['fin_case_fund_distribution']->updates = [];
+$failedPersistenceService = new DistributionVoucherGenerationService(
+    $resolver,
+    $manager,
+    $rule,
+    new DistributionFailingPersistenceStub(),
+    $hooks,
+    'fin_case_fund_distribution',
+    ['distribution_id']
+);
+$failedPersistencePrepared = $failedPersistenceService->prepareGeneration('d1,d2');
+try {
+    $failedPersistenceService->generatePrepared($failedPersistencePrepared);
+    fwrite(STDERR, 'Distribution persistence errors should propagate' . PHP_EOL);
+    exit(1);
+} catch (\RuntimeException $e) {
+    distributionServiceAssertSame('distribution persistence failed', $e->getMessage(), 'Distribution persistence error should be unchanged');
+}
+distributionServiceAssertSame(
+    0,
+    count($dbs['fin_case_fund_distribution']->updates),
+    'Distribution source rows should only update after voucher persistence succeeds'
+);
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/DistributionVoucherGenerationService.php');
 foreach (['requirePermission', 'Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {

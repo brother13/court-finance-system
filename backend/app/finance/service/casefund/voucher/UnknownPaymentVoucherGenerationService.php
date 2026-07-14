@@ -11,6 +11,7 @@ class UnknownPaymentVoucherGenerationService
 {
     protected $manager;
     protected $rule;
+    protected $persistence;
     protected $hooks;
     protected $unknownPaymentTable;
     protected $unknownPaymentField;
@@ -20,14 +21,18 @@ class UnknownPaymentVoucherGenerationService
     public function __construct(
         $manager,
         $rule,
+        $persistence,
         array $hooks,
         $unknownPaymentTable,
         array $unknownPaymentField,
         $subjectConfigTable,
         array $subjectConfigField
     ) {
-        if (!is_object($manager) || !is_object($rule)) {
+        if (!is_object($manager) || !is_object($rule) || !is_object($persistence)) {
             throw new \InvalidArgumentException('不明款凭证生成服务缺少协作对象');
+        }
+        if (!method_exists($persistence, 'persistVoucher')) {
+            throw new \InvalidArgumentException('不明款凭证生成服务缺少凭证持久化能力');
         }
         $requiredHooks = [
             'get_db',
@@ -42,9 +47,7 @@ class UnknownPaymentVoucherGenerationService
             'build_summary',
             'fiscal_year',
             'generate_next_voucher_no',
-            'cents_to_decimal',
             'new_id',
-            'prepare_create',
             'current_user_id',
             'now',
         ];
@@ -56,6 +59,7 @@ class UnknownPaymentVoucherGenerationService
 
         $this->manager = $manager;
         $this->rule = $rule;
+        $this->persistence = $persistence;
         $this->hooks = $hooks;
         $this->unknownPaymentTable = $unknownPaymentTable;
         $this->unknownPaymentField = $unknownPaymentField;
@@ -186,52 +190,15 @@ class UnknownPaymentVoucherGenerationService
                 throw new \Exception('凭证金额必须大于0');
             }
 
-            $voucher = [
+            $this->persistence->persistVoucher([
                 'voucher_id' => $voucherId,
-                'account_set_id' => $this->callHook('account_set_id'),
                 'fiscal_year' => $fiscalYear,
                 'period' => $period,
                 'voucher_date' => $voucherDate,
-                'voucher_word' => '记',
                 'voucher_no' => $voucherNo,
                 'summary' => $this->callHook('build_summary', [$firstRow]),
-                'debit_amount' => $this->callHook('cents_to_decimal', [$totalDebit]),
-                'credit_amount' => $this->callHook('cents_to_decimal', [$totalDebit]),
-                'attachment_count' => 0,
-                'status' => 'SUBMITTED',
-                'source_type' => 'BUSINESS',
-                'printed_flag' => '0',
-                'prepared_by' => $this->callHook('current_user_id'),
-                'prepared_time' => $this->callHook('now'),
-                'audit_by' => null,
-                'audit_time' => null,
-                'posted_by' => null,
-                'posted_time' => null,
-                'void_flag' => '0',
-                'remark' => '',
-            ];
-            $voucher = $this->callHook('prepare_create', [$voucher]);
-            $this->db('fin_voucher')->insert($voucher);
-
-            foreach ($detailsData as $detail) {
-                $detailRow = [
-                    'detail_id' => $detail['detail_id'],
-                    'account_set_id' => $this->callHook('account_set_id'),
-                    'fiscal_year' => $fiscalYear,
-                    'period' => $period,
-                    'voucher_id' => $voucherId,
-                    'line_no' => $detail['line_no'],
-                    'subject_code' => $detail['subject_code'],
-                    'summary' => $detail['summary'],
-                    'debit_amount' => $detail['debit_amount'],
-                    'credit_amount' => $detail['credit_amount'],
-                    'verification_status' => $detail['verification_status'],
-                    'aux_desc' => $detail['aux_desc'],
-                    'remark' => '',
-                ];
-                $detailRow = $this->callHook('prepare_create', [$detailRow]);
-                $this->db('fin_voucher_detail')->insert($detailRow);
-            }
+                'total_cents' => $totalDebit,
+            ], $detailsData);
 
             foreach ($groupRows as $row) {
                 $affectedRows = $this->db($this->unknownPaymentTable)->where([

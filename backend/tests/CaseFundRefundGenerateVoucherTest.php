@@ -4,7 +4,8 @@ $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
 $voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
 $refundServiceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');
-$implementationSource = $source . "\n" . $voucherRuleSource . "\n" . $refundServiceSource;
+$persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
+$implementationSource = $source . "\n" . $voucherRuleSource . "\n" . $refundServiceSource . "\n" . $persistenceSource;
 $ddl = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');
 $patch = file_get_contents(__DIR__ . '/../database/finance_standard_patch.sql');
 
@@ -26,6 +27,7 @@ $checks = [
     ['fin_voucher', 'Refund voucher generation should write voucher table'],
     ['fin_voucher_detail', 'Refund voucher generation should write voucher detail table'],
     ['fin_voucher_aux_value', 'Refund voucher generation should write voucher aux values'],
+    ['persistVoucher', 'Refund voucher generation should use common voucher persistence'],
     ['generateRefundVoucherByOutOrderNoFlag', 'Refund voucher generation should read out-order grouping config'],
     ['groupRefundRowsForVoucher', 'Refund voucher generation should group rows through a dedicated helper'],
     ['assertRowsCanGenerateVoucher', 'Refund voucher generation should validate whether selected generated rows can be regenerated'],
@@ -40,6 +42,13 @@ $checks = [
 foreach ($checks as [$needle, $message]) {
     if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
+        exit(1);
+    }
+}
+
+foreach (["db('fin_voucher')", "db('fin_voucher_detail')", "db('fin_voucher_aux_value')"] as $directWrite) {
+    if (strpos($refundServiceSource, $directWrite) !== false) {
+        fwrite(STDERR, 'Refund generation service should not directly write common voucher tables: ' . $directWrite . PHP_EOL);
         exit(1);
     }
 }

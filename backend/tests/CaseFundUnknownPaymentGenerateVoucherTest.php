@@ -4,7 +4,8 @@ $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
 $serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php');
 $voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
-$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource;
+$persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
+$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource . "\n" . $persistenceSource;
 
 $checks = [
     ["case 'unknownPaymentGenerateVoucher'", 'CaseFund should route unknownPaymentGenerateVoucher'],
@@ -23,6 +24,7 @@ $checks = [
     ['hasRequiredAuxConfigs', 'Unknown payment generation should reject required aux subjects'],
     ['fin_voucher', 'Unknown payment generation should write voucher table'],
     ['fin_voucher_detail', 'Unknown payment generation should write voucher detail table'],
+    ['persistVoucher', 'Unknown payment generation should use common voucher persistence'],
     ["'BUSINESS'", 'Unknown payment vouchers should use BUSINESS source type'],
     ["'SUBMITTED'", 'Unknown payment vouchers should be submitted'],
     ['CASE_FUND_UNKNOWN_PAYMENT', 'Unknown payment generation should write audit log'],
@@ -30,6 +32,13 @@ $checks = [
 foreach ($checks as [$needle, $message]) {
     if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
+        exit(1);
+    }
+}
+
+foreach (["db('fin_voucher')", "db('fin_voucher_detail')", "db('fin_voucher_aux_value')"] as $directWrite) {
+    if (strpos($serviceSource, $directWrite) !== false) {
+        fwrite(STDERR, 'Unknown-payment generation service should not directly write common voucher tables: ' . $directWrite . PHP_EOL);
         exit(1);
     }
 }

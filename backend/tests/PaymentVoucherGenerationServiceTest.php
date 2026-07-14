@@ -1,9 +1,11 @@
 <?php
 
 require_once __DIR__ . '/../app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
+require_once __DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php';
 require_once __DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php';
 
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
+use app\finance\service\casefund\voucher\CaseFundVoucherPersistenceService;
 use app\finance\service\casefund\voucher\PaymentVoucherGenerationService;
 
 class PaymentVoucherResolverStub
@@ -155,6 +157,14 @@ class PaymentVoucherRuntimeState
     public $idSequence = 0;
 }
 
+class PaymentFailingPersistenceStub
+{
+    public function persistVoucher(array $context, array $detailsData)
+    {
+        throw new \RuntimeException('payment persistence failed');
+    }
+}
+
 function paymentServiceAssertSame($expected, $actual, $message)
 {
     if ($expected !== $actual) {
@@ -175,7 +185,7 @@ function paymentServiceAssertThrows($expectedMessage, $callback, $message)
     exit(1);
 }
 
-function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [])
+function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [], $failPersistence = false)
 {
     $policy = new CaseFundBusinessPolicy();
     $resolver = new PaymentVoucherResolverStub();
@@ -215,11 +225,15 @@ function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $upda
         'current_user_id' => function () { return 'user-1'; },
         'now' => function () { return '2026-07-14 12:00:00'; },
     ];
+    $persistence = $failPersistence
+        ? new PaymentFailingPersistenceStub()
+        : new CaseFundVoucherPersistenceService($hooks);
     $service = new PaymentVoucherGenerationService(
         $policy,
         $resolver,
         $manager,
         $rule,
+        $persistence,
         $hooks,
         'fin_case_fund_payment',
         ['payment_id', 'payment_date', 'payment_amount', 'payment_method', 'business_type', 'case_no', 'voucher_status', 'voucher_id']
@@ -249,9 +263,10 @@ $hooks = [
     'current_user_id' => function () { return 'user-1'; },
     'now' => function () { return '2026-07-14 12:00:00'; },
 ];
+$persistence = new CaseFundVoucherPersistenceService($hooks);
 
 try {
-    new PaymentVoucherGenerationService($policy, $resolver, $manager, $rule, [], 'payment', []);
+    new PaymentVoucherGenerationService($policy, $resolver, $manager, $rule, $persistence, [], 'payment', []);
     fwrite(STDERR, 'Payment voucher service should reject incomplete hooks' . PHP_EOL);
     exit(1);
 } catch (\InvalidArgumentException $e) {
@@ -263,6 +278,7 @@ $service = new PaymentVoucherGenerationService(
     $resolver,
     $manager,
     $rule,
+    $persistence,
     $hooks,
     'fin_case_fund_payment',
     ['payment_id']
@@ -327,6 +343,9 @@ paymentServiceAssertSame('GENERATED', $runtimeState->guardSnapshots[1][1]['vouch
 paymentServiceAssertSame($lockedRows, $runtimeRule->groupRowsHistory[1], 'Payment groups must be rebuilt from locked rows');
 paymentServiceAssertSame(2, $runtimeResult['generated_count'], 'Payment method split should create two vouchers from locked rows');
 paymentServiceAssertSame(2, $runtimeResult['payment_count'], 'Payment count should come from locked rows');
+paymentServiceAssertSame(2, count($runtimeDbs['fin_voucher']->inserts), 'Each payment group should persist one voucher');
+paymentServiceAssertSame('收案款', $runtimeDbs['fin_voucher']->inserts[0]['summary'], 'Payment persistence should keep detail summary');
+paymentServiceAssertSame('10.00', $runtimeDbs['fin_voucher']->inserts[0]['debit_amount'], 'Payment persistence should keep group total');
 paymentServiceAssertSame(2, count($runtimeDbs['fin_case_fund_payment']->updates), 'Every locked payment row should be updated once');
 $paymentUpdateScopeFound = false;
 foreach ($runtimeDbs['fin_case_fund_payment']->whereCalls as $whereCall) {
@@ -364,6 +383,26 @@ paymentServiceAssertThrows(
     '缴费记录状态已变化，请刷新后重试',
     function () use ($failedUpdateService, $failedUpdatePrepared) { $failedUpdateService->generatePrepared($failedUpdatePrepared); },
     'Payment source update must affect exactly one locked row'
+);
+
+[$failedPersistenceService, $failedPersistenceDbs] = paymentRuntimeFixture(
+    [$initialRows[0]],
+    false,
+    [],
+    true
+);
+$failedPersistencePrepared = $failedPersistenceService->prepareGeneration([$initialRows[0]], 'SELECTED');
+paymentServiceAssertThrows(
+    'payment persistence failed',
+    function () use ($failedPersistenceService, $failedPersistencePrepared) {
+        $failedPersistenceService->generatePrepared($failedPersistencePrepared);
+    },
+    'Payment persistence errors should propagate to the caller transaction'
+);
+paymentServiceAssertSame(
+    0,
+    count($failedPersistenceDbs['fin_case_fund_payment']->updates),
+    'Payment source rows should only update after voucher persistence succeeds'
 );
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php');

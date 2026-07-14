@@ -20,6 +20,7 @@ use app\finance\service\casefund\subject\SubjectConfigManager;
 use app\finance\service\casefund\subject\SubjectConfigApplicationService;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
 use app\finance\service\casefund\voucher\CaseFundVoucherRule;
+use app\finance\service\casefund\voucher\CaseFundVoucherPersistenceService;
 use app\finance\service\casefund\voucher\PaymentVoucherGenerationService;
 use app\finance\service\casefund\voucher\RefundVoucherGenerationService;
 use app\finance\service\casefund\voucher\UnknownPaymentVoucherGenerationService;
@@ -46,6 +47,7 @@ class CaseFund extends Common
     protected $subjectConfigManager;
     protected $subjectConfigApplicationService;
     protected $voucherRule;
+    protected $voucherPersistenceService;
     protected $paymentVoucherGenerationService;
     protected $refundVoucherGenerationService;
     protected $unknownPaymentVoucherGenerationService;
@@ -2335,6 +2337,37 @@ class CaseFund extends Common
         return $this->voucherRule;
     }
 
+    protected function voucherPersistenceService()
+    {
+        if ($this->voucherPersistenceService === null) {
+            $this->voucherPersistenceService = new CaseFundVoucherPersistenceService([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'cents_to_decimal' => function ($cents) {
+                    return $this->centsToDecimal($cents);
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'prepare_create' => function ($row) {
+                    $this->fillCreate($row);
+                    return $row;
+                },
+                'current_user_id' => function () {
+                    return $this->userid;
+                },
+                'now' => function () {
+                    return $this->now();
+                },
+            ]);
+        }
+        return $this->voucherPersistenceService;
+    }
+
     protected function paymentVoucherGenerationService()
     {
         if ($this->paymentVoucherGenerationService === null) {
@@ -2343,6 +2376,7 @@ class CaseFund extends Common
                 $this->subjectConfigResolver(),
                 $this->subjectConfigManager(),
                 $this->voucherRule(),
+                $this->voucherPersistenceService(),
                 [
                     'get_db' => function ($table) {
                         return $this->getdb($table);
@@ -2371,15 +2405,8 @@ class CaseFund extends Common
                     'ensure_aux_archives' => function ($detailsData) {
                         $this->ensureAuxArchivesForVoucherDetails($detailsData);
                     },
-                    'cents_to_decimal' => function ($cents) {
-                        return $this->centsToDecimal($cents);
-                    },
                     'new_id' => function () {
                         return uuid();
-                    },
-                    'prepare_create' => function ($row) {
-                        $this->fillCreate($row);
-                        return $row;
                     },
                     'current_user_id' => function () {
                         return $this->userid;
@@ -2403,6 +2430,7 @@ class CaseFund extends Common
                 $this->subjectConfigResolver(),
                 $this->subjectConfigManager(),
                 $this->voucherRule(),
+                $this->voucherPersistenceService(),
                 [
                     'get_db' => function ($table) {
                         return $this->getdb($table);
@@ -2434,15 +2462,8 @@ class CaseFund extends Common
                     'ensure_aux_archives' => function ($detailsData) {
                         $this->ensureAuxArchivesForVoucherDetails($detailsData);
                     },
-                    'cents_to_decimal' => function ($cents) {
-                        return $this->centsToDecimal($cents);
-                    },
                     'new_id' => function () {
                         return uuid();
-                    },
-                    'prepare_create' => function ($row) {
-                        $this->fillCreate($row);
-                        return $row;
                     },
                     'current_user_id' => function () {
                         return $this->userid;
@@ -2464,6 +2485,7 @@ class CaseFund extends Common
             $this->unknownPaymentVoucherGenerationService = new UnknownPaymentVoucherGenerationService(
                 $this->subjectConfigManager(),
                 $this->voucherRule(),
+                $this->voucherPersistenceService(),
                 [
                     'get_db' => function ($table) {
                         return $this->getdb($table);
@@ -2501,15 +2523,8 @@ class CaseFund extends Common
                     'generate_next_voucher_no' => function ($period) {
                         return $this->generateNextVoucherNo($period);
                     },
-                    'cents_to_decimal' => function ($cents) {
-                        return $this->centsToDecimal($cents);
-                    },
                     'new_id' => function () {
                         return uuid();
-                    },
-                    'prepare_create' => function ($row) {
-                        $this->fillCreate($row);
-                        return $row;
                     },
                     'current_user_id' => function () {
                         return $this->userid;
@@ -2534,6 +2549,7 @@ class CaseFund extends Common
                 $this->subjectConfigResolver(),
                 $this->subjectConfigManager(),
                 $this->voucherRule(),
+                $this->voucherPersistenceService(),
                 [
                     'get_db' => function ($table) {
                         return $this->getdb($table);
@@ -2568,15 +2584,8 @@ class CaseFund extends Common
                     'generate_next_voucher_no' => function ($period) {
                         return $this->generateNextVoucherNo($period);
                     },
-                    'cents_to_decimal' => function ($cents) {
-                        return $this->centsToDecimal($cents);
-                    },
                     'new_id' => function () {
                         return uuid();
-                    },
-                    'prepare_create' => function ($row) {
-                        $this->fillCreate($row);
-                        return $row;
                     },
                     'current_user_id' => function () {
                         return $this->userid;

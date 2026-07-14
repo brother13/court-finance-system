@@ -13,16 +13,20 @@ class PaymentVoucherGenerationService
     protected $resolver;
     protected $manager;
     protected $rule;
+    protected $persistence;
     protected $hooks;
     protected $paymentTable;
     protected $paymentField;
 
-    public function __construct($policy, $resolver, $manager, $rule, array $hooks, $paymentTable, array $paymentField)
+    public function __construct($policy, $resolver, $manager, $rule, $persistence, array $hooks, $paymentTable, array $paymentField)
     {
-        foreach ([$policy, $resolver, $manager, $rule] as $dependency) {
+        foreach ([$policy, $resolver, $manager, $rule, $persistence] as $dependency) {
             if (!is_object($dependency)) {
                 throw new \InvalidArgumentException('缴费凭证生成服务缺少协作对象');
             }
+        }
+        if (!method_exists($persistence, 'persistVoucher')) {
+            throw new \InvalidArgumentException('缴费凭证生成服务缺少凭证持久化能力');
         }
         $requiredHooks = [
             'get_db',
@@ -34,9 +38,7 @@ class PaymentVoucherGenerationService
             'fiscal_year',
             'generate_next_voucher_no',
             'ensure_aux_archives',
-            'cents_to_decimal',
             'new_id',
-            'prepare_create',
             'current_user_id',
             'now',
         ];
@@ -50,6 +52,7 @@ class PaymentVoucherGenerationService
         $this->resolver = $resolver;
         $this->manager = $manager;
         $this->rule = $rule;
+        $this->persistence = $persistence;
         $this->hooks = $hooks;
         $this->paymentTable = $paymentTable;
         $this->paymentField = $paymentField;
@@ -211,73 +214,15 @@ class PaymentVoucherGenerationService
             }
             $this->callHook('ensure_aux_archives', [$detailsData]);
 
-            $voucher = [
+            $this->persistence->persistVoucher([
                 'voucher_id' => $voucherId,
-                'account_set_id' => $this->callHook('account_set_id'),
                 'fiscal_year' => $fiscalYear,
                 'period' => $period,
                 'voucher_date' => $voucherDate,
-                'voucher_word' => '记',
                 'voucher_no' => $voucherNo,
                 'summary' => $detailsData[0]['summary'] ?? $this->rule->buildPaymentVoucherSummary($firstRow),
-                'debit_amount' => $this->callHook('cents_to_decimal', [$totalDebit]),
-                'credit_amount' => $this->callHook('cents_to_decimal', [$totalDebit]),
-                'attachment_count' => 0,
-                'status' => 'SUBMITTED',
-                'source_type' => 'BUSINESS',
-                'printed_flag' => '0',
-                'prepared_by' => $this->callHook('current_user_id'),
-                'prepared_time' => $this->callHook('now'),
-                'audit_by' => null,
-                'audit_time' => null,
-                'posted_by' => null,
-                'posted_time' => null,
-                'void_flag' => '0',
-                'remark' => '',
-            ];
-            $voucher = $this->callHook('prepare_create', [$voucher]);
-            $this->db('fin_voucher')->insert($voucher);
-
-            foreach ($detailsData as $detail) {
-                $auxValues = $detail['aux_values'];
-                $detailRow = [
-                    'detail_id' => $detail['detail_id'],
-                    'account_set_id' => $this->callHook('account_set_id'),
-                    'fiscal_year' => $fiscalYear,
-                    'period' => $period,
-                    'voucher_id' => $voucherId,
-                    'line_no' => $detail['line_no'],
-                    'subject_code' => $detail['subject_code'],
-                    'summary' => $detail['summary'],
-                    'debit_amount' => $detail['debit_amount'],
-                    'credit_amount' => $detail['credit_amount'],
-                    'verification_status' => $detail['verification_status'],
-                    'aux_desc' => $detail['aux_desc'],
-                    'remark' => '',
-                ];
-                $detailRow = $this->callHook('prepare_create', [$detailRow]);
-                $this->db('fin_voucher_detail')->insert($detailRow);
-
-                foreach ($auxValues as $aux) {
-                    if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
-                        continue;
-                    }
-                    $auxRow = [
-                        'id' => $this->newId(),
-                        'account_set_id' => $this->callHook('account_set_id'),
-                        'fiscal_year' => $fiscalYear,
-                        'period' => $period,
-                        'voucher_id' => $voucherId,
-                        'detail_id' => $detail['detail_id'],
-                        'aux_type_code' => $aux['aux_type_code'],
-                        'aux_value' => $aux['aux_value'],
-                        'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
-                        'remark' => '',
-                    ];
-                    $auxRow = $this->callHook('prepare_create', [$auxRow]);
-                    $this->db('fin_voucher_aux_value')->insert($auxRow);
-                }
-            }
+                'total_cents' => $totalDebit,
+            ], $detailsData);
 
             foreach ($groupRows as $row) {
                 // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。

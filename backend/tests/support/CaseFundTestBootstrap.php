@@ -16,6 +16,7 @@ require_once $backendRoot . '/app/finance/service/casefund/persistence/CaseFundB
 require_once $backendRoot . '/app/finance/service/casefund/query/CaseFundBusinessQueryRepository.php';
 require_once $backendRoot . '/app/finance/service/casefund/validation/CaseFundImportValidator.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherRule.php';
+require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/RefundVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php';

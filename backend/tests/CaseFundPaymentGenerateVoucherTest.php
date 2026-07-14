@@ -3,7 +3,8 @@
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
 $serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php');
-$implementationSource = $source . "\n" . $serviceSource;
+$persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
+$implementationSource = $source . "\n" . $serviceSource . "\n" . $persistenceSource;
 
 $checks = [
     ["case 'paymentGenerateVoucher'", 'CaseFund should route paymentGenerateVoucher'],
@@ -24,6 +25,7 @@ $checks = [
     ['fin_voucher', 'CaseFund should write to voucher table'],
     ['fin_voucher_detail', 'CaseFund should write to voucher detail table'],
     ['fin_voucher_aux_value', 'CaseFund should write to voucher aux value table'],
+    ['persistVoucher', 'Payment voucher generation should use common voucher persistence'],
     ['fiscal_year', 'CaseFund voucher generation should save fiscal_year'],
     ['fin_aux_archive', 'CaseFund should check/create aux archive'],
     ['fin_aux_type', 'CaseFund should check/create aux type'],
@@ -42,6 +44,13 @@ $checks = [
 foreach ($checks as [$needle, $message]) {
     if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
+        exit(1);
+    }
+}
+
+foreach (["db('fin_voucher')", "db('fin_voucher_detail')", "db('fin_voucher_aux_value')"] as $directWrite) {
+    if (strpos($serviceSource, $directWrite) !== false) {
+        fwrite(STDERR, 'Payment generation service should not directly write common voucher tables: ' . $directWrite . PHP_EOL);
         exit(1);
     }
 }

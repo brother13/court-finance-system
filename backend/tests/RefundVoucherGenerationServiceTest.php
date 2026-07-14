@@ -1,9 +1,11 @@
 <?php
 
 require_once __DIR__ . '/../app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
+require_once __DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php';
 require_once __DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php';
 
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
+use app\finance\service\casefund\voucher\CaseFundVoucherPersistenceService;
 use app\finance\service\casefund\voucher\RefundVoucherGenerationService;
 
 class RefundVoucherResolverStub
@@ -130,6 +132,14 @@ class RefundVoucherRuntimeState
     public $idSequence = 0;
 }
 
+class RefundFailingPersistenceStub
+{
+    public function persistVoucher(array $context, array $detailsData)
+    {
+        throw new \RuntimeException('refund persistence failed');
+    }
+}
+
 function refundServiceAssertSame($expected, $actual, $message)
 {
     if ($expected !== $actual) {
@@ -150,7 +160,7 @@ function refundServiceAssertThrows($expectedMessage, $callback, $message)
     exit(1);
 }
 
-function refundRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [])
+function refundRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [], $failPersistence = false)
 {
     $policy = new CaseFundBusinessPolicy();
     $resolver = new RefundVoucherResolverStub();
@@ -191,11 +201,15 @@ function refundRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updat
         'current_user_id' => function () { return 'user-1'; },
         'now' => function () { return '2026-07-14 12:00:00'; },
     ];
+    $persistence = $failPersistence
+        ? new RefundFailingPersistenceStub()
+        : new CaseFundVoucherPersistenceService($hooks);
     $service = new RefundVoucherGenerationService(
         $policy,
         $resolver,
         $manager,
         $rule,
+        $persistence,
         $hooks,
         'fin_case_fund_refund',
         ['refund_id', 'refund_date', 'refund_amount', 'out_order_no', 'out_type', 'case_no', 'voucher_status', 'voucher_id']
@@ -224,9 +238,10 @@ $hooks = [
     'current_user_id' => function () { return 'user-1'; },
     'now' => function () { return '2026-07-14 12:00:00'; },
 ];
+$persistence = new CaseFundVoucherPersistenceService($hooks);
 
 try {
-    new RefundVoucherGenerationService($policy, $resolver, $manager, $rule, [], 'refund', []);
+    new RefundVoucherGenerationService($policy, $resolver, $manager, $rule, $persistence, [], 'refund', []);
     fwrite(STDERR, 'Refund voucher service should reject incomplete hooks' . PHP_EOL);
     exit(1);
 } catch (\InvalidArgumentException $e) {
@@ -238,6 +253,7 @@ $service = new RefundVoucherGenerationService(
     $resolver,
     $manager,
     $rule,
+    $persistence,
     $hooks,
     'fin_case_fund_refund',
     ['refund_id']
@@ -302,6 +318,9 @@ refundServiceAssertSame('GENERATED', $runtimeState->guardSnapshots[1][1]['vouche
 refundServiceAssertSame($lockedRows, $runtimeRule->groupRowsHistory[1], 'Refund groups must be rebuilt from locked rows');
 refundServiceAssertSame(1, $runtimeResult['generated_count'], 'Daily refund rows should create one voucher from locked rows');
 refundServiceAssertSame(2, $runtimeResult['refund_count'], 'Refund count should come from locked rows');
+refundServiceAssertSame(1, count($runtimeDbs['fin_voucher']->inserts), 'Each refund group should persist one voucher');
+refundServiceAssertSame('退案款', $runtimeDbs['fin_voucher']->inserts[0]['summary'], 'Refund persistence should keep rule header summary');
+refundServiceAssertSame('30.00', $runtimeDbs['fin_voucher']->inserts[0]['debit_amount'], 'Refund persistence should keep daily total');
 refundServiceAssertSame(2, count($runtimeDbs['fin_case_fund_refund']->updates), 'Every locked refund row should be updated once');
 $refundUpdateScopeFound = false;
 foreach ($runtimeDbs['fin_case_fund_refund']->whereCalls as $whereCall) {
@@ -339,6 +358,26 @@ refundServiceAssertThrows(
     '退付记录状态已变化，请刷新后重试',
     function () use ($failedUpdateService, $failedUpdatePrepared) { $failedUpdateService->generatePrepared($failedUpdatePrepared); },
     'Refund source update must affect exactly one locked row'
+);
+
+[$failedPersistenceService, $failedPersistenceDbs] = refundRuntimeFixture(
+    [$initialRows[0]],
+    false,
+    [],
+    true
+);
+$failedPersistencePrepared = $failedPersistenceService->prepareGeneration([$initialRows[0]], 'SELECTED');
+refundServiceAssertThrows(
+    'refund persistence failed',
+    function () use ($failedPersistenceService, $failedPersistencePrepared) {
+        $failedPersistenceService->generatePrepared($failedPersistencePrepared);
+    },
+    'Refund persistence errors should propagate to the caller transaction'
+);
+refundServiceAssertSame(
+    0,
+    count($failedPersistenceDbs['fin_case_fund_refund']->updates),
+    'Refund source rows should only update after voucher persistence succeeds'
 );
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');

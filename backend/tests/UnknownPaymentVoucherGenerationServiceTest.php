@@ -1,7 +1,9 @@
 <?php
 
+require_once __DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php';
 require_once __DIR__ . '/../app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php';
 
+use app\finance\service\casefund\voucher\CaseFundVoucherPersistenceService;
 use app\finance\service\casefund\voucher\UnknownPaymentVoucherGenerationService;
 
 class UnknownVoucherManagerStub
@@ -75,6 +77,14 @@ class UnknownVoucherDbStub
     public function update($row) { $this->updates[] = $row; return $this->updateResult; }
 }
 
+class UnknownFailingPersistenceStub
+{
+    public function persistVoucher(array $context, array $detailsData)
+    {
+        throw new \RuntimeException('unknown persistence failed');
+    }
+}
+
 function unknownServiceAssertSame($expected, $actual, $message)
 {
     if ($expected !== $actual) {
@@ -140,9 +150,10 @@ $hooks = [
     'current_user_id' => function () { return 'user-1'; },
     'now' => function () { return '2026-07-14 12:00:00'; },
 ];
+$persistence = new CaseFundVoucherPersistenceService($hooks);
 
 try {
-    new UnknownPaymentVoucherGenerationService($manager, $rule, [], 'unknown', [], 'config', []);
+    new UnknownPaymentVoucherGenerationService($manager, $rule, $persistence, [], 'unknown', [], 'config', []);
     fwrite(STDERR, 'Unknown-payment voucher service should reject incomplete hooks' . PHP_EOL);
     exit(1);
 } catch (\InvalidArgumentException $e) {
@@ -152,6 +163,7 @@ try {
 $service = new UnknownPaymentVoucherGenerationService(
     $manager,
     $rule,
+    $persistence,
     $hooks,
     'fin_case_fund_unknown_payment',
     ['unknown_payment_id'],
@@ -168,8 +180,35 @@ unknownServiceAssertSame(['period:u1', 'period:u2', 'voucher_no'], $events, 'Per
 unknownServiceAssertSame(1, $result['generated_count'], 'Daily unknown-payment rows should create one voucher');
 unknownServiceAssertSame(2, $result['unknown_payment_count'], 'Result should report locked source row count');
 unknownServiceAssertSame(1, count($dbs['fin_voucher']->inserts), 'Unknown-payment generation should insert one voucher header');
+unknownServiceAssertSame('收 不明款', $dbs['fin_voucher']->inserts[0]['summary'], 'Unknown-payment persistence should keep fixed summary');
+unknownServiceAssertSame('30.00', $dbs['fin_voucher']->inserts[0]['debit_amount'], 'Unknown-payment persistence should keep daily total');
 unknownServiceAssertSame(4, count($dbs['fin_voucher_detail']->inserts), 'Unknown-payment generation should insert balanced debit-credit details');
 unknownServiceAssertSame(2, count($dbs['fin_case_fund_unknown_payment']->updates), 'Every unknown-payment row should be marked generated');
+
+$dbs['fin_case_fund_unknown_payment']->updates = [];
+$failedPersistenceService = new UnknownPaymentVoucherGenerationService(
+    $manager,
+    $rule,
+    new UnknownFailingPersistenceStub(),
+    $hooks,
+    'fin_case_fund_unknown_payment',
+    ['unknown_payment_id'],
+    'fin_case_fund_subject_config',
+    ['debit_subject_code', 'credit_subject_code']
+);
+$failedPersistencePrepared = $failedPersistenceService->prepareGeneration('u1,u2');
+try {
+    $failedPersistenceService->generatePrepared($failedPersistencePrepared);
+    fwrite(STDERR, 'Unknown-payment persistence errors should propagate' . PHP_EOL);
+    exit(1);
+} catch (\RuntimeException $e) {
+    unknownServiceAssertSame('unknown persistence failed', $e->getMessage(), 'Unknown-payment persistence error should be unchanged');
+}
+unknownServiceAssertSame(
+    0,
+    count($dbs['fin_case_fund_unknown_payment']->updates),
+    'Unknown-payment source rows should only update after voucher persistence succeeds'
+);
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php');
 foreach (['requirePermission', 'Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {
