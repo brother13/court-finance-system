@@ -2,7 +2,9 @@
 
 $source = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
 $deletionSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/persistence/CaseFundBusinessDeletionService.php');
-$implementationSource = $source . "\n" . $deletionSource;
+$bankDeletionSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankStatementDeletionService.php');
+$bankRepositorySource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php');
+$implementationSource = $source . "\n" . $deletionSource . "\n" . $bankDeletionSource . "\n" . $bankRepositorySource;
 $rbac = file_get_contents(__DIR__ . '/../database/migration_rbac.sql');
 
 $checks = [
@@ -16,7 +18,9 @@ $checks = [
     [$implementationSource, '已生成凭证且原凭证仍有效，不允许删除', 'Generated payment/refund rows should only block deletion when original voucher is still active'],
     [$source, "'PAYMENT',", 'Payment delete should check payment reconciliation rows'],
     [$source, "'REFUND',", 'Refund delete should check refund reconciliation rows'],
-    [$source, "\$where['reconcile_status'] = 'UNMATCHED'", 'Bank statement delete should only load unmatched rows'],
+    [$bankRepositorySource, "\$where['reconcile_status'] = 'UNMATCHED'", 'Bank statement delete should only load unmatched rows'],
+    [$bankDeletionSource, '只能删除未对账的银行对账单流水', 'Bank statement delete should reject missing, reconciled or occupied rows'],
+    [$source, 'bankStatementDeletionService()->prepare', 'Bank statement delete should delegate read-side validation'],
     [$source, 'shouldPhysicalDeleteCaseFundBusinessRows', 'Business import delete should choose physical delete mode by business type'],
     [$implementationSource, "['PAYMENT', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION']", 'Payment, refund, unknown payment, and distribution deletes should be physical deletes'],
     [$implementationSource, "->delete()", 'Business import delete should physically delete allowed rows'],

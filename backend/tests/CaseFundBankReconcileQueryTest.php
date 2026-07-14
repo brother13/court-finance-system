@@ -242,6 +242,27 @@ bankQueryAssertSame([], $repository->existingBankStatementFingerprints([]), 'Emp
 bankQueryAssertSame($queryCount, count($store->queries), 'Empty fingerprint lookup should not allocate a database query');
 
 $store->queries = [];
+$deletionRows = $repository->bankStatementsForDeletion(['S-1', 'S-2']);
+bankQueryAssertSame($store->rows['statement'], $deletionRows, 'Bank deletion lookup should return repository rows');
+bankQueryAssertSame([
+    'account_set_id' => 'account-bank-query',
+    'fiscal_year' => 2026,
+    'del_flag' => 0,
+    'reconcile_status' => 'UNMATCHED',
+], $store->queries[0]['where'][0][1], 'Bank deletion lookup should preserve account, year, active and unmatched scope');
+bankQueryAssertSame(['statement_id', 'in', ['S-1', 'S-2']], $store->queries[0]['where'][1], 'Bank deletion lookup should limit selected ids');
+bankQueryAssertSame(['statement_id'], $store->queries[0]['field'], 'Bank deletion lookup should preserve the configured statement field list');
+
+$store->queries = [];
+$reconcileCount = $repository->activeBankReconcileCountForStatements(['S-1', 'S-2']);
+bankQueryAssertSame(4, $reconcileCount, 'Bank deletion guard should return the active reconcile count');
+bankQueryAssertSame([
+    'account_set_id' => 'account-bank-query',
+    'del_flag' => 0,
+], $store->queries[0]['where'][0][1], 'Bank deletion reconcile lookup should preserve account and active-row scope');
+bankQueryAssertSame(['statement_id', 'in', ['S-1', 'S-2']], $store->queries[0]['where'][1], 'Bank deletion reconcile lookup should use selected statement ids');
+
+$store->queries = [];
 $emptyCounts = [
     'MATCHED' => 0,
     'BANK_ONLY' => 0,

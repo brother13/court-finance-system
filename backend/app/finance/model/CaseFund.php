@@ -3,6 +3,7 @@
 namespace app\finance\model;
 
 use app\finance\service\casefund\banking\CaseFundBankingRule;
+use app\finance\service\casefund\banking\CaseFundBankStatementDeletionService;
 use app\finance\service\casefund\banking\CaseFundBankStatementImportService;
 use app\finance\service\casefund\banking\CaseFundBankReconcileRepository;
 use app\finance\service\casefund\banking\CaseFundBankReconcileMatcher;
@@ -23,6 +24,7 @@ use think\Db;
 class CaseFund extends Common
 {
     protected $bankingRule;
+    protected $bankStatementDeletionService;
     protected $bankStatementImportService;
     protected $bankReconcileRepository;
     protected $bankReconcileMatcher;
@@ -691,24 +693,11 @@ class CaseFund extends Common
             return $this->error('请选择要删除的银行对账单流水');
         }
 
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        $where['reconcile_status'] = 'UNMATCHED';
-        $rows = $this->getdb(self::TABLE_BANK_STATEMENT)
-            ->where($where)
-            ->where('statement_id', 'in', $ids)
-            ->field(self::BANK_STATEMENT_FIELD)
-            ->select();
-        if (count($rows) !== count($ids)) {
-            return $this->error('只能删除未对账的银行对账单流水');
+        $prepared = $this->bankStatementDeletionService()->prepare($ids);
+        if (!empty($prepared['error'])) {
+            return $this->error($prepared['error']);
         }
-        $reconcileCount = $this->getdb(self::TABLE_BANK_RECONCILE)->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->where('statement_id', 'in', $ids)->count();
-        if ((int)$reconcileCount > 0) {
-            return $this->error('只能删除未对账的银行对账单流水');
-        }
+        $rows = $prepared['rows'];
 
         $update = ['del_flag' => 1];
         $this->fillUpdate($update);
@@ -3085,6 +3074,21 @@ class CaseFund extends Common
             ]);
         }
         return $this->bankStatementImportService;
+    }
+
+    protected function bankStatementDeletionService()
+    {
+        if ($this->bankStatementDeletionService === null) {
+            $this->bankStatementDeletionService = new CaseFundBankStatementDeletionService([
+                'unmatched_statements_by_ids' => function ($ids) {
+                    return $this->bankReconcileRepository()->bankStatementsForDeletion($ids);
+                },
+                'active_reconcile_count' => function ($ids) {
+                    return $this->bankReconcileRepository()->activeBankReconcileCountForStatements($ids);
+                },
+            ]);
+        }
+        return $this->bankStatementDeletionService;
     }
 
     protected function bankReconcileMatcher()

@@ -104,6 +104,25 @@ class CaseFundBankReconcileRepository
         return $existing;
     }
 
+    public function bankStatementsForDeletion($ids)
+    {
+        $where = $this->activeYearWhere();
+        $where['reconcile_status'] = 'UNMATCHED';
+        return $this->db($this->tables['statement'])
+            ->where($where)
+            ->where('statement_id', 'in', $ids)
+            ->field($this->fields['statement'])
+            ->select();
+    }
+
+    public function activeBankReconcileCountForStatements($ids)
+    {
+        return (int)$this->db($this->tables['reconcile'])->where([
+            'account_set_id' => $this->accountSetId(),
+            'del_flag' => 0,
+        ])->where('statement_id', 'in', $ids)->count();
+    }
+
     public function bankStatementsInScope($bankCode, $dateStart, $dateEnd)
     {
         $query = $this->db($this->tables['statement'])->where($this->activeYearWhere());
