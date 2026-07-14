@@ -2,6 +2,7 @@
 
 namespace app\finance\model;
 
+use app\finance\service\casefund\banking\CaseFundBankingRule;
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
 use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\importing\CaseFundImportParser;
@@ -13,6 +14,7 @@ use think\Db;
 
 class CaseFund extends Common
 {
+    protected $bankingRule;
     protected $businessPolicy;
     protected $importIdentity;
     protected $importNormalizer;
@@ -3557,102 +3559,30 @@ class CaseFund extends Common
 
     protected function supportedBankStatementBanks()
     {
-        return [
-            'SHENGJING' => '盛京银行',
-            'CCB' => '建设银行',
-        ];
+        return $this->bankingRule()->supportedBankStatementBanks();
     }
 
     protected function normalizeBankStatementRow($row, $bankCode, $bankName, $defaultRowNo)
     {
-        $sourceRowNo = (int)($row['source_row_no'] ?? $defaultRowNo);
-        $prefix = '第' . $sourceRowNo . '行：';
-        $transactionTime = $this->normalizeDateTimeValue($row['transaction_time'] ?? '');
-        $transactionDate = $transactionTime === '' ? '' : substr($transactionTime, 0, 10);
-        $debitAmount = $this->centsToDecimal($this->decimalToCents($row['debit_amount'] ?? '0'));
-        $creditAmount = $this->centsToDecimal($this->decimalToCents($row['credit_amount'] ?? '0'));
-        $balanceAmount = $this->centsToDecimal($this->decimalToCents($row['balance_amount'] ?? '0'));
-        $debitCents = $this->decimalToCents($debitAmount);
-        $creditCents = $this->decimalToCents($creditAmount);
-        if ($transactionTime === '') {
-            return ['error' => $prefix . '交易时间不能为空或格式不正确'];
-        }
-        if ($debitCents < 0 || $creditCents < 0) {
-            return ['error' => $prefix . '支出和收入金额不能为负数'];
-        }
-        if (($debitCents > 0 && $creditCents > 0) || ($debitCents === 0 && $creditCents === 0)) {
-            return ['error' => $prefix . '支出和收入必须且只能填写一项'];
-        }
-        $bankSerialNo = trim((string)($row['bank_serial_no'] ?? ''));
-        if ($bankSerialNo === '') {
-            return ['error' => $prefix . '交易流水号不能为空'];
-        }
-        $parsed = [
-            'fiscal_year' => (int)substr($transactionDate, 0, 4),
-            'period' => substr($transactionDate, 0, 7),
-            'bank_code' => $bankCode,
-            'bank_name' => $bankName,
-            'transaction_date' => $transactionDate,
-            'transaction_time' => $transactionTime,
-            'direction' => $debitCents > 0 ? 'DEBIT' : 'CREDIT',
-            'debit_amount' => $debitAmount,
-            'credit_amount' => $creditAmount,
-            'balance_amount' => $balanceAmount,
-            'counterparty_account_no' => trim((string)($row['counterparty_account_no'] ?? '')),
-            'counterparty_account_name' => trim((string)($row['counterparty_account_name'] ?? '')),
-            'counterparty_bank_name' => trim((string)($row['counterparty_bank_name'] ?? '')),
-            'purpose' => trim((string)($row['purpose'] ?? '')),
-            'postscript' => trim((string)($row['postscript'] ?? '')),
-            'bank_serial_no' => $bankSerialNo,
-            'source_row_no' => $sourceRowNo,
-            'source_raw_json' => json_encode($row, JSON_UNESCAPED_UNICODE),
-        ];
-        $parsed['source_fingerprint'] = $this->bankStatementFingerprint($parsed);
-        return $parsed;
+        return $this->bankingRule()->normalizeBankStatementRow($row, $bankCode, $bankName, $defaultRowNo);
     }
 
     protected function bankStatementFingerprint($row)
     {
-        $parts = [
-            $row['bank_code'] ?? '',
-            $row['transaction_time'] ?? '',
-            $row['debit_amount'] ?? '',
-            $row['credit_amount'] ?? '',
-            $row['balance_amount'] ?? '',
-            $row['counterparty_account_no'] ?? '',
-            $row['counterparty_account_name'] ?? '',
-            $row['bank_serial_no'] ?? '',
-        ];
-        return md5(implode('|', $parts));
+        return $this->bankingRule()->bankStatementFingerprint($row);
     }
 
     protected function buildBankReconcileRow($statement, $bizType, $biz, $status, $bankCents, $bizCents, $matchRule = 'SERIAL_NO')
     {
-        $reconcileDate = $statement ? $statement['transaction_date'] : $this->bankReconcileBizDate($bizType, $biz);
-        $bankSummary = $statement ? trim(($statement['purpose'] ?? '') . ' ' . ($statement['postscript'] ?? '')) : '';
-        return [
-            'reconcile_id' => uuid(),
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => (int)substr($reconcileDate, 0, 4),
-            'period' => substr($reconcileDate, 0, 7),
-            'reconcile_date' => $reconcileDate,
-            'statement_id' => $statement['statement_id'] ?? null,
-            'biz_type' => $bizType,
-            'biz_id' => $biz ? $this->bankReconcileBizId($bizType, $biz) : null,
-            'biz_no' => $biz ? $this->bankReconcileBizNo($bizType, $biz) : '',
-            'bank_serial_no' => $statement['bank_serial_no'] ?? ($bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($biz['out_order_no'] ?? '')),
-            'bank_amount' => $this->centsToDecimal($bankCents),
-            'biz_amount' => $this->centsToDecimal($bizCents),
-            'diff_amount' => $this->centsToDecimal($bankCents - $bizCents),
-            'match_status' => $status,
-            'match_rule' => $matchRule,
-            'matched_by' => $this->userid,
-            'matched_time' => $this->now(),
-            'bank_direction' => $statement['direction'] ?? ($bizType === 'PAYMENT' ? 'CREDIT' : 'DEBIT'),
-            'bank_summary' => $bankSummary,
-            'biz_summary' => $biz ? $this->bankReconcileBizSummary($bizType, $biz) : '',
-            'remark' => '',
-        ];
+        return $this->bankingRule()->buildBankReconcileRow(
+            $statement,
+            $bizType,
+            $biz,
+            $status,
+            $bankCents,
+            $bizCents,
+            $matchRule
+        );
     }
 
     protected function paymentCandidatesByBankStatement($statement)
@@ -3788,33 +3718,27 @@ class CaseFund extends Common
 
     protected function bankReconcileBizAmountCents($bizType, $biz)
     {
-        if ($bizType === 'PAYMENT') {
-            return $this->decimalToCents($biz['payment_amount'] ?? '0');
-        }
-        return $this->decimalToCents($biz['refund_amount'] ?? '0');
+        return $this->bankingRule()->bankReconcileBizAmountCents($bizType, $biz);
     }
 
     protected function bankReconcileBizId($bizType, $biz)
     {
-        return $bizType === 'PAYMENT' ? ($biz['payment_id'] ?? '') : ($biz['refund_id'] ?? '');
+        return $this->bankingRule()->bankReconcileBizId($bizType, $biz);
     }
 
     protected function bankReconcileBizNo($bizType, $biz)
     {
-        return $bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($biz['out_order_no'] ?? '');
+        return $this->bankingRule()->bankReconcileBizNo($bizType, $biz);
     }
 
     protected function bankReconcileBizDate($bizType, $biz)
     {
-        return $bizType === 'PAYMENT' ? ($biz['payment_date'] ?? '') : ($biz['refund_date'] ?? '');
+        return $this->bankingRule()->bankReconcileBizDate($bizType, $biz);
     }
 
     protected function bankReconcileBizSummary($bizType, $biz)
     {
-        if ($bizType === 'PAYMENT') {
-            return trim(($biz['case_no'] ?? '') . ' ' . ($biz['payer_name'] ?? '') . ' ' . ($biz['party_name'] ?? ''));
-        }
-        return trim(($biz['case_no'] ?? '') . ' ' . ($biz['actual_payee_name'] ?? '') . ' ' . ($biz['party_name'] ?? '') . ' 出账单号:' . ($biz['out_order_no'] ?? ''));
+        return $this->bankingRule()->bankReconcileBizSummary($bizType, $biz);
     }
 
     protected function softDeleteBankReconcileScope($dateStart, $dateEnd)
@@ -3840,13 +3764,7 @@ class CaseFund extends Common
 
     protected function emptyBankReconcileCounts()
     {
-        return [
-            'MATCHED' => 0,
-            'AMOUNT_DIFF' => 0,
-            'BANK_ONLY' => 0,
-            'BIZ_ONLY' => 0,
-            'DUPLICATE' => 0,
-        ];
+        return $this->bankingRule()->emptyBankReconcileCounts();
     }
 
     protected function bankReconcileSummary($where)
@@ -4339,6 +4257,54 @@ class CaseFund extends Common
     protected function parseBiffCells($stream)
     {
         return $this->legacySpreadsheetReader()->parseBiffCells($stream);
+    }
+
+    protected function bankingRule()
+    {
+        if ($this->bankingRule === null) {
+            $this->bankingRule = new CaseFundBankingRule([
+                'normalize_datetime' => function ($value) {
+                    return $this->normalizeDateTimeValue($value);
+                },
+                'canonical_amount' => function ($amount) {
+                    return $this->centsToDecimal($this->decimalToCents($amount));
+                },
+                'amount_to_cents' => function ($amount) {
+                    return $this->decimalToCents($amount);
+                },
+                'cents_to_decimal' => function ($cents) {
+                    return $this->centsToDecimal($cents);
+                },
+                'bank_statement_fingerprint' => function ($row) {
+                    return $this->bankStatementFingerprint($row);
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'current_user_id' => function () {
+                    return $this->userid;
+                },
+                'now' => function () {
+                    return $this->now();
+                },
+                'bank_reconcile_biz_id' => function ($bizType, $biz) {
+                    return $this->bankReconcileBizId($bizType, $biz);
+                },
+                'bank_reconcile_biz_no' => function ($bizType, $biz) {
+                    return $this->bankReconcileBizNo($bizType, $biz);
+                },
+                'bank_reconcile_biz_date' => function ($bizType, $biz) {
+                    return $this->bankReconcileBizDate($bizType, $biz);
+                },
+                'bank_reconcile_biz_summary' => function ($bizType, $biz) {
+                    return $this->bankReconcileBizSummary($bizType, $biz);
+                },
+            ]);
+        }
+        return $this->bankingRule;
     }
 
     protected function businessPolicy()

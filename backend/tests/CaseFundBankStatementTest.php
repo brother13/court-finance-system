@@ -1,11 +1,13 @@
 <?php
 
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
+$bankingRulePath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankingRule.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $rbacPath = __DIR__ . '/../database/migration_rbac.sql';
 
 $source = file_get_contents($modelPath);
+$bankingRuleSource = file_get_contents($bankingRulePath);
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $rbac = file_get_contents($rbacPath);
@@ -34,8 +36,8 @@ $checks = [
     [$source, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
     [$source, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
     [$source, 'supportedBankStatementBanks', 'CaseFund should validate supported banks'],
-    [$source, "'SHENGJING' => '盛京银行'", 'CaseFund should support Shengjing Bank'],
-    [$source, "'CCB' => '建设银行'", 'CaseFund should support CCB'],
+    [$bankingRuleSource, "'SHENGJING' => '盛京银行'", 'CaseFund should support Shengjing Bank'],
+    [$bankingRuleSource, "'CCB' => '建设银行'", 'CaseFund should support CCB'],
     [$source, 'bankStatementFingerprint', 'CaseFund should fingerprint bank statement rows'],
     [$source, "logAudit('CASE_FUND_BANK_STATEMENT'", 'Bank statement import should write audit log'],
     [$ddl, 'create table fin_case_fund_bank_statement', 'DDL should create bank statement table'],
