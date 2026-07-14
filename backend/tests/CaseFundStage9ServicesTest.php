@@ -84,6 +84,11 @@ class CaseFundStage9Query
         return $this;
     }
 
+    public function lock($lock = true)
+    {
+        return $this;
+    }
+
     public function select()
     {
         $this->remember('select');

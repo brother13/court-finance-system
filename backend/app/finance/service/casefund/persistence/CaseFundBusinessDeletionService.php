@@ -43,6 +43,7 @@ class CaseFundBusinessDeletionService
             ->where($where)
             ->where($idField, 'in', $ids)
             ->field($this->fieldsByBizType[$bizType])
+            ->lock(true)
             ->select();
         if (count($rows) !== count($ids)) {
             return ['error' => $label . '不存在或已删除'];
@@ -67,17 +68,27 @@ class CaseFundBusinessDeletionService
 
     public function executeBusinessDeletion($table, $idField, $ids, $hardDelete)
     {
-        if ($hardDelete) {
-            $this->db($table)->where([
-                'account_set_id' => $this->callHook('account_set_id'),
-            ])->where($idField, 'in', $ids)->delete();
-            return;
-        }
-        $update = $this->callHook('prepare_update', [['del_flag' => 1]]);
-        $this->db($table)->where([
+        $where = [
             'account_set_id' => $this->callHook('account_set_id'),
+            'fiscal_year' => $this->callHook('current_year'),
             'del_flag' => 0,
-        ])->where($idField, 'in', $ids)->update($update);
+        ];
+        if ($hardDelete) {
+            $affectedRows = $this->db($table)
+                ->where($where)
+                ->where($idField, 'in', $ids)
+                ->delete();
+        } else {
+            $update = $this->callHook('prepare_update', [['del_flag' => 1]]);
+            $affectedRows = $this->db($table)
+                ->where($where)
+                ->where($idField, 'in', $ids)
+                ->update($update);
+        }
+        if ($affectedRows !== count($ids)) {
+            throw new \RuntimeException('案款业务记录状态已变化，请刷新后重试');
+        }
+        return $affectedRows;
     }
 
     public function shouldPhysicalDeleteCaseFundBusinessRows($bizType)

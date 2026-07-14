@@ -1711,20 +1711,21 @@ class CaseFund extends Common
 
     protected function deleteCaseFundBusinessRows($table, $idField, $ids, $bizType, $auditBizType, $label)
     {
-        $prepared = $this->businessDeletionService()->prepareBusinessDeletion(
-            $table,
-            $idField,
-            $ids,
-            $bizType,
-            $label
-        );
-        if (!empty($prepared['error'])) {
-            return $this->error($prepared['error']);
-        }
-        $rows = $prepared['rows'];
-        $hardDelete = $prepared['hard_delete'];
         Db::startTrans();
         try {
+            $prepared = $this->businessDeletionService()->prepareBusinessDeletion(
+                $table,
+                $idField,
+                $ids,
+                $bizType,
+                $label
+            );
+            if (!empty($prepared['error'])) {
+                Db::rollback();
+                return $this->error($prepared['error']);
+            }
+            $rows = $prepared['rows'];
+            $hardDelete = $prepared['hard_delete'];
             $this->businessDeletionService()->executeBusinessDeletion($table, $idField, $ids, $hardDelete);
             $this->logAudit($auditBizType, 'DELETE', 'DELETE', $rows, [
                 $idField . 's' => $ids,
