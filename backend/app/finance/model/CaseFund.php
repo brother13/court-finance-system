@@ -4,6 +4,7 @@ namespace app\finance\model;
 
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
 use app\finance\service\casefund\importing\CaseFundImportNormalizer;
+use app\finance\service\casefund\importing\CaseFundImportParser;
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
@@ -15,6 +16,7 @@ class CaseFund extends Common
     protected $businessPolicy;
     protected $importIdentity;
     protected $importNormalizer;
+    protected $importParser;
     protected $importValidator;
     protected $legacySpreadsheetReader;
     protected $subjectConfigResolver;
@@ -3133,196 +3135,17 @@ class CaseFund extends Common
     protected function parsePaymentImportRowsFromXls($binary)
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
-        if (empty($cells)) {
-            throw new \Exception('文件中没有可识别的工作表数据');
-        }
-        $maxRow = -1;
-        $maxCol = -1;
-        foreach ($cells as $key => $value) {
-            list($row, $col) = array_map('intval', explode(':', $key));
-            $maxRow = max($maxRow, $row);
-            $maxCol = max($maxCol, $col);
-        }
-
-        $headers = [];
-        for ($col = 0; $col <= $maxCol; $col++) {
-            $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
-        }
-        $required = [
-            '案号', '确', '可', '业务类型', '缴费人', '当事人', '开票抬头', '金额',
-            '登记类型', '前审案号', '缴费日期', '票据号码', '开票日期', '开票员',
-            '收费方式', '收费员', '承办法官', '书记员', '承办部门', '收款账号',
-            '银行流水号', '缴费单号', '内转支出票号', '是否提存撤销',
-        ];
-        $index = [];
-        foreach ($required as $name) {
-            $found = array_search($name, $headers, true);
-            if ($found === false) {
-                throw new \Exception('缺少表头：' . $name);
-            }
-            $index[$name] = $found;
-        }
-
-        $rows = [];
-        for ($row = 1; $row <= $maxRow; $row++) {
-            $raw = [];
-            foreach ($index as $name => $col) {
-                $raw[$name] = $this->normalizeImportCellText($cells[$row . ':' . $col] ?? '');
-            }
-            if ($this->isEmptyPaymentRawRow($raw)) {
-                continue;
-            }
-            if ($this->isMalformedPaymentRawRow($raw)) {
-                continue;
-            }
-            if ($this->isNonDetailPaymentRawRow($raw)) {
-                continue;
-            }
-            $invoiceDate = $this->nullableDateValue($raw['开票日期']);
-            $paymentTime = $this->normalizeDateTimeValue($raw['缴费日期']);
-            $paymentDate = $paymentTime === '' ? '' : substr($paymentTime, 0, 10);
-            $amount = $this->centsToDecimal($this->decimalToCents($raw['金额']));
-            $period = $paymentDate === '' ? '' : substr($paymentDate, 0, 7);
-            $parsed = [
-                'fiscal_year' => $paymentDate === '' ? '' : substr($paymentDate, 0, 4),
-                'period' => $period,
-                'case_no' => $raw['案号'],
-                'confirmed_flag' => $this->yesNoFlagFromText($raw['确']),
-                'available_flag' => $this->yesNoFlagFromText($raw['可']),
-                'business_type' => $raw['业务类型'],
-                'payer_name' => $raw['缴费人'],
-                'party_name' => $raw['当事人'],
-                'invoice_title' => $raw['开票抬头'],
-                'payment_amount' => $amount,
-                'register_type' => $raw['登记类型'],
-                'trial_case_no' => $raw['前审案号'],
-                'payment_date' => $paymentDate,
-                'payment_time' => $paymentTime,
-                'receipt_no' => $raw['票据号码'],
-                'invoice_date' => $invoiceDate,
-                'invoice_operator' => $raw['开票员'],
-                'payment_method' => $this->inferPaymentMethodByBankSerialNo($raw['银行流水号'], $raw['收费方式']),
-                'cashier_name' => $raw['收费员'],
-                'judge_name' => $raw['承办法官'],
-                'clerk_name' => $raw['书记员'],
-                'department_name' => $raw['承办部门'],
-                'bank_account_no' => $raw['收款账号'],
-                'bank_serial_no' => $raw['银行流水号'],
-                'payment_order_no' => $raw['缴费单号'],
-                'internal_transfer_ticket_no' => $raw['内转支出票号'],
-                'deposit_revoke_flag' => $this->yesNoFlagFromText($raw['是否提存撤销']),
-                'source_row_no' => $row + 1,
-                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
-            ];
-            $parsed['source_fingerprint'] = $this->paymentFingerprint($parsed);
-            $rows[] = $parsed;
-        }
-        return $rows;
+        return $this->importParser()->parsePaymentCells($cells);
     }
 
     protected function parseRefundImportRowsFromXls($binary, $bizType = '', $receiptTraceRequired = null)
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
-        if (empty($cells)) {
-            throw new \Exception('文件中没有可识别的工作表数据');
-        }
-        $maxRow = -1;
-        $maxCol = -1;
-        foreach ($cells as $key => $value) {
-            list($row, $col) = array_map('intval', explode(':', $key));
-            $maxRow = max($maxRow, $row);
-            $maxCol = max($maxCol, $col);
-        }
-
-        $headers = [];
-        for ($col = 0; $col <= $maxCol; $col++) {
-            $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
-        }
-        $required = $this->refundImportRequiredHeaders($bizType, $receiptTraceRequired);
-        $optional = ['总出账金额'];
-        if ($bizType === 'LITIGATION_FEE' || $receiptTraceRequired === false) {
-            foreach (['来源票据号码', '来源票据开票日期'] as $name) {
-                $optional[] = $name;
-            }
-        }
-        if ($bizType === 'CASE_FUND' && $receiptTraceRequired === false) {
-            $optional[] = '出账单号';
-        }
-        $optionalMap = array_fill_keys($optional, true);
-        $index = [];
-        foreach (array_merge($required, $optional) as $name) {
-            $found = array_search($name, $headers, true);
-            if ($found === false) {
-                if (isset($optionalMap[$name])) {
-                    continue;
-                }
-                throw new \Exception('缺少表头：' . $name);
-            }
-            $index[$name] = $found;
-        }
-
-        $rows = [];
-        for ($row = 1; $row <= $maxRow; $row++) {
-            $raw = [];
-            foreach ($index as $name => $col) {
-                $raw[$name] = $this->normalizeImportCellText($cells[$row . ':' . $col] ?? '');
-            }
-            foreach ($optional as $name) {
-                if (!isset($raw[$name])) {
-                    $raw[$name] = '';
-                }
-            }
-            if ($this->isEmptyPaymentRawRow($raw)) {
-                continue;
-            }
-            if ($this->isMalformedPaymentRawRow($raw)) {
-                continue;
-            }
-            if ($this->isNonDetailRefundRawRow($raw)) {
-                continue;
-            }
-            $refundDate = $this->normalizeDateValue($raw['出账日期']);
-            $invoiceDate = $this->nullableDateValue($raw['开票日期']);
-            $sourceReceiptDate = $this->nullableDateValue($raw['来源票据开票日期']);
-            $refundAmount = $this->centsToDecimal($this->decimalToCents($raw['出账金额']));
-            $totalRefundAmount = $this->centsToDecimal($this->decimalToCents($raw['总出账金额']));
-            $period = $refundDate === '' ? '' : substr($refundDate, 0, 7);
-            $parsed = [
-                'fiscal_year' => $refundDate === '' ? '' : substr($refundDate, 0, 4),
-                'period' => $period,
-                'case_no' => $raw['案号'],
-                'handler_name' => $raw['经办人'],
-                'clerk_name' => $raw['书记员'],
-                'receipt_no' => $raw['票据号码'],
-                'invoice_date' => $invoiceDate,
-                'refund_date' => $refundDate,
-                'source_receipt_no' => $raw['来源票据号码'],
-                'source_receipt_date' => $sourceReceiptDate,
-                'out_order_no' => $raw['出账单号'],
-                'out_status' => $raw['出账状态'],
-                'out_type' => $raw['出账种类'],
-                'litigation_position' => $raw['诉讼地位'],
-                'party_name' => $raw['当事人'],
-                'refund_amount' => $refundAmount,
-                'total_refund_amount' => $totalRefundAmount,
-                'payee_party_relation' => $raw['收款人与当事人关系'],
-                'payment_method' => $raw['支付方式'],
-                'actual_payee_name' => $raw['实际收款人'],
-                'payee_identity_no' => $raw['身份证号/企业'],
-                'payee_bank_account_name' => $raw['收款人银行户名'],
-                'payee_bank_account_no' => $raw['收款账号'],
-                'payee_bank_name' => $raw['开户银行'],
-                'unionpay_no' => $raw['银联号'],
-                'same_bank_flag' => $raw['是否本行'],
-                'handler_note' => $raw['承办人情况说明'],
-                'applicant_name' => $raw['申请人'],
-                'source_row_no' => $row + 1,
-                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
-            ];
-            $parsed['source_fingerprint'] = $this->refundFingerprint($parsed);
-            $rows[] = $parsed;
-        }
-        return $rows;
+        return $this->importParser()->parseRefundCells(
+            $cells,
+            $bizType,
+            $receiptTraceRequired
+        );
     }
 
     protected function refundImportRequiredHeaders($bizType = '', $receiptTraceRequired = null)
@@ -3333,146 +3156,13 @@ class CaseFund extends Common
     protected function parseUnknownPaymentImportRowsFromXls($binary)
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
-        if (empty($cells)) {
-            throw new \Exception('文件中没有可识别的工作表数据');
-        }
-        $maxRow = -1;
-        $maxCol = -1;
-        foreach ($cells as $key => $value) {
-            list($row, $col) = array_map('intval', explode(':', $key));
-            $maxRow = max($maxRow, $row);
-            $maxCol = max($maxCol, $col);
-        }
-
-        $headers = [];
-        for ($col = 0; $col <= $maxCol; $col++) {
-            $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
-        }
-        $required = [
-            '法院名称', '认领状态', '缴款人', '金额', '银行摘要', '银行备注',
-            '交易日期', '法院银行账户', '到账方式', '缴款人开户行', '缴款人账号',
-            '认领人姓名', '认领日期', '最后修改时间',
-        ];
-        $index = [];
-        foreach ($required as $name) {
-            $found = array_search($name, $headers, true);
-            if ($found === false) {
-                throw new \Exception('缺少表头：' . $name);
-            }
-            $index[$name] = $found;
-        }
-
-        $rows = [];
-        for ($row = 1; $row <= $maxRow; $row++) {
-            $raw = [];
-            foreach ($index as $name => $col) {
-                $raw[$name] = $this->normalizeImportCellText($cells[$row . ':' . $col] ?? '');
-            }
-            if ($this->isEmptyPaymentRawRow($raw)) {
-                continue;
-            }
-            if ($this->isMalformedPaymentRawRow($raw)) {
-                continue;
-            }
-
-            $transactionTime = $this->normalizeDateTimeValue($raw['交易日期']);
-            $transactionDate = $transactionTime === '' ? '' : substr($transactionTime, 0, 10);
-            $lastModifiedTime = $this->normalizeDateTimeValue($raw['最后修改时间']);
-            $unknownAmount = $this->centsToDecimal($this->decimalToCents($raw['金额']));
-            $parsed = [
-                'fiscal_year' => $transactionDate === '' ? '' : substr($transactionDate, 0, 4),
-                'period' => $transactionDate === '' ? '' : substr($transactionDate, 0, 7),
-                'court_name' => $raw['法院名称'],
-                'claim_status' => $raw['认领状态'],
-                'payer_name' => $raw['缴款人'],
-                'unknown_amount' => $unknownAmount,
-                'bank_summary' => $raw['银行摘要'],
-                'bank_remark' => $raw['银行备注'],
-                'transaction_date' => $transactionDate,
-                'transaction_time' => $transactionTime,
-                'court_bank_account_no' => $raw['法院银行账户'],
-                'arrival_method' => $raw['到账方式'],
-                'payer_bank_name' => $raw['缴款人开户行'],
-                'payer_account_no' => $raw['缴款人账号'],
-                'claim_user_name' => $raw['认领人姓名'],
-                'claim_date' => $this->nullableDateValue($raw['认领日期']),
-                'last_modified_time' => $lastModifiedTime === '' ? null : $lastModifiedTime,
-                'source_row_no' => $row + 1,
-                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
-            ];
-            $parsed['source_fingerprint'] = $this->unknownPaymentFingerprint($parsed);
-            $rows[] = $parsed;
-        }
-        return $rows;
+        return $this->importParser()->parseUnknownPaymentCells($cells);
     }
 
     protected function parseDistributionImportRowsFromXls($binary)
     {
         $tableRows = $this->parseSpreadsheetRows($binary);
-        if (empty($tableRows)) {
-            throw new \Exception('文件中没有可识别的工作表数据');
-        }
-
-        $headers = [];
-        foreach ($tableRows[0] as $col => $value) {
-            $headers[$col] = $this->normalizeImportCellText($value);
-        }
-        $required = [
-            '序号', '分配单号', '转入案号', '转入承办法官', '转入当事人',
-            '转出案号', '转出承办法官', '转出当事人', '开票种类', '单据号',
-            '分配金额', '申请人', '申请日期', '接收日期', '状态', '情况说明',
-            '原开票日期',
-        ];
-        $index = [];
-        foreach ($required as $name) {
-            $found = array_search($name, $headers, true);
-            if ($found === false) {
-                throw new \Exception('缺少表头：' . $name);
-            }
-            $index[$name] = $found;
-        }
-
-        $rows = [];
-        for ($row = 1; $row < count($tableRows); $row++) {
-            $raw = [];
-            foreach ($index as $name => $col) {
-                $raw[$name] = $this->normalizeImportCellText($tableRows[$row][$col] ?? '');
-            }
-            if ($this->isEmptyPaymentRawRow($raw)) {
-                continue;
-            }
-            if ($this->isMalformedPaymentRawRow($raw)) {
-                continue;
-            }
-
-            $receiveDate = $this->normalizeDateValue($raw['接收日期']);
-            $amount = $this->centsToDecimal($this->decimalToCents($raw['分配金额']));
-            $parsed = [
-                'fiscal_year' => $receiveDate === '' ? '' : substr($receiveDate, 0, 4),
-                'period' => $receiveDate === '' ? '' : substr($receiveDate, 0, 7),
-                'distribution_no' => $raw['分配单号'],
-                'in_case_no' => $raw['转入案号'],
-                'in_judge_name' => $raw['转入承办法官'],
-                'in_party_name' => $raw['转入当事人'],
-                'out_case_no' => $raw['转出案号'],
-                'out_judge_name' => $raw['转出承办法官'],
-                'out_party_name' => $raw['转出当事人'],
-                'invoice_type' => $raw['开票种类'],
-                'receipt_no' => $raw['单据号'],
-                'distribution_amount' => $amount,
-                'applicant_name' => $raw['申请人'],
-                'apply_date' => $this->nullableDateValue($raw['申请日期']),
-                'receive_date' => $receiveDate,
-                'business_status' => $raw['状态'],
-                'description' => $raw['情况说明'],
-                'original_invoice_date' => $this->nullableDateValue($raw['原开票日期']),
-                'source_row_no' => $row + 1,
-                'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
-            ];
-            $parsed['source_fingerprint'] = $this->distributionFingerprint($parsed);
-            $rows[] = $parsed;
-        }
-        return $rows;
+        return $this->importParser()->parseDistributionTableRows($tableRows);
     }
 
     protected function validatePaymentRows($rows, $bizType = '', $receiptNoDuplicateCheckRequired = true)
@@ -4675,6 +4365,63 @@ class CaseFund extends Common
             $this->importNormalizer = new CaseFundImportNormalizer();
         }
         return $this->importNormalizer;
+    }
+
+    protected function importParser()
+    {
+        if ($this->importParser === null) {
+            $this->importParser = new CaseFundImportParser([
+                'normalize_cell' => function ($value) {
+                    return $this->normalizeImportCellText($value);
+                },
+                'is_empty_row' => function ($row) {
+                    return $this->isEmptyPaymentRawRow($row);
+                },
+                'is_malformed_row' => function ($row) {
+                    return $this->isMalformedPaymentRawRow($row);
+                },
+                'is_non_detail_payment_row' => function ($row) {
+                    return $this->isNonDetailPaymentRawRow($row);
+                },
+                'is_non_detail_refund_row' => function ($row) {
+                    return $this->isNonDetailRefundRawRow($row);
+                },
+                'nullable_date' => function ($value) {
+                    return $this->nullableDateValue($value);
+                },
+                'normalize_datetime' => function ($value) {
+                    return $this->normalizeDateTimeValue($value);
+                },
+                'normalize_date' => function ($value) {
+                    return $this->normalizeDateValue($value);
+                },
+                'canonical_amount' => function ($amount) {
+                    return $this->centsToDecimal($this->decimalToCents($amount));
+                },
+                'yes_no_flag' => function ($value) {
+                    return $this->yesNoFlagFromText($value);
+                },
+                'infer_payment_method' => function ($bankSerialNo, $rawPaymentMethod = '') {
+                    return $this->inferPaymentMethodByBankSerialNo($bankSerialNo, $rawPaymentMethod);
+                },
+                'refund_required_headers' => function ($bizType = '', $receiptTraceRequired = null) {
+                    return $this->refundImportRequiredHeaders($bizType, $receiptTraceRequired);
+                },
+                'payment_fingerprint' => function ($row) {
+                    return $this->paymentFingerprint($row);
+                },
+                'refund_fingerprint' => function ($row) {
+                    return $this->refundFingerprint($row);
+                },
+                'unknown_payment_fingerprint' => function ($row) {
+                    return $this->unknownPaymentFingerprint($row);
+                },
+                'distribution_fingerprint' => function ($row) {
+                    return $this->distributionFingerprint($row);
+                },
+            ]);
+        }
+        return $this->importParser;
     }
 
     protected function importValidator()
