@@ -10,6 +10,7 @@ use app\finance\service\casefund\importing\CaseFundImportParser;
 use app\finance\service\casefund\importing\CaseFundImportPersistence;
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
 use app\finance\service\casefund\persistence\CaseFundBusinessDeletionService;
+use app\finance\service\casefund\query\CaseFundBusinessQueryRepository;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
 use app\finance\service\casefund\subject\SubjectConfigManager;
@@ -23,6 +24,7 @@ class CaseFund extends Common
     protected $bankReconcileRepository;
     protected $businessPolicy;
     protected $businessDeletionService;
+    protected $businessQueryRepository;
     protected $importIdentity;
     protected $importNormalizer;
     protected $importParser;
@@ -173,48 +175,18 @@ class CaseFund extends Common
         }
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? input('param.pagesize', 50);
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        if (!empty($data['voucher_status'])) {
-            $where['voucher_status'] = $data['voucher_status'];
-        }
-        $paymentMethodFilter = trim((string)($data['payment_method'] ?? ($data['paymentMethod'] ?? '')));
-        if ($paymentMethodFilter !== '') {
-            $paymentMethod = $this->normalizePaymentMethodCode($paymentMethodFilter);
-            if (isset($this->paymentMethodOptions()[$paymentMethod])) {
-                $where['payment_method'] = $paymentMethod;
-            }
-        }
-        if (!empty($data['date_start'])) {
-            $where['payment_date'][] = ['>=', $data['date_start']];
-        }
-        if (!empty($data['date_end'])) {
-            $where['payment_date'][] = ['<=', $data['date_end']];
-        }
         $bizType = $this->currentAccountSetBizType();
         $allowedBusinessTypes = $this->allowedPaymentBusinessTypes($bizType);
         if (empty($allowedBusinessTypes)) {
             return $this->error('当前账套类型不支持案款缴费登记：' . $bizType);
         }
-        $where['business_type'] = ['in', $allowedBusinessTypes];
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_PAYMENT)->where($where);
-        if ($keyword !== '') {
-            $query->where('case_no|trial_case_no|payer_name|party_name|receipt_no|bank_serial_no|payment_order_no', 'like', '%' . $keyword . '%');
-        }
-        $totalQuery = $this->getdb(self::TABLE_PAYMENT)->where($where);
-        if ($keyword !== '') {
-            $totalQuery->where('case_no|trial_case_no|payer_name|party_name|receipt_no|bank_serial_no|payment_order_no', 'like', '%' . $keyword . '%');
-        }
-        $total = $totalQuery->count();
-        $rows = $query->field(self::PAYMENT_FIELD)
-            ->order('payment_date asc, source_row_no asc')
-            ->page($page, $pagesize)
-            ->select();
-        return $this->ok(['items' => $rows, 'total' => $total], 'OK', $total);
+        $result = $this->businessQueryRepository()->paymentList(
+            $data,
+            $page,
+            $pagesize,
+            $allowedBusinessTypes
+        );
+        return $this->ok($result, 'OK', $result['total']);
     }
 
     public function paymentImport($data = [])
@@ -292,41 +264,8 @@ class CaseFund extends Common
 
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        if (!empty($data['voucher_status'])) {
-            $where['voucher_status'] = $data['voucher_status'];
-        }
-        if (!empty($data['claim_status'])) {
-            $where['claim_status'] = $data['claim_status'];
-        }
-        if (!empty($data['date_start'])) {
-            $where['transaction_date'][] = ['>=', $data['date_start']];
-        }
-        if (!empty($data['date_end'])) {
-            $where['transaction_date'][] = ['<=', $data['date_end']];
-        }
-
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where($where);
-        $totalQuery = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where($where);
-        $amountQuery = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where($where);
-        foreach ([$query, $totalQuery, $amountQuery] as $item) {
-            if ($keyword !== '') {
-                $item->where('payer_name|bank_summary|bank_remark|court_bank_account_no|payer_bank_name|payer_account_no', 'like', '%' . $keyword . '%');
-            }
-        }
-
-        $total = $totalQuery->count();
-        $totalAmount = $amountQuery->sum('unknown_amount');
-        $rows = $query->field(self::UNKNOWN_PAYMENT_FIELD)
-            ->order('transaction_date asc, source_row_no asc')
-            ->page($page, $pagesize)
-            ->select();
-        return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
+        $result = $this->businessQueryRepository()->unknownPaymentList($data, $page, $pagesize);
+        return $this->ok($result, 'OK', $result['total']);
     }
 
     public function unknownPaymentImport($data = [])
@@ -404,41 +343,8 @@ class CaseFund extends Common
 
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        if (!empty($data['voucher_status'])) {
-            $where['voucher_status'] = $data['voucher_status'];
-        }
-        if (!empty($data['invoice_type'])) {
-            $where['invoice_type'] = $data['invoice_type'];
-        }
-        if (!empty($data['date_start'])) {
-            $where['receive_date'][] = ['>=', $data['date_start']];
-        }
-        if (!empty($data['date_end'])) {
-            $where['receive_date'][] = ['<=', $data['date_end']];
-        }
-
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_DISTRIBUTION)->where($where);
-        $totalQuery = $this->getdb(self::TABLE_DISTRIBUTION)->where($where);
-        $amountQuery = $this->getdb(self::TABLE_DISTRIBUTION)->where($where);
-        foreach ([$query, $totalQuery, $amountQuery] as $item) {
-            if ($keyword !== '') {
-                $item->where('distribution_no|in_case_no|out_case_no|in_party_name|out_party_name|receipt_no|applicant_name', 'like', '%' . $keyword . '%');
-            }
-        }
-
-        $total = $totalQuery->count();
-        $totalAmount = $amountQuery->sum('distribution_amount');
-        $rows = $query->field(self::DISTRIBUTION_FIELD)
-            ->order('receive_date asc, distribution_no asc, source_row_no asc')
-            ->page($page, $pagesize)
-            ->select();
-        return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
+        $result = $this->businessQueryRepository()->distributionList($data, $page, $pagesize);
+        return $this->ok($result, 'OK', $result['total']);
     }
 
     public function distributionImport($data = [])
@@ -511,52 +417,18 @@ class CaseFund extends Common
         }
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        if (!empty($data['voucher_status'])) {
-            $where['voucher_status'] = $data['voucher_status'];
-        }
-        $dateStart = $data['date_start'] ?? ($data['startDate'] ?? '');
-        $dateEnd = $data['date_end'] ?? ($data['endDate'] ?? '');
-        $this->applyDateRangeFilter($where, 'refund_date', $dateStart, $dateEnd);
-        if (!empty($data['out_status'])) {
-            $where['out_status'] = $data['out_status'];
-        }
         $bizType = $this->currentAccountSetBizType();
         $allowedOutTypes = $this->allowedRefundOutTypes($bizType);
         if (empty($allowedOutTypes)) {
             return $this->error('当前账套类型不支持案款退付登记：' . $bizType);
         }
-        $where['out_type'] = ['in', $allowedOutTypes];
-        $caseNo = trim($data['case_no'] ?? ($data['caseNo'] ?? ''));
-        $partyName = trim($data['party_name'] ?? ($data['partyName'] ?? ''));
-        $keyword = trim($data['keyword'] ?? '');
-
-        $query = $this->getdb(self::TABLE_REFUND)->where($where);
-        $totalQuery = $this->getdb(self::TABLE_REFUND)->where($where);
-        $amountQuery = $this->getdb(self::TABLE_REFUND)->where($where);
-        foreach ([$query, $totalQuery, $amountQuery] as $item) {
-            if ($caseNo !== '') {
-                $item->where('case_no', 'like', '%' . $caseNo . '%');
-            }
-            if ($partyName !== '') {
-                $item->where('party_name|actual_payee_name|payee_bank_account_name', 'like', '%' . $partyName . '%');
-            }
-            if ($keyword !== '') {
-                $item->where('case_no|party_name|actual_payee_name|receipt_no|source_receipt_no|out_order_no|payee_bank_account_no', 'like', '%' . $keyword . '%');
-            }
-        }
-
-        $total = $totalQuery->count();
-        $totalAmount = $amountQuery->sum('refund_amount');
-        $rows = $query->field(self::REFUND_FIELD)
-            ->order('refund_date asc, source_row_no asc')
-            ->page($page, $pagesize)
-            ->select();
-        return $this->ok(['items' => $rows, 'total' => $total, 'total_amount' => $totalAmount], 'OK', $total);
+        $result = $this->businessQueryRepository()->refundList(
+            $data,
+            $page,
+            $pagesize,
+            $allowedOutTypes
+        );
+        return $this->ok($result, 'OK', $result['total']);
     }
 
     protected function normalizeDateFilterValue($value)
@@ -3461,6 +3333,43 @@ class CaseFund extends Common
             ]);
         }
         return $this->businessDeletionService;
+    }
+
+    protected function businessQueryRepository()
+    {
+        if ($this->businessQueryRepository === null) {
+            $this->businessQueryRepository = new CaseFundBusinessQueryRepository([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_where' => function () {
+                    return $this->accountWhere();
+                },
+                'current_year' => function () {
+                    return $this->currentYear();
+                },
+                'normalize_payment_method' => function ($method) {
+                    return $this->normalizePaymentMethodCode($method);
+                },
+                'payment_method_options' => function () {
+                    return $this->paymentMethodOptions();
+                },
+                'normalize_date_filter' => function ($value) {
+                    return $this->normalizeDateFilterValue($value);
+                },
+            ], [
+                'payment' => self::TABLE_PAYMENT,
+                'refund' => self::TABLE_REFUND,
+                'unknown_payment' => self::TABLE_UNKNOWN_PAYMENT,
+                'distribution' => self::TABLE_DISTRIBUTION,
+            ], [
+                'payment' => self::PAYMENT_FIELD,
+                'refund' => self::REFUND_FIELD,
+                'unknown_payment' => self::UNKNOWN_PAYMENT_FIELD,
+                'distribution' => self::DISTRIBUTION_FIELD,
+            ]);
+        }
+        return $this->businessQueryRepository;
     }
 
     protected function importIdentity()

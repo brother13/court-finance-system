@@ -10,6 +10,7 @@ require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImp
 require_once $backendRoot . '/app/finance/service/casefund/importing/CaseFundImportPersistence.php';
 require_once $backendRoot . '/app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
 require_once $backendRoot . '/app/finance/service/casefund/persistence/CaseFundBusinessDeletionService.php';
+require_once $backendRoot . '/app/finance/service/casefund/query/CaseFundBusinessQueryRepository.php';
 require_once $backendRoot . '/app/finance/service/casefund/validation/CaseFundImportValidator.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherRule.php';
 require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigResolver.php';
