@@ -3,6 +3,7 @@
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $bankingRulePath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankingRule.php';
 $bankRepositoryPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileRepository.php';
+$bankMatcherPath = __DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankReconcileMatcher.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $rbacPath = __DIR__ . '/../database/migration_rbac.sql';
@@ -10,7 +11,8 @@ $rbacPath = __DIR__ . '/../database/migration_rbac.sql';
 $source = file_get_contents($modelPath);
 $bankingRuleSource = file_get_contents($bankingRulePath);
 $bankRepositorySource = file_get_contents($bankRepositoryPath);
-$bankImplementationSource = $source . "\n" . $bankRepositorySource;
+$bankMatcherSource = file_get_contents($bankMatcherPath);
+$bankImplementationSource = $source . "\n" . $bankRepositorySource . "\n" . $bankMatcherSource;
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $rbac = file_get_contents($rbacPath);
@@ -27,17 +29,17 @@ $checks = [
     [$source, 'public function bankReconcileRun', 'CaseFund should expose bankReconcileRun'],
     [$source, 'public function bankReconcileList', 'CaseFund should expose bankReconcileList'],
     [$source, "requirePermission('case_fund:reconcile')", 'Bank reconcile run should require reconcile permission'],
-    [$source, "\$bizType = 'PAYMENT'", 'Income bank statement should reconcile to payment registration'],
-    [$source, "\$bizType = 'REFUND'", 'Debit bank statement should reconcile to refund registration'],
-    [$source, 'paymentCandidatesByBankStatement', 'Income bank statement should narrow payment candidates by transaction date before serial number'],
-    [$source, 'refundCandidatesByBankStatement', 'Debit bank statement should reconcile refund rows by bank statement counterparty fields'],
+    [$bankImplementationSource, "\$bizType = 'PAYMENT'", 'Income bank statement should reconcile to payment registration'],
+    [$bankImplementationSource, "\$bizType = 'REFUND'", 'Debit bank statement should reconcile to refund registration'],
+    [$bankImplementationSource, 'paymentCandidatesByBankStatement', 'Income bank statement should narrow payment candidates by transaction date before serial number'],
+    [$bankImplementationSource, 'refundCandidatesByBankStatement', 'Debit bank statement should reconcile refund rows by bank statement counterparty fields'],
     [$bankImplementationSource, "->where('payment_date', \$statement['transaction_date'])", 'Payment reconcile should first narrow by bank transaction date'],
     [$bankImplementationSource, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
-    [$source, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
+    [$bankImplementationSource, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
     [$source, "const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']", 'Bank reconcile rerun should clean legacy and current automatic match rules'],
     [$bankRepositorySource, "->where('match_rule', 'in', \$this->autoMatchRules)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
-    [$source, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
-    [$source, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
+    [$bankImplementationSource, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
+    [$bankImplementationSource, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
     [$source, 'supportedBankStatementBanks', 'CaseFund should validate supported banks'],
     [$bankingRuleSource, "'SHENGJING' => '盛京银行'", 'CaseFund should support Shengjing Bank'],
     [$bankingRuleSource, "'CCB' => '建设银行'", 'CaseFund should support CCB'],

@@ -23,6 +23,9 @@ class CaseFundBankReconcileRepository
             if (empty($tables[$name])) {
                 throw new \InvalidArgumentException('案款银行对账仓储缺少数据表：' . $name);
             }
+            if (empty($fields[$name])) {
+                throw new \InvalidArgumentException('案款银行对账仓储缺少字段清单：' . $name);
+            }
         }
         $this->hooks = $hooks;
         $this->tables = $tables;
@@ -42,6 +45,87 @@ class CaseFundBankReconcileRepository
             ->where('bank_serial_no', $bankSerialNo)
             ->field($this->fields['payment'])
             ->select();
+    }
+
+    public function bankStatementList($data, $page, $pageSize)
+    {
+        $where = $this->activeYearWhere();
+        if (!empty($data['period'])) {
+            $where['period'] = $data['period'];
+        }
+        if (!empty($data['bank_code'])) {
+            $where['bank_code'] = $data['bank_code'];
+        }
+        if (!empty($data['direction'])) {
+            $where['direction'] = $data['direction'];
+        }
+        $this->applyDateScopeToWhere(
+            $where,
+            'transaction_date',
+            $data['date_start'] ?? '',
+            $data['date_end'] ?? ''
+        );
+        $keyword = trim($data['keyword'] ?? '');
+        $query = $this->bankStatementFilteredQuery($where, $keyword);
+        $totalQuery = $this->bankStatementFilteredQuery($where, $keyword);
+        $debitQuery = $this->bankStatementFilteredQuery($where, $keyword);
+        $creditQuery = $this->bankStatementFilteredQuery($where, $keyword);
+        $total = $totalQuery->count();
+        $debitTotal = $debitQuery->sum('debit_amount');
+        $creditTotal = $creditQuery->sum('credit_amount');
+        $rows = $query->field($this->fields['statement'])
+            ->order('transaction_time asc, source_row_no asc')
+            ->page($page, $pageSize)
+            ->select();
+        return [
+            'items' => $rows,
+            'total' => $total,
+            'debit_amount' => $debitTotal,
+            'credit_amount' => $creditTotal,
+        ];
+    }
+
+    public function bankStatementsInScope($bankCode, $dateStart, $dateEnd)
+    {
+        $query = $this->db($this->tables['statement'])->where($this->activeYearWhere());
+        if ($bankCode !== '') {
+            $query->where('bank_code', $bankCode);
+        }
+        $this->applyDateScope($query, 'transaction_date', $dateStart, $dateEnd);
+        return $query->field($this->fields['statement'])
+            ->order('transaction_time asc, source_row_no asc')
+            ->select();
+    }
+
+    public function bankReconcileList($data, $page, $pageSize, $emptyCounts)
+    {
+        $where = $this->activeYearWhere();
+        if (!empty($data['status'])) {
+            $where['match_status'] = $data['status'];
+        }
+        if (!empty($data['biz_type'])) {
+            $where['biz_type'] = $data['biz_type'];
+        }
+        $this->applyDateScopeToWhere(
+            $where,
+            'reconcile_date',
+            $data['date_start'] ?? '',
+            $data['date_end'] ?? ''
+        );
+        $keyword = trim($data['keyword'] ?? '');
+        $query = $this->bankReconcileFilteredQuery($where, $keyword);
+        $totalQuery = $this->bankReconcileFilteredQuery($where, $keyword);
+        $total = $totalQuery->count();
+        $rows = $query->field($this->fields['reconcile'])
+            ->order('reconcile_date asc, bank_serial_no asc')
+            ->page($page, $pageSize)
+            ->select();
+        return [
+            'items' => $rows,
+            'total' => $total,
+            // 保持原口径：状态汇总跟随结构化筛选，但不跟随关键词。
+            'summary' => $this->bankReconcileSummary($where, $emptyCounts),
+        ];
     }
 
     public function refundCandidatesByBankStatement($statement)
@@ -162,6 +246,28 @@ class CaseFundBankReconcileRepository
         ];
     }
 
+    protected function bankStatementFilteredQuery($where, $keyword)
+    {
+        $query = $this->db($this->tables['statement'])->where($where);
+        if ($keyword !== '') {
+            $query->where(
+                'counterparty_account_no|counterparty_account_name|counterparty_bank_name|purpose|postscript|bank_serial_no',
+                'like',
+                '%' . $keyword . '%'
+            );
+        }
+        return $query;
+    }
+
+    protected function bankReconcileFilteredQuery($where, $keyword)
+    {
+        $query = $this->db($this->tables['reconcile'])->where($where);
+        if ($keyword !== '') {
+            $query->where('bank_serial_no|biz_no|bank_summary|biz_summary', 'like', '%' . $keyword . '%');
+        }
+        return $query;
+    }
+
     protected function applyBankAndDateScope($query, $bankCode, $dateStart, $dateEnd)
     {
         if ($bankCode !== '') {
@@ -177,6 +283,16 @@ class CaseFundBankReconcileRepository
         }
         if ($dateEnd !== '') {
             $query->where($field, '<=', $dateEnd);
+        }
+    }
+
+    protected function applyDateScopeToWhere(&$where, $field, $dateStart, $dateEnd)
+    {
+        if (!empty($dateStart)) {
+            $where[$field][] = ['>=', $dateStart];
+        }
+        if (!empty($dateEnd)) {
+            $where[$field][] = ['<=', $dateEnd];
         }
     }
 

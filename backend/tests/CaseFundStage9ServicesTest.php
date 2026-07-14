@@ -265,6 +265,8 @@ $repository = new CaseFundBankReconcileRepository([
 ], [
     'payment' => ['payment_id'],
     'refund' => ['refund_id'],
+    'statement' => ['statement_id'],
+    'reconcile' => ['reconcile_id'],
 ], ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']);
 
 stage9AssertSame('payment-1', $repository->paymentCandidatesByBankStatement([

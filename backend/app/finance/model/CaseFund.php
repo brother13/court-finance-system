@@ -4,6 +4,7 @@ namespace app\finance\model;
 
 use app\finance\service\casefund\banking\CaseFundBankingRule;
 use app\finance\service\casefund\banking\CaseFundBankReconcileRepository;
+use app\finance\service\casefund\banking\CaseFundBankReconcileMatcher;
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
 use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\importing\CaseFundImportParser;
@@ -22,6 +23,7 @@ class CaseFund extends Common
 {
     protected $bankingRule;
     protected $bankReconcileRepository;
+    protected $bankReconcileMatcher;
     protected $businessPolicy;
     protected $businessDeletionService;
     protected $businessQueryRepository;
@@ -525,48 +527,9 @@ class CaseFund extends Common
         }
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        if (!empty($data['bank_code'])) {
-            $where['bank_code'] = $data['bank_code'];
-        }
-        if (!empty($data['direction'])) {
-            $where['direction'] = $data['direction'];
-        }
-        if (!empty($data['date_start'])) {
-            $where['transaction_date'][] = ['>=', $data['date_start']];
-        }
-        if (!empty($data['date_end'])) {
-            $where['transaction_date'][] = ['<=', $data['date_end']];
-        }
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
-        $totalQuery = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
-        $debitQuery = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
-        $creditQuery = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
-        foreach ([$query, $totalQuery, $debitQuery, $creditQuery] as $item) {
-            if ($keyword !== '') {
-                $item->where('counterparty_account_no|counterparty_account_name|counterparty_bank_name|purpose|postscript|bank_serial_no', 'like', '%' . $keyword . '%');
-            }
-        }
-
-        $total = $totalQuery->count();
-        $debitTotal = $debitQuery->sum('debit_amount');
-        $creditTotal = $creditQuery->sum('credit_amount');
-        $rows = $query->field(self::BANK_STATEMENT_FIELD)
-            ->order('transaction_time asc, source_row_no asc')
-            ->page($page, $pagesize)
-            ->select();
-        return $this->ok([
-            'items' => $rows,
-            'total' => $total,
-            'debit_amount' => $debitTotal,
-            'credit_amount' => $creditTotal,
-            'banks' => $this->supportedBankStatementBanks(),
-        ], 'OK', $total);
+        $result = $this->bankReconcileRepository()->bankStatementList($data, $page, $pagesize);
+        $result['banks'] = $this->supportedBankStatementBanks();
+        return $this->ok($result, 'OK', $result['total']);
     }
 
     public function bankStatementImport($data = [])
@@ -807,87 +770,20 @@ class CaseFund extends Common
         $bankCode = trim((string)($data['bank_code'] ?? ''));
         $dateStart = trim((string)($data['date_start'] ?? ''));
         $dateEnd = trim((string)($data['date_end'] ?? ''));
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if ($bankCode !== '') {
-            $where['bank_code'] = $bankCode;
-        }
-        if ($dateStart !== '') {
-            $where['transaction_date'][] = ['>=', $dateStart];
-        }
-        if ($dateEnd !== '') {
-            $where['transaction_date'][] = ['<=', $dateEnd];
-        }
-
-        $statements = $this->getdb(self::TABLE_BANK_STATEMENT)
-            ->where($where)
-            ->field(self::BANK_STATEMENT_FIELD)
-            ->order('transaction_time asc, source_row_no asc')
-            ->select();
-
-        $statementIds = [];
-        foreach ($statements as $statement) {
-            $statementIds[] = $statement['statement_id'];
-        }
-
-        $resultRows = [];
-        $matchedBiz = [];
-        $statementStatuses = [];
-
-        foreach ($statements as $statement) {
-            $direction = $statement['direction'];
-            $bankAmount = $direction === 'CREDIT' ? $statement['credit_amount'] : $statement['debit_amount'];
-            $bankCents = $this->decimalToCents($bankAmount);
-            if ($direction === 'CREDIT') {
-                $candidates = $this->paymentCandidatesByBankStatement($statement);
-                $bizType = 'PAYMENT';
-                $matchRule = 'SERIAL_NO_DATE';
-            } else {
-                $candidates = $this->refundCandidatesByBankStatement($statement);
-                $bizType = 'REFUND';
-                $matchRule = 'PAYEE_ACCOUNT_DATE';
-            }
-
-            if (empty($candidates)) {
-                $status = 'BANK_ONLY';
-                $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, null, $status, $bankCents, 0, $matchRule);
-                $statementStatuses[$statement['statement_id']] = $status;
-                continue;
-            }
-
-            if (count($candidates) > 1) {
-                foreach ($candidates as $candidate) {
-                    $bizCents = $this->bankReconcileBizAmountCents($bizType, $candidate);
-                    $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, 'DUPLICATE', $bankCents, $bizCents, $matchRule);
-                    $matchedBiz[$bizType . ':' . $this->bankReconcileBizId($bizType, $candidate)] = true;
-                }
-                $statementStatuses[$statement['statement_id']] = 'DUPLICATE';
-                continue;
-            }
-
-            $candidate = $candidates[0];
-            $bizCents = $this->bankReconcileBizAmountCents($bizType, $candidate);
-            $status = $bankCents === $bizCents ? 'MATCHED' : 'AMOUNT_DIFF';
-            $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, $status, $bankCents, $bizCents, $matchRule);
-            $statementStatuses[$statement['statement_id']] = $status;
-            $matchedBiz[$bizType . ':' . $this->bankReconcileBizId($bizType, $candidate)] = true;
-        }
-
-        foreach ($this->paymentCandidatesInScope($dateStart, $dateEnd) as $payment) {
-            $key = 'PAYMENT:' . $payment['payment_id'];
-            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsByPayment($payment, $bankCode, $dateStart, $dateEnd)) {
-                $bizCents = $this->decimalToCents($payment['payment_amount']);
-                $resultRows[] = $this->buildBankReconcileRow(null, 'PAYMENT', $payment, 'BIZ_ONLY', 0, $bizCents, 'SERIAL_NO_DATE');
-            }
-        }
-
-        foreach ($this->refundCandidatesInScope($dateStart, $dateEnd) as $refund) {
-            $key = 'REFUND:' . $refund['refund_id'];
-            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsByRefundPayee($refund, $bankCode, $dateStart, $dateEnd)) {
-                $bizCents = $this->decimalToCents($refund['refund_amount']);
-                $resultRows[] = $this->buildBankReconcileRow(null, 'REFUND', $refund, 'BIZ_ONLY', 0, $bizCents, 'PAYEE_ACCOUNT_DATE');
-            }
-        }
+        $statements = $this->bankReconcileRepository()->bankStatementsInScope(
+            $bankCode,
+            $dateStart,
+            $dateEnd
+        );
+        $matchResult = $this->bankReconcileMatcher()->match(
+            $statements,
+            $bankCode,
+            $dateStart,
+            $dateEnd
+        );
+        $statementIds = $matchResult['statement_ids'];
+        $resultRows = $matchResult['result_rows'];
+        $statementStatuses = $matchResult['statement_statuses'];
 
         $counts = $this->emptyBankReconcileCounts();
         Db::startTrans();
@@ -944,38 +840,13 @@ class CaseFund extends Common
         }
         $page = $data['page'] ?? input('param.page', 1);
         $pagesize = $data['pagesize'] ?? ($data['pageSize'] ?? input('param.pagesize', 50));
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        if (!empty($data['status'])) {
-            $where['match_status'] = $data['status'];
-        }
-        if (!empty($data['biz_type'])) {
-            $where['biz_type'] = $data['biz_type'];
-        }
-        if (!empty($data['date_start'])) {
-            $where['reconcile_date'][] = ['>=', $data['date_start']];
-        }
-        if (!empty($data['date_end'])) {
-            $where['reconcile_date'][] = ['<=', $data['date_end']];
-        }
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_BANK_RECONCILE)->where($where);
-        $totalQuery = $this->getdb(self::TABLE_BANK_RECONCILE)->where($where);
-        foreach ([$query, $totalQuery] as $item) {
-            if ($keyword !== '') {
-                $item->where('bank_serial_no|biz_no|bank_summary|biz_summary', 'like', '%' . $keyword . '%');
-            }
-        }
-        $total = $totalQuery->count();
-        $rows = $query->field(self::BANK_RECONCILE_FIELD)
-            ->order('reconcile_date asc, bank_serial_no asc')
-            ->page($page, $pagesize)
-            ->select();
-        return $this->ok([
-            'items' => $rows,
-            'total' => $total,
-            'summary' => $this->bankReconcileSummary($where),
-        ], 'OK', $total);
+        $result = $this->bankReconcileRepository()->bankReconcileList(
+            $data,
+            $page,
+            $pagesize,
+            $this->emptyBankReconcileCounts()
+        );
+        return $this->ok($result, 'OK', $result['total']);
     }
 
     public function subjectConfigList($data = [])
@@ -3213,9 +3084,58 @@ class CaseFund extends Common
             ], [
                 'payment' => self::PAYMENT_FIELD,
                 'refund' => self::REFUND_FIELD,
+                'statement' => self::BANK_STATEMENT_FIELD,
+                'reconcile' => self::BANK_RECONCILE_FIELD,
             ], self::BANK_RECONCILE_AUTO_MATCH_RULES);
         }
         return $this->bankReconcileRepository;
+    }
+
+    protected function bankReconcileMatcher()
+    {
+        if ($this->bankReconcileMatcher === null) {
+            $this->bankReconcileMatcher = new CaseFundBankReconcileMatcher([
+                'amount_to_cents' => function ($amount) {
+                    return $this->decimalToCents($amount);
+                },
+                'payment_candidates_by_statement' => function ($statement) {
+                    return $this->paymentCandidatesByBankStatement($statement);
+                },
+                'refund_candidates_by_statement' => function ($statement) {
+                    return $this->refundCandidatesByBankStatement($statement);
+                },
+                'payment_candidates_in_scope' => function ($dateStart, $dateEnd) {
+                    return $this->paymentCandidatesInScope($dateStart, $dateEnd);
+                },
+                'refund_candidates_in_scope' => function ($dateStart, $dateEnd) {
+                    return $this->refundCandidatesInScope($dateStart, $dateEnd);
+                },
+                'bank_statement_exists_by_payment' => function ($payment, $bankCode, $dateStart, $dateEnd) {
+                    return $this->bankStatementExistsByPayment($payment, $bankCode, $dateStart, $dateEnd);
+                },
+                'bank_statement_exists_by_refund' => function ($refund, $bankCode, $dateStart, $dateEnd) {
+                    return $this->bankStatementExistsByRefundPayee($refund, $bankCode, $dateStart, $dateEnd);
+                },
+                'build_reconcile_row' => function ($statement, $bizType, $biz, $status, $bankCents, $bizCents, $matchRule) {
+                    return $this->buildBankReconcileRow(
+                        $statement,
+                        $bizType,
+                        $biz,
+                        $status,
+                        $bankCents,
+                        $bizCents,
+                        $matchRule
+                    );
+                },
+                'biz_amount_cents' => function ($bizType, $biz) {
+                    return $this->bankReconcileBizAmountCents($bizType, $biz);
+                },
+                'biz_id' => function ($bizType, $biz) {
+                    return $this->bankReconcileBizId($bizType, $biz);
+                },
+            ]);
+        }
+        return $this->bankReconcileMatcher;
     }
 
     protected function voucherRule()
