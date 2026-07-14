@@ -105,13 +105,15 @@ if (empty($first['source_fingerprint']) || strlen($first['source_fingerprint']) 
 }
 
 $source = file_get_contents($modelPath);
+$persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/importing/CaseFundImportPersistence.php');
+$implementationSource = $source . "\n" . $persistenceSource;
 foreach ([
     'updateExistingRefundFromImport' => 'Refund import should overwrite existing inactive generated rows',
     'canOverwriteGeneratedBusinessRow' => 'Refund import should allow overwriting generated rows only when original voucher is deleted or missing',
     'hasActiveGeneratedVoucher($row)' => 'Refund import should keep active generated voucher rows from being overwritten',
     "'updated' => \$updated" => 'Refund import result should report updated rows',
 ] as $needle => $message) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }

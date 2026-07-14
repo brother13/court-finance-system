@@ -6,6 +6,7 @@ use app\finance\service\casefund\banking\CaseFundBankingRule;
 use app\finance\service\casefund\importing\CaseFundImportIdentity;
 use app\finance\service\casefund\importing\CaseFundImportNormalizer;
 use app\finance\service\casefund\importing\CaseFundImportParser;
+use app\finance\service\casefund\importing\CaseFundImportPersistence;
 use app\finance\service\casefund\policy\CaseFundBusinessPolicy;
 use app\finance\service\casefund\support\LegacySpreadsheetReader;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
@@ -20,6 +21,7 @@ class CaseFund extends Common
     protected $importIdentity;
     protected $importNormalizer;
     protected $importParser;
+    protected $importPersistence;
     protected $importValidator;
     protected $legacySpreadsheetReader;
     protected $subjectConfigResolver;
@@ -242,45 +244,14 @@ class CaseFund extends Common
 
         $existing = $this->loadExistingPaymentsForImport($rows, $receiptNoDuplicateCheckRequired);
 
-        $created = 0;
-        $updated = 0;
-        $skipped = 0;
-        $seen = [];
+        $persistenceData = $data;
+        $persistenceData['use_receipt_no_as_duplicate_key'] = $receiptNoDuplicateCheckRequired;
         Db::startTrans();
         try {
-            foreach ($rows as $row) {
-                $duplicateKey = $this->paymentImportDuplicateKey($row, $receiptNoDuplicateCheckRequired);
-                if ($duplicateKey !== '' && isset($seen[$duplicateKey])) {
-                    $skipped++;
-                    continue;
-                }
-                if ($duplicateKey !== '') {
-                    $seen[$duplicateKey] = true;
-                }
-                if ($duplicateKey !== '' && isset($existing[$duplicateKey])) {
-                    $existingRow = $existing[$duplicateKey];
-                    if (!$this->canOverwriteGeneratedBusinessRow($existingRow)) {
-                        $skipped++;
-                        continue;
-                    }
-                    $this->updateExistingPaymentFromImport($existingRow, $row, $data);
-                    $updated++;
-                    continue;
-                }
-                $insert = $row;
-                $insert['payment_id'] = uuid();
-                $insert['account_set_id'] = $this->accountSetId;
-                $insert['source_file_name'] = $data['filename'] ?? '';
-                $insert['voucher_status'] = 'UNGENERATED';
-                $insert['voucher_id'] = null;
-                $insert['voucher_no'] = null;
-                $insert['voucher_period'] = null;
-                $insert['voucher_generated_time'] = null;
-                $insert['remark'] = $data['remark'] ?? '';
-                $this->fillCreate($insert);
-                $this->getdb(self::TABLE_PAYMENT)->insert($insert);
-                $created++;
-            }
+            $result = $this->importPersistence()->persistPaymentRows($rows, $existing, $persistenceData);
+            $created = $result['created'];
+            $updated = $result['updated'];
+            $skipped = $result['skipped'];
             $this->logAudit('CASE_FUND_PAYMENT', 'IMPORT', 'IMPORT', null, [
                 'filename' => $data['filename'] ?? '',
                 'total' => count($rows),
@@ -382,49 +353,19 @@ class CaseFund extends Common
             return $this->error('导入校验失败', $errors);
         }
 
-        $fingerprints = [];
-        foreach ($rows as $row) {
-            $fingerprints[] = $row['source_fingerprint'];
-        }
-        $fingerprints = array_values(array_unique($fingerprints));
-        $existing = [];
-        if (!empty($fingerprints)) {
-            $existingRows = $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('source_fingerprint', 'in', $fingerprints)->select();
-            foreach ($existingRows as $row) {
-                $existing[$row['source_fingerprint']] = true;
-            }
-        }
+        $existing = $this->importPersistence()->loadExistingRowsByFingerprint('unknown_payment', $rows);
 
-        $created = 0;
-        $skipped = 0;
-        $seen = [];
         Db::startTrans();
         try {
-            foreach ($rows as $row) {
-                $fingerprint = $row['source_fingerprint'];
-                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
-                    $skipped++;
-                    $seen[$fingerprint] = true;
-                    continue;
-                }
-                $seen[$fingerprint] = true;
-                $insert = $row;
-                $insert['unknown_payment_id'] = uuid();
-                $insert['account_set_id'] = $this->accountSetId;
-                $insert['source_file_name'] = $data['filename'] ?? '';
-                $insert['voucher_status'] = 'UNGENERATED';
-                $insert['voucher_id'] = null;
-                $insert['voucher_no'] = null;
-                $insert['voucher_period'] = null;
-                $insert['voucher_generated_time'] = null;
-                $insert['remark'] = $data['remark'] ?? '';
-                $this->fillCreate($insert);
-                $this->getdb(self::TABLE_UNKNOWN_PAYMENT)->insert($insert);
-                $created++;
-            }
+            $result = $this->importPersistence()->persistUniqueFingerprintRows(
+                'unknown_payment',
+                'unknown_payment_id',
+                $rows,
+                $existing,
+                $data
+            );
+            $created = $result['created'];
+            $skipped = $result['skipped'];
             $this->logAudit('CASE_FUND_UNKNOWN_PAYMENT', 'IMPORT', 'IMPORT', null, [
                 'filename' => $data['filename'] ?? '',
                 'total' => count($rows),
@@ -524,49 +465,19 @@ class CaseFund extends Common
             return $this->error('导入校验失败', $errors);
         }
 
-        $fingerprints = [];
-        foreach ($rows as $row) {
-            $fingerprints[] = $row['source_fingerprint'];
-        }
-        $fingerprints = array_values(array_unique($fingerprints));
-        $existing = [];
-        if (!empty($fingerprints)) {
-            $existingRows = $this->getdb(self::TABLE_DISTRIBUTION)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('source_fingerprint', 'in', $fingerprints)->select();
-            foreach ($existingRows as $row) {
-                $existing[$row['source_fingerprint']] = true;
-            }
-        }
+        $existing = $this->importPersistence()->loadExistingRowsByFingerprint('distribution', $rows);
 
-        $created = 0;
-        $skipped = 0;
-        $seen = [];
         Db::startTrans();
         try {
-            foreach ($rows as $row) {
-                $fingerprint = $row['source_fingerprint'];
-                if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
-                    $skipped++;
-                    $seen[$fingerprint] = true;
-                    continue;
-                }
-                $seen[$fingerprint] = true;
-                $insert = $row;
-                $insert['distribution_id'] = uuid();
-                $insert['account_set_id'] = $this->accountSetId;
-                $insert['source_file_name'] = $data['filename'] ?? '';
-                $insert['voucher_status'] = 'UNGENERATED';
-                $insert['voucher_id'] = null;
-                $insert['voucher_no'] = null;
-                $insert['voucher_period'] = null;
-                $insert['voucher_generated_time'] = null;
-                $insert['remark'] = $data['remark'] ?? '';
-                $this->fillCreate($insert);
-                $this->getdb(self::TABLE_DISTRIBUTION)->insert($insert);
-                $created++;
-            }
+            $result = $this->importPersistence()->persistUniqueFingerprintRows(
+                'distribution',
+                'distribution_id',
+                $rows,
+                $existing,
+                $data
+            );
+            $created = $result['created'];
+            $skipped = $result['skipped'];
             $this->logAudit('CASE_FUND_DISTRIBUTION', 'IMPORT', 'IMPORT', null, [
                 'filename' => $data['filename'] ?? '',
                 'total' => count($rows),
@@ -699,59 +610,14 @@ class CaseFund extends Common
             return $this->error($this->refundImportErrorMessage($errors, $bizType), $errors);
         }
 
-        $fingerprints = [];
-        foreach ($rows as $row) {
-            $fingerprints[] = $row['source_fingerprint'];
-        }
-        $existing = [];
-        if (!empty($fingerprints)) {
-            $existingRows = $this->getdb(self::TABLE_REFUND)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->select();
-            foreach ($existingRows as $row) {
-                $existing[$row['source_fingerprint']] = $row;
-            }
-        }
+        $existing = $this->importPersistence()->loadExistingRowsByFingerprint('refund', $rows, true);
 
-        $created = 0;
-        $updated = 0;
-        $skipped = 0;
-        $seen = [];
         Db::startTrans();
         try {
-            foreach ($rows as $row) {
-                $fingerprint = $row['source_fingerprint'];
-                if (isset($seen[$fingerprint])) {
-                    $skipped++;
-                    $seen[$fingerprint] = true;
-                    continue;
-                }
-                $seen[$fingerprint] = true;
-                if (isset($existing[$fingerprint])) {
-                    $existingRow = $existing[$fingerprint];
-                    if (!$this->canOverwriteGeneratedBusinessRow($existingRow)) {
-                        $skipped++;
-                        continue;
-                    }
-                    $this->updateExistingRefundFromImport($existingRow, $row, $data);
-                    $updated++;
-                    continue;
-                }
-                $insert = $row;
-                $insert['refund_id'] = uuid();
-                $insert['account_set_id'] = $this->accountSetId;
-                $insert['source_file_name'] = $data['filename'] ?? '';
-                $insert['voucher_status'] = 'UNGENERATED';
-                $insert['voucher_id'] = null;
-                $insert['voucher_no'] = null;
-                $insert['voucher_period'] = null;
-                $insert['voucher_generated_time'] = null;
-                $insert['remark'] = $data['remark'] ?? '';
-                $this->fillCreate($insert);
-                $this->getdb(self::TABLE_REFUND)->insert($insert);
-                $created++;
-            }
+            $result = $this->importPersistence()->persistRefundRows($rows, $existing, $data);
+            $created = $result['created'];
+            $updated = $result['updated'];
+            $skipped = $result['skipped'];
             $this->logAudit('CASE_FUND_REFUND', 'IMPORT', 'IMPORT', null, [
                 'filename' => $data['filename'] ?? '',
                 'total' => count($rows),
@@ -2882,103 +2748,17 @@ class CaseFund extends Common
 
     protected function paymentReceiptNoDuplicateErrors($rows)
     {
-        $errors = [];
-        $firstRowByReceiptNo = [];
-        $rowsByReceiptNo = [];
-        foreach ($rows as $row) {
-            $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-            if ($receiptNo === '') {
-                continue;
-            }
-            $rowNo = $row['source_row_no'] ?? '?';
-            if (isset($firstRowByReceiptNo[$receiptNo])) {
-                $errors[] = '第' . $rowNo . '行：票据号码【' . $receiptNo . '】与第' . $firstRowByReceiptNo[$receiptNo] . '行重复，请核对导入文件';
-            } else {
-                $firstRowByReceiptNo[$receiptNo] = $rowNo;
-            }
-            if (!isset($rowsByReceiptNo[$receiptNo])) {
-                $rowsByReceiptNo[$receiptNo] = [];
-            }
-            $rowsByReceiptNo[$receiptNo][] = $row;
-        }
-
-        if (empty($rowsByReceiptNo)) {
-            return $errors;
-        }
-
-        $existingRows = $this->loadExistingPaymentsByReceiptNos(array_keys($rowsByReceiptNo));
-        foreach ($existingRows as $existingRow) {
-            if ($this->canOverwriteGeneratedBusinessRow($existingRow)) {
-                continue;
-            }
-            $receiptNo = trim((string)($existingRow['receipt_no'] ?? ''));
-            if ($receiptNo === '' || !isset($rowsByReceiptNo[$receiptNo])) {
-                continue;
-            }
-            foreach ($rowsByReceiptNo[$receiptNo] as $importRow) {
-                $rowNo = $importRow['source_row_no'] ?? '?';
-                $errors[] = '第' . $rowNo . '行：票据号码【' . $receiptNo . '】已存在'
-                    . $this->paymentExistingDuplicateSummary($existingRow)
-                    . '，请核对后重新导入';
-            }
-        }
-        return $errors;
+        return $this->importPersistence()->paymentReceiptNoDuplicateErrors($rows);
     }
 
     protected function loadExistingPaymentsByReceiptNos($receiptNos)
     {
-        $receiptNos = array_values(array_unique(array_filter(array_map(function ($value) {
-            return trim((string)$value);
-        }, $receiptNos))));
-        if (empty($receiptNos)) {
-            return [];
-        }
-        return $this->getdb(self::TABLE_PAYMENT)->where([
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->where('receipt_no', 'in', $receiptNos)
-            ->field('payment_id,account_set_id,fiscal_year,period,receipt_no,case_no,payer_name,party_name,payment_amount,payment_date,payment_time,source_file_name,source_row_no,source_fingerprint,voucher_status,voucher_id,voucher_no,voucher_period,del_flag')
-            ->select();
+        return $this->importPersistence()->loadExistingPaymentsByReceiptNos($receiptNos);
     }
 
     protected function paymentExistingDuplicateSummary($row)
     {
-        $parts = [];
-        if (trim((string)($row['source_file_name'] ?? '')) !== '') {
-            $parts[] = '来源文件：' . $row['source_file_name'];
-        }
-        if (trim((string)($row['source_row_no'] ?? '')) !== '') {
-            $parts[] = '原导入第' . $row['source_row_no'] . '行';
-        }
-        if (trim((string)($row['case_no'] ?? '')) !== '') {
-            $parts[] = '案号：' . $row['case_no'];
-        }
-        if (trim((string)($row['payment_amount'] ?? '')) !== '') {
-            $parts[] = '金额：' . $row['payment_amount'];
-        }
-        $paymentTime = trim((string)($row['payment_time'] ?? ''));
-        if ($paymentTime === '') {
-            $paymentTime = trim((string)($row['payment_date'] ?? ''));
-        }
-        if ($paymentTime !== '') {
-            $parts[] = '缴费时间：' . $paymentTime;
-        }
-        $person = trim((string)($row['payer_name'] ?? ''));
-        if ($person === '') {
-            $person = trim((string)($row['party_name'] ?? ''));
-        }
-        if ($person !== '') {
-            $parts[] = '缴费人/当事人：' . $person;
-        }
-        if (trim((string)($row['voucher_no'] ?? '')) !== '') {
-            $parts[] = '凭证号：' . $row['voucher_no'];
-        } elseif (trim((string)($row['voucher_status'] ?? '')) !== '') {
-            $parts[] = '凭证状态：' . $row['voucher_status'];
-        }
-        if (empty($parts)) {
-            return '';
-        }
-        return '（' . implode('，', $parts) . '）';
+        return $this->importPersistence()->paymentExistingDuplicateSummary($row);
     }
 
     protected function validateDistributionRows($rows, $bizType = '')
@@ -3756,56 +3536,7 @@ class CaseFund extends Common
 
     protected function loadExistingPaymentsForImport($rows, $useReceiptNoAsDuplicateKey = true)
     {
-        $fingerprints = [];
-        $receiptNos = [];
-        $accountNos = [];
-        foreach ($rows as $row) {
-            $fingerprint = trim((string)($row['source_fingerprint'] ?? ''));
-            if ($fingerprint !== '') {
-                $fingerprints[] = $fingerprint;
-            }
-            $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-            if ($useReceiptNoAsDuplicateKey && $receiptNo !== '') {
-                $receiptNos[] = $receiptNo;
-                continue;
-            }
-            if (!$useReceiptNoAsDuplicateKey && $receiptNo !== '' && $fingerprint !== '') {
-                continue;
-            }
-            $accountNo = trim((string)($row['bank_account_no'] ?? ''));
-            if ($accountNo !== '') {
-                $accountNos[] = $accountNo;
-            }
-        }
-
-        $existing = [];
-        if (!empty($fingerprints)) {
-            $fingerprintRows = $this->getdb(self::TABLE_PAYMENT)->where([
-                'account_set_id' => $this->accountSetId,
-            ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->field(self::PAYMENT_FIELD)->select();
-            foreach ($fingerprintRows as $row) {
-                $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
-            }
-        }
-        if (!empty($receiptNos)) {
-            $receiptRows = $this->getdb(self::TABLE_PAYMENT)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('receipt_no', 'in', array_values(array_unique($receiptNos)))->field(self::PAYMENT_FIELD)->select();
-            foreach ($receiptRows as $row) {
-                $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
-            }
-        }
-        if (!empty($accountNos)) {
-            $accountRows = $this->getdb(self::TABLE_PAYMENT)->where([
-                'account_set_id' => $this->accountSetId,
-                'del_flag' => 0,
-            ])->where('bank_account_no', 'in', array_values(array_unique($accountNos)))->field(self::PAYMENT_FIELD)->select();
-            foreach ($accountRows as $row) {
-                $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
-            }
-        }
-        return $existing;
+        return $this->importPersistence()->loadExistingPaymentsForImport($rows, $useReceiptNoAsDuplicateKey);
     }
 
     protected function rememberPaymentImportExistingRow(&$existing, $row, $useReceiptNoAsDuplicateKey = true)
@@ -3816,49 +3547,17 @@ class CaseFund extends Common
 
     protected function updateExistingPaymentFromImport($existingRow, $row, $data)
     {
-        $update = $row;
-        unset($update['payment_id'], $update['account_set_id'], $update['created_by'], $update['created_time']);
-        $update['source_file_name'] = $data['filename'] ?? '';
-        $update['voucher_status'] = 'UNGENERATED';
-        $update['voucher_id'] = null;
-        $update['voucher_no'] = null;
-        $update['voucher_period'] = null;
-        $update['voucher_generated_time'] = null;
-        $update['del_flag'] = 0;
-        $update['remark'] = $data['remark'] ?? '';
-        $this->fillUpdate($update);
-        $this->getdb(self::TABLE_PAYMENT)->where([
-            'payment_id' => $existingRow['payment_id'],
-            'account_set_id' => $this->accountSetId,
-        ])->update($update);
+        return $this->importPersistence()->updateExistingPaymentFromImport($existingRow, $row, $data);
     }
 
     protected function updateExistingRefundFromImport($existingRow, $row, $data)
     {
-        $update = $row;
-        unset($update['refund_id'], $update['account_set_id'], $update['created_by'], $update['created_time']);
-        $update['source_file_name'] = $data['filename'] ?? '';
-        $update['voucher_status'] = 'UNGENERATED';
-        $update['voucher_id'] = null;
-        $update['voucher_no'] = null;
-        $update['voucher_period'] = null;
-        $update['voucher_generated_time'] = null;
-        $update['remark'] = $data['remark'] ?? '';
-        $this->fillUpdate($update);
-        $this->getdb(self::TABLE_REFUND)->where([
-            'refund_id' => $existingRow['refund_id'],
-            'account_set_id' => $this->accountSetId,
-            'del_flag' => 0,
-        ])->update($update);
+        return $this->importPersistence()->updateExistingRefundFromImport($existingRow, $row, $data);
     }
 
     protected function canOverwriteGeneratedBusinessRow($row)
     {
-        $status = $row['voucher_status'] ?? 'UNGENERATED';
-        if ($status === 'UNGENERATED') {
-            return true;
-        }
-        return $status === 'GENERATED' && !$this->hasActiveGeneratedVoucher($row);
+        return $this->importPersistence()->canOverwriteGeneratedBusinessRow($row);
     }
 
     protected function paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey = true)
@@ -4071,6 +3770,46 @@ class CaseFund extends Common
             $this->importNormalizer = new CaseFundImportNormalizer();
         }
         return $this->importNormalizer;
+    }
+
+    protected function importPersistence()
+    {
+        if ($this->importPersistence === null) {
+            $this->importPersistence = new CaseFundImportPersistence([
+                'get_db' => function ($table) {
+                    return $this->getdb($table);
+                },
+                'account_set_id' => function () {
+                    return $this->accountSetId;
+                },
+                'new_id' => function () {
+                    return uuid();
+                },
+                'prepare_create' => function ($row) {
+                    $this->fillCreate($row);
+                    return $row;
+                },
+                'prepare_update' => function ($row) {
+                    $this->fillUpdate($row);
+                    return $row;
+                },
+                'payment_duplicate_key' => function ($row, $useReceiptNoAsDuplicateKey) {
+                    return $this->paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey);
+                },
+                'remember_payment_existing' => function (&$existing, $row, $useReceiptNoAsDuplicateKey) {
+                    return $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
+                },
+                'has_active_generated_voucher' => function ($row) {
+                    return $this->hasActiveGeneratedVoucher($row);
+                },
+            ], [
+                'payment' => self::TABLE_PAYMENT,
+                'refund' => self::TABLE_REFUND,
+                'unknown_payment' => self::TABLE_UNKNOWN_PAYMENT,
+                'distribution' => self::TABLE_DISTRIBUTION,
+            ], self::PAYMENT_FIELD);
+        }
+        return $this->importPersistence;
     }
 
     protected function importParser()

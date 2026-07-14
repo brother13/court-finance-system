@@ -231,6 +231,8 @@ if ($decimalToCentsMethod->invoke($caseFund, '99.999') !== 10000) {
 }
 
 $source = file_get_contents($modelPath);
+$persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/importing/CaseFundImportPersistence.php');
+$implementationSource = $source . "\n" . $persistenceSource;
 foreach ([
     'loadExistingPaymentsForImport' => 'Payment import should load existing rows by duplicate key',
     "'source_fingerprint', 'in'" => 'Payment import should load existing rows by source fingerprint to avoid uk_case_fund_payment_source conflicts',
@@ -240,7 +242,7 @@ foreach ([
     'hasActiveGeneratedVoucher($row)' => 'Payment import should keep active generated voucher rows from being overwritten',
     "'updated' => \$updated" => 'Payment import result should report updated rows',
 ] as $needle => $message) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }
