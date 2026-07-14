@@ -21,6 +21,7 @@ use app\finance\service\casefund\subject\SubjectConfigApplicationService;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
 use app\finance\service\casefund\voucher\CaseFundVoucherRule;
 use app\finance\service\casefund\voucher\PaymentVoucherGenerationService;
+use app\finance\service\casefund\voucher\RefundVoucherGenerationService;
 use think\Db;
 
 class CaseFund extends Common
@@ -44,6 +45,7 @@ class CaseFund extends Common
     protected $subjectConfigApplicationService;
     protected $voucherRule;
     protected $paymentVoucherGenerationService;
+    protected $refundVoucherGenerationService;
 
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
@@ -1417,23 +1419,11 @@ class CaseFund extends Common
             return $auth;
         }
 
-        $refundIds = $data['refund_ids'] ?? [];
-        if (!is_array($refundIds) || empty($refundIds)) {
-            return $this->error('请选择要生成凭证的退付记录');
+        $result = $this->refundVoucherGenerationService()->selectedRows($data['refund_ids'] ?? []);
+        if (!empty($result['error'])) {
+            return $this->error($result['error']);
         }
-
-        $rows = $this->getdb(self::TABLE_REFUND)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('refund_id', 'in', $refundIds)
-            ->field(self::REFUND_FIELD)
-            ->order('refund_date asc, source_row_no asc')
-            ->select();
-
-        if (empty($rows)) {
-            return $this->error('所选退付记录不存在');
-        }
-
-        return $this->refundGenerateVoucherFromRows($rows, 'SELECTED');
+        return $this->refundGenerateVoucherFromRows($result['rows'], 'SELECTED');
     }
 
     public function refundGenerateVoucherByQuery($data = [])
@@ -1457,220 +1447,25 @@ class CaseFund extends Common
 
     protected function refundRowsByGenerateQuery($data)
     {
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        $where['voucher_status'] = 'UNGENERATED';
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        $dateStart = $data['date_start'] ?? ($data['startDate'] ?? '');
-        $dateEnd = $data['date_end'] ?? ($data['endDate'] ?? '');
-        $this->applyDateRangeFilter($where, 'refund_date', $dateStart, $dateEnd);
-        if (!empty($data['out_status'])) {
-            $where['out_status'] = $data['out_status'];
-        }
-        $bizType = $this->currentAccountSetBizType();
-        $allowedOutTypes = $this->allowedRefundOutTypes($bizType);
-        if (empty($allowedOutTypes)) {
-            return ['error' => '当前账套类型不支持案款退付登记：' . $bizType, 'rows' => []];
-        }
-        $where['out_type'] = ['in', $allowedOutTypes];
-
-        $caseNo = trim($data['case_no'] ?? ($data['caseNo'] ?? ''));
-        $partyName = trim($data['party_name'] ?? ($data['partyName'] ?? ''));
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_REFUND)->where($where);
-        if ($caseNo !== '') {
-            $query->where('case_no', 'like', '%' . $caseNo . '%');
-        }
-        if ($partyName !== '') {
-            $query->where('party_name|actual_payee_name|payee_bank_account_name', 'like', '%' . $partyName . '%');
-        }
-        if ($keyword !== '') {
-            $query->where('case_no|party_name|actual_payee_name|receipt_no|source_receipt_no|out_order_no|payee_bank_account_no', 'like', '%' . $keyword . '%');
-        }
-        $rows = $query->field(self::REFUND_FIELD)
-            ->order('refund_date asc, source_row_no asc')
-            ->select();
-        return ['error' => '', 'rows' => $rows];
+        return $this->refundVoucherGenerationService()->rowsByQuery($data);
     }
 
     protected function refundGenerateVoucherFromRows($rows, $generateScope = 'SELECTED')
     {
-        $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '退付记录');
-        if ($generationCheck !== null) {
-            return $this->error($generationCheck);
+        $prepared = $this->refundVoucherGenerationService()->prepareGeneration($rows, $generateScope);
+        if (!empty($prepared['error'])) {
+            return $this->error($prepared['error']);
         }
-
-        $bizType = $this->currentAccountSetBizType();
-        $subjectConfigMap = $this->subjectConfigResolver()->configsByBusinessItems($bizType, 'REFUND');
-
-        foreach ($rows as $row) {
-            $outType = $row['out_type'];
-            $outTypeConfigKey = $this->voucherSubjectConfigKey($bizType, 'REFUND', $outType);
-            if (!isset($subjectConfigMap[$outTypeConfigKey])) {
-                return $this->error('出账查询未配置借方/贷方科目');
-            }
-            $debitCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$outTypeConfigKey]['debit_subject_code'], '借方科目');
-            if ($debitCheck !== null) {
-                return $this->error('案号【' . $row['case_no'] . '】' . $debitCheck);
-            }
-            $creditCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$outTypeConfigKey]['credit_subject_code'], '贷方科目');
-            if ($creditCheck !== null) {
-                return $this->error('案号【' . $row['case_no'] . '】' . $creditCheck);
-            }
-        }
-
-        $byDayFlag = $this->subjectConfigAccountSetFlag();
-        $byOutOrderNoFlag = $this->generateRefundVoucherByOutOrderNoFlag();
-        try {
-            $groups = $this->groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag);
-        } catch (\Exception $e) {
-            return $this->error($e->getMessage());
-        }
-
-        $generatedCount = 0;
-        $voucherInfos = [];
 
         Db::startTrans();
         try {
-            foreach ($groups as $groupRows) {
-                $firstRow = $groupRows[0];
-                $period = substr($firstRow['refund_date'], 0, 7);
-                $voucherDate = $firstRow['refund_date'];
-                $aggregateByOutOrderNo = $byDayFlag === 1 && $byOutOrderNoFlag === 1;
-
-                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
-                    throw new \Exception('出账日期格式不正确：' . $voucherDate);
-                }
-                if (substr($voucherDate, 0, 7) !== $period) {
-                    throw new \Exception('出账日期不在会计期间内：' . $voucherDate);
-                }
-                if ($aggregateByOutOrderNo) {
-                    foreach ($groupRows as $row) {
-                        if (substr($row['refund_date'], 0, 7) !== $period) {
-                            throw new \Exception('同一出账单号【' . $firstRow['out_order_no'] . '】跨会计期间，不允许汇总生成一张凭证');
-                        }
-                    }
-                }
-
-                $fiscalYear = $this->fiscalYear($period);
-                $voucherTable = 'fin_voucher';
-                $detailTable = 'fin_voucher_detail';
-                $auxTable = 'fin_voucher_aux_value';
-
-                $voucherId = uuid();
-                $voucherNo = $this->generateNextVoucherNo($period);
-
-                $detailBuildResult = $this->buildRefundVoucherDetailsData($groupRows, $subjectConfigMap, $aggregateByOutOrderNo, $bizType);
-                $detailsData = $detailBuildResult['details'];
-                $totalDebit = $detailBuildResult['total_cents'];
-
-                if ($totalDebit <= 0) {
-                    throw new \Exception('凭证金额必须大于0');
-                }
-                $this->ensureAuxArchivesForVoucherDetails($detailsData);
-
-                $voucher = [
-                    'voucher_id' => $voucherId,
-                    'account_set_id' => $this->accountSetId,
-                    'fiscal_year' => $fiscalYear,
-                    'period' => $period,
-                    'voucher_date' => $voucherDate,
-                    'voucher_word' => '记',
-                    'voucher_no' => $voucherNo,
-                    'summary' => $this->buildRefundVoucherHeaderSummary($firstRow, $aggregateByOutOrderNo, $voucherDate),
-                    'debit_amount' => $this->centsToDecimal($totalDebit),
-                    'credit_amount' => $this->centsToDecimal($totalDebit),
-                    'attachment_count' => 0,
-                    'status' => 'SUBMITTED',
-                    'source_type' => 'BUSINESS',
-                    'printed_flag' => '0',
-                    'prepared_by' => $this->userid,
-                    'prepared_time' => $this->now(),
-                    'audit_by' => null,
-                    'audit_time' => null,
-                    'posted_by' => null,
-                    'posted_time' => null,
-                    'void_flag' => '0',
-                    'remark' => '',
-                ];
-                $this->fillCreate($voucher);
-                $this->getdb($voucherTable)->insert($voucher);
-
-                foreach ($detailsData as $detail) {
-                    $auxValues = $detail['aux_values'];
-                    unset($detail['aux_values']);
-
-                    $detailRow = [
-                        'detail_id' => $detail['detail_id'],
-                        'account_set_id' => $this->accountSetId,
-                        'fiscal_year' => $fiscalYear,
-                        'period' => $period,
-                        'voucher_id' => $voucherId,
-                        'line_no' => $detail['line_no'],
-                        'subject_code' => $detail['subject_code'],
-                        'summary' => $detail['summary'],
-                        'debit_amount' => $detail['debit_amount'],
-                        'credit_amount' => $detail['credit_amount'],
-                        'verification_status' => $detail['verification_status'],
-                        'aux_desc' => $detail['aux_desc'],
-                        'remark' => '',
-                    ];
-                    $this->fillCreate($detailRow);
-                    $this->getdb($detailTable)->insert($detailRow);
-
-                    foreach ($auxValues as $aux) {
-                        if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
-                            continue;
-                        }
-                        $auxRow = [
-                            'id' => uuid(),
-                            'account_set_id' => $this->accountSetId,
-                            'fiscal_year' => $fiscalYear,
-                            'period' => $period,
-                            'voucher_id' => $voucherId,
-                            'detail_id' => $detail['detail_id'],
-                            'aux_type_code' => $aux['aux_type_code'],
-                            'aux_value' => $aux['aux_value'],
-                            'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
-                            'remark' => '',
-                        ];
-                        $this->fillCreate($auxRow);
-                        $this->getdb($auxTable)->insert($auxRow);
-                    }
-                }
-
-                foreach ($groupRows as $row) {
-                    $this->getdb(self::TABLE_REFUND)->where([
-                        'refund_id' => $row['refund_id'],
-                        'account_set_id' => $this->accountSetId,
-                    ])->update([
-                        'voucher_status' => 'GENERATED',
-                        'voucher_id' => $voucherId,
-                        'voucher_no' => $voucherNo,
-                        'voucher_period' => $period,
-                        'voucher_generated_time' => $this->now(),
-                        'updated_by' => $this->userid,
-                        'updated_time' => $this->now(),
-                    ]);
-                }
-
-                $generatedCount++;
-                $voucherInfos[] = [
-                    'voucher_id' => $voucherId,
-                    'voucher_no' => $voucherNo,
-                    'period' => $period,
-                ];
-            }
-
+            $result = $this->refundVoucherGenerationService()->generatePrepared($prepared);
             $this->logAudit('CASE_FUND_REFUND', 'VOUCHER_GENERATE', 'GENERATE', null, [
-                'refund_count' => count($rows),
-                'voucher_count' => $generatedCount,
-                'generate_scope' => $generateScope,
-                'vouchers' => $voucherInfos,
+                'refund_count' => $result['refund_count'],
+                'voucher_count' => $result['generated_count'],
+                'generate_scope' => $result['generate_scope'],
+                'vouchers' => $result['vouchers'],
             ]);
-
             Db::commit();
         } catch (\Exception $e) {
             Db::rollback();
@@ -1678,10 +1473,10 @@ class CaseFund extends Common
         }
 
         return $this->ok([
-            'generated_count' => $generatedCount,
-            'refund_count' => count($rows),
-            'vouchers' => $voucherInfos,
-        ], '成功生成 ' . $generatedCount . ' 张凭证');
+            'generated_count' => $result['generated_count'],
+            'refund_count' => $result['refund_count'],
+            'vouchers' => $result['vouchers'],
+        ], '成功生成 ' . $result['generated_count'] . ' 张凭证');
     }
 
     protected function assertRowsCanGenerateVoucher($rows, $recordLabel)
@@ -2973,6 +2768,69 @@ class CaseFund extends Common
             );
         }
         return $this->paymentVoucherGenerationService;
+    }
+
+    protected function refundVoucherGenerationService()
+    {
+        if ($this->refundVoucherGenerationService === null) {
+            $this->refundVoucherGenerationService = new RefundVoucherGenerationService(
+                $this->businessPolicy(),
+                $this->subjectConfigResolver(),
+                $this->subjectConfigManager(),
+                $this->voucherRule(),
+                [
+                    'get_db' => function ($table) {
+                        return $this->getdb($table);
+                    },
+                    'account_where' => function () {
+                        return $this->accountWhere();
+                    },
+                    'account_set_id' => function () {
+                        return $this->accountSetId;
+                    },
+                    'current_year' => function () {
+                        return $this->currentYear();
+                    },
+                    'current_biz_type' => function () {
+                        return $this->currentAccountSetBizType();
+                    },
+                    'normalize_date_filter' => function ($value) {
+                        return $this->normalizeDateFilterValue($value);
+                    },
+                    'assert_rows_can_generate' => function ($rows, $recordLabel) {
+                        return $this->assertRowsCanGenerateVoucher($rows, $recordLabel);
+                    },
+                    'fiscal_year' => function ($period) {
+                        return $this->fiscalYear($period);
+                    },
+                    'generate_next_voucher_no' => function ($period) {
+                        return $this->generateNextVoucherNo($period);
+                    },
+                    'ensure_aux_archives' => function ($detailsData) {
+                        $this->ensureAuxArchivesForVoucherDetails($detailsData);
+                    },
+                    'cents_to_decimal' => function ($cents) {
+                        return $this->centsToDecimal($cents);
+                    },
+                    'new_id' => function () {
+                        return uuid();
+                    },
+                    'prepare_create' => function ($row) {
+                        $this->fillCreate($row);
+                        return $row;
+                    },
+                    'current_user_id' => function () {
+                        return $this->userid;
+                    },
+                    'now' => function () {
+                        return $this->now();
+                    },
+                ],
+                self::TABLE_REFUND,
+                self::REFUND_FIELD
+            );
+        }
+        return $this->refundVoucherGenerationService;
     }
 
     protected function businessPolicy()

@@ -2,7 +2,8 @@
 
 $source = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
 $paymentServiceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php');
-$implementationSource = $source . "\n" . $paymentServiceSource;
+$refundServiceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');
+$implementationSource = $source . "\n" . $paymentServiceSource . "\n" . $refundServiceSource;
 
 $checks = [
     ["case 'paymentGenerateVoucherByQuery'", 'CaseFund should route paymentGenerateVoucherByQuery'],

@@ -3,7 +3,8 @@
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $source = file_get_contents($modelPath);
 $voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
-$implementationSource = $source . "\n" . $voucherRuleSource;
+$refundServiceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');
+$implementationSource = $source . "\n" . $voucherRuleSource . "\n" . $refundServiceSource;
 $ddl = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');
 $patch = file_get_contents(__DIR__ . '/../database/finance_standard_patch.sql');
 
@@ -241,6 +242,47 @@ if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name
 }
 if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => ''], true, '2026-03-05') !== '2026-03-05 付合计') {
     fwrite(STDERR, 'Aggregated refund voucher header summary should be date + 付合计' . PHP_EOL);
+    exit(1);
+}
+
+$interleavedRows = [];
+foreach ([
+    ['refund-a1', '案A1', 'A'],
+    ['refund-b1', '案B1', 'B'],
+    ['refund-a2', '案A2', 'A'],
+    ['refund-empty', '案空', ''],
+    ['refund-c1', '案C1', 'C'],
+] as $item) {
+    $interleavedRows[] = [
+        'refund_id' => $item[0],
+        'case_no' => $item[1],
+        'party_name' => '当事人',
+        'actual_payee_name' => '',
+        'out_type' => '执行款退付',
+        'out_order_no' => $item[2],
+        'refund_amount' => '1.00',
+        'receipt_no' => '',
+        'source_receipt_no' => '',
+    ];
+}
+$interleavedResult = $detailProbe->buildRefundDetails($interleavedRows, $subjectConfigMap, true);
+$interleavedShape = array_map(function ($detail) {
+    return [$detail['summary'], $detail['debit_amount'], $detail['credit_amount']];
+}, $interleavedResult['details']);
+$expectedInterleavedShape = [
+    ['付 案A1 当事人', '1.00', '0.00'],
+    ['付 案A2 当事人', '1.00', '0.00'],
+    ['付 出账单号A 合计', '0.00', '2.00'],
+    ['付 案B1 当事人', '1.00', '0.00'],
+    ['付 案B1 当事人', '0.00', '1.00'],
+    ['付 案空 当事人', '1.00', '0.00'],
+    ['付 案空 当事人', '0.00', '1.00'],
+    ['付 案C1 当事人', '1.00', '0.00'],
+    ['付 案C1 当事人', '0.00', '1.00'],
+];
+if ($interleavedShape !== $expectedInterleavedShape) {
+    fwrite(STDERR, 'Refund interleaved out-order groups should follow first occurrence and keep each debit-credit bucket adjacent' . PHP_EOL);
+    fwrite(STDERR, var_export($interleavedShape, true) . PHP_EOL);
     exit(1);
 }
 
