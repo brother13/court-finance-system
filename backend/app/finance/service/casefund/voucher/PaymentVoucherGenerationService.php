@@ -57,7 +57,8 @@ class PaymentVoucherGenerationService
 
     public function selectedRows($paymentIds)
     {
-        if (!is_array($paymentIds) || empty($paymentIds)) {
+        $paymentIds = $this->normalizeIds($paymentIds);
+        if (empty($paymentIds)) {
             return $this->errorResult('请选择要生成凭证的缴费记录');
         }
 
@@ -69,10 +70,11 @@ class PaymentVoucherGenerationService
             ])
             ->where('payment_id', 'in', $paymentIds)
             ->field($this->paymentField)
+            ->order('payment_date asc, source_row_no asc')
             ->select();
 
-        if (empty($rows)) {
-            return $this->errorResult('所选缴费记录不存在');
+        if (count($rows) !== count($paymentIds)) {
+            return $this->errorResult('所选缴费记录不存在或已被删除，请刷新后重试');
         }
         return ['error' => '', 'rows' => $rows];
     }
@@ -128,70 +130,29 @@ class PaymentVoucherGenerationService
             return $this->errorResult($generationCheck);
         }
 
-        $bizType = $this->callHook('current_biz_type');
-        $subjectConfigMap = $this->resolver->configsByBusinessItems($bizType, 'PAYMENT');
-        $byPaymentMethodFlag = $this->manager->generatePaymentVoucherByMethodFlag();
-        $paymentMethodConfigMap = $byPaymentMethodFlag === 1
-            ? $this->resolver->paymentMethodConfigMap($bizType)
-            : [];
-
-        foreach ($rows as $row) {
-            $businessTypeConfigKey = $this->policy->voucherSubjectConfigKey(
-                $bizType,
-                'PAYMENT',
-                $row['business_type']
-            );
-            if (!isset($subjectConfigMap[$businessTypeConfigKey])) {
-                return $this->errorResult('缴费登记未配置借方/贷方科目');
-            }
-            $debitCheck = $this->manager->validateVoucherSubjectCode(
-                $subjectConfigMap[$businessTypeConfigKey]['debit_subject_code'],
-                '借方科目'
-            );
-            if ($debitCheck !== null) {
-                return $this->errorResult('案号【' . $row['case_no'] . '】' . $debitCheck);
-            }
-            $creditCheck = $this->manager->validateVoucherSubjectCode(
-                $subjectConfigMap[$businessTypeConfigKey]['credit_subject_code'],
-                '贷方科目'
-            );
-            if ($creditCheck !== null) {
-                return $this->errorResult('案号【' . $row['case_no'] . '】' . $creditCheck);
-            }
-            if ($byPaymentMethodFlag === 1) {
-                $paymentMethod = $this->policy->normalizePaymentMethodCode($row['payment_method'] ?? '');
-                if (!isset($paymentMethodConfigMap[$paymentMethod])) {
-                    return $this->errorResult(
-                        '案号【' . $row['case_no'] . '】的收费方式【'
-                        . $this->policy->paymentMethodLabel($paymentMethod)
-                        . '】未配置借方科目'
-                    );
-                }
-                $methodDebitCheck = $this->manager->validateVoucherSubjectCode(
-                    $paymentMethodConfigMap[$paymentMethod]['debit_subject_code'],
-                    $this->policy->paymentMethodLabel($paymentMethod) . '借方科目'
-                );
-                if ($methodDebitCheck !== null) {
-                    return $this->errorResult('案号【' . $row['case_no'] . '】' . $methodDebitCheck);
-                }
-            }
+        $context = $this->resolveGenerationContext($rows);
+        if (!empty($context['error'])) {
+            return $this->errorResult($context['error']);
         }
 
         $byDayFlag = $this->manager->subjectConfigAccountSetFlag();
         $groups = $this->rule->groupPaymentRowsForVoucher(
             $rows,
             $byDayFlag,
-            $byPaymentMethodFlag
+            $context['by_payment_method_flag']
         );
 
         return [
             'error' => '',
             'rows' => $rows,
+            'source_ids' => $this->rowIds($rows, 'payment_id'),
             'generate_scope' => $generateScope,
-            'biz_type' => $bizType,
-            'subject_config_map' => $subjectConfigMap,
-            'payment_method_config_map' => $paymentMethodConfigMap,
-            'by_payment_method' => $byPaymentMethodFlag === 1,
+            'biz_type' => $context['biz_type'],
+            'subject_config_map' => $context['subject_config_map'],
+            'payment_method_config_map' => $context['payment_method_config_map'],
+            'by_day_flag' => $byDayFlag,
+            'by_payment_method_flag' => $context['by_payment_method_flag'],
+            'by_payment_method' => $context['by_payment_method'],
             'groups' => $groups,
         ];
     }
@@ -201,10 +162,28 @@ class PaymentVoucherGenerationService
      */
     public function generatePrepared($prepared)
     {
+        $rows = $this->lockPreparedRows($prepared);
+        $generationCheck = $this->callHook('assert_rows_can_generate', [$rows, '缴费记录']);
+        if ($generationCheck !== null) {
+            throw new \Exception($generationCheck);
+        }
+
+        // 科目配置和生成参数可能在事务开始前发生变化，必须基于锁定后的源数据重新读取并校验。
+        $context = $this->resolveGenerationContext($rows);
+        if (!empty($context['error'])) {
+            throw new \Exception($context['error']);
+        }
+        $byDayFlag = $this->manager->subjectConfigAccountSetFlag();
+        $groups = $this->rule->groupPaymentRowsForVoucher(
+            $rows,
+            $byDayFlag,
+            $context['by_payment_method_flag']
+        );
+
         $generatedCount = 0;
         $voucherInfos = [];
 
-        foreach ($prepared['groups'] as $groupRows) {
+        foreach ($groups as $groupRows) {
             $firstRow = $groupRows[0];
             $period = substr($firstRow['payment_date'], 0, 7);
             $voucherDate = $firstRow['payment_date'];
@@ -220,10 +199,10 @@ class PaymentVoucherGenerationService
             $voucherNo = $this->callHook('generate_next_voucher_no', [$period]);
             $detailBuildResult = $this->rule->buildPaymentVoucherDetailsData(
                 $groupRows,
-                $prepared['subject_config_map'],
-                $prepared['payment_method_config_map'],
-                $prepared['by_payment_method'],
-                $prepared['biz_type']
+                $context['subject_config_map'],
+                $context['payment_method_config_map'],
+                $context['by_payment_method'],
+                $context['biz_type']
             );
             $totalDebit = $detailBuildResult['total_debit'];
             $detailsData = $detailBuildResult['details'];
@@ -301,9 +280,12 @@ class PaymentVoucherGenerationService
             }
 
             foreach ($groupRows as $row) {
-                $this->db($this->paymentTable)->where([
+                // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。
+                $affectedRows = $this->db($this->paymentTable)->where([
                     'payment_id' => $row['payment_id'],
                     'account_set_id' => $this->callHook('account_set_id'),
+                    'fiscal_year' => $this->callHook('current_year'),
+                    'del_flag' => 0,
                 ])->update([
                     'voucher_status' => 'GENERATED',
                     'voucher_id' => $voucherId,
@@ -313,6 +295,9 @@ class PaymentVoucherGenerationService
                     'updated_by' => $this->callHook('current_user_id'),
                     'updated_time' => $this->callHook('now'),
                 ]);
+                if ((int)$affectedRows !== 1) {
+                    throw new \Exception('缴费记录状态已变化，请刷新后重试');
+                }
             }
 
             $generatedCount++;
@@ -325,10 +310,121 @@ class PaymentVoucherGenerationService
 
         return [
             'generated_count' => $generatedCount,
-            'payment_count' => count($prepared['rows']),
+            'payment_count' => count($rows),
             'generate_scope' => $prepared['generate_scope'],
             'vouchers' => $voucherInfos,
         ];
+    }
+
+    protected function lockPreparedRows($prepared)
+    {
+        $paymentIds = $this->normalizeIds($prepared['source_ids'] ?? []);
+        if (empty($paymentIds)) {
+            throw new \Exception('所选缴费记录不存在或已被删除，请刷新后重试');
+        }
+
+        $rows = $this->db($this->paymentTable)
+            ->where([
+                'account_set_id' => $this->callHook('account_set_id'),
+                'fiscal_year' => $this->callHook('current_year'),
+                'del_flag' => 0,
+            ])
+            ->where('payment_id', 'in', $paymentIds)
+            ->field($this->paymentField)
+            ->order('payment_date asc, source_row_no asc')
+            ->lock(true)
+            ->select();
+        if (count($rows) !== count($paymentIds)) {
+            throw new \Exception('所选缴费记录不存在或已被删除，请刷新后重试');
+        }
+        return $rows;
+    }
+
+    protected function resolveGenerationContext($rows)
+    {
+        $bizType = $this->callHook('current_biz_type');
+        $subjectConfigMap = $this->resolver->configsByBusinessItems($bizType, 'PAYMENT');
+        $byPaymentMethodFlag = (int)$this->manager->generatePaymentVoucherByMethodFlag();
+        $paymentMethodConfigMap = $byPaymentMethodFlag === 1
+            ? $this->resolver->paymentMethodConfigMap($bizType)
+            : [];
+
+        foreach ($rows as $row) {
+            $businessTypeConfigKey = $this->policy->voucherSubjectConfigKey(
+                $bizType,
+                'PAYMENT',
+                $row['business_type']
+            );
+            if (!isset($subjectConfigMap[$businessTypeConfigKey])) {
+                return ['error' => '缴费登记未配置借方/贷方科目'];
+            }
+            $debitCheck = $this->manager->validateVoucherSubjectCode(
+                $subjectConfigMap[$businessTypeConfigKey]['debit_subject_code'],
+                '借方科目'
+            );
+            if ($debitCheck !== null) {
+                return ['error' => '案号【' . $row['case_no'] . '】' . $debitCheck];
+            }
+            $creditCheck = $this->manager->validateVoucherSubjectCode(
+                $subjectConfigMap[$businessTypeConfigKey]['credit_subject_code'],
+                '贷方科目'
+            );
+            if ($creditCheck !== null) {
+                return ['error' => '案号【' . $row['case_no'] . '】' . $creditCheck];
+            }
+            if ($byPaymentMethodFlag === 1) {
+                $paymentMethod = $this->policy->normalizePaymentMethodCode($row['payment_method'] ?? '');
+                if (!isset($paymentMethodConfigMap[$paymentMethod])) {
+                    return [
+                        'error' => '案号【' . $row['case_no'] . '】的收费方式【'
+                            . $this->policy->paymentMethodLabel($paymentMethod)
+                            . '】未配置借方科目',
+                    ];
+                }
+                $methodDebitCheck = $this->manager->validateVoucherSubjectCode(
+                    $paymentMethodConfigMap[$paymentMethod]['debit_subject_code'],
+                    $this->policy->paymentMethodLabel($paymentMethod) . '借方科目'
+                );
+                if ($methodDebitCheck !== null) {
+                    return ['error' => '案号【' . $row['case_no'] . '】' . $methodDebitCheck];
+                }
+            }
+        }
+
+        return [
+            'error' => '',
+            'biz_type' => $bizType,
+            'subject_config_map' => $subjectConfigMap,
+            'payment_method_config_map' => $paymentMethodConfigMap,
+            'by_payment_method_flag' => $byPaymentMethodFlag,
+            'by_payment_method' => $byPaymentMethodFlag === 1,
+        ];
+    }
+
+    protected function rowIds($rows, $idField)
+    {
+        $ids = [];
+        foreach ((array)$rows as $row) {
+            if (isset($row[$idField])) {
+                $ids[] = $row[$idField];
+            }
+        }
+        return $this->normalizeIds($ids);
+    }
+
+    protected function normalizeIds($ids)
+    {
+        if (!is_array($ids)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($ids as $id) {
+            $id = trim((string)$id);
+            if ($id !== '') {
+                $normalized[$id] = true;
+            }
+        }
+        return array_keys($normalized);
     }
 
     protected function errorResult($message)

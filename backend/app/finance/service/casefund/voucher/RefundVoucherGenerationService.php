@@ -58,7 +58,8 @@ class RefundVoucherGenerationService
 
     public function selectedRows($refundIds)
     {
-        if (!is_array($refundIds) || empty($refundIds)) {
+        $refundIds = $this->normalizeIds($refundIds);
+        if (empty($refundIds)) {
             return $this->errorResult('请选择要生成凭证的退付记录');
         }
 
@@ -72,8 +73,8 @@ class RefundVoucherGenerationService
             ->field($this->refundField)
             ->order('refund_date asc, source_row_no asc')
             ->select();
-        if (empty($rows)) {
-            return $this->errorResult('所选退付记录不存在');
+        if (count($rows) !== count($refundIds)) {
+            return $this->errorResult('所选退付记录不存在或已被删除，请刷新后重试');
         }
         return ['error' => '', 'rows' => $rows];
     }
@@ -143,31 +144,9 @@ class RefundVoucherGenerationService
             return $this->errorResult($generationCheck);
         }
 
-        $bizType = $this->callHook('current_biz_type');
-        $subjectConfigMap = $this->resolver->configsByBusinessItems($bizType, 'REFUND');
-        foreach ($rows as $row) {
-            $outTypeConfigKey = $this->policy->voucherSubjectConfigKey(
-                $bizType,
-                'REFUND',
-                $row['out_type']
-            );
-            if (!isset($subjectConfigMap[$outTypeConfigKey])) {
-                return $this->errorResult('出账查询未配置借方/贷方科目');
-            }
-            $debitCheck = $this->manager->validateVoucherSubjectCode(
-                $subjectConfigMap[$outTypeConfigKey]['debit_subject_code'],
-                '借方科目'
-            );
-            if ($debitCheck !== null) {
-                return $this->errorResult('案号【' . $row['case_no'] . '】' . $debitCheck);
-            }
-            $creditCheck = $this->manager->validateVoucherSubjectCode(
-                $subjectConfigMap[$outTypeConfigKey]['credit_subject_code'],
-                '贷方科目'
-            );
-            if ($creditCheck !== null) {
-                return $this->errorResult('案号【' . $row['case_no'] . '】' . $creditCheck);
-            }
+        $context = $this->resolveGenerationContext($rows);
+        if (!empty($context['error'])) {
+            return $this->errorResult($context['error']);
         }
 
         $byDayFlag = $this->manager->subjectConfigAccountSetFlag();
@@ -181,9 +160,10 @@ class RefundVoucherGenerationService
         return [
             'error' => '',
             'rows' => $rows,
+            'source_ids' => $this->rowIds($rows, 'refund_id'),
             'generate_scope' => $generateScope,
-            'biz_type' => $bizType,
-            'subject_config_map' => $subjectConfigMap,
+            'biz_type' => $context['biz_type'],
+            'subject_config_map' => $context['subject_config_map'],
             'by_day_flag' => $byDayFlag,
             'by_out_order_no_flag' => $byOutOrderNoFlag,
             'groups' => $groups,
@@ -195,15 +175,29 @@ class RefundVoucherGenerationService
      */
     public function generatePrepared($prepared)
     {
+        $rows = $this->lockPreparedRows($prepared);
+        $generationCheck = $this->callHook('assert_rows_can_generate', [$rows, '退付记录']);
+        if ($generationCheck !== null) {
+            throw new \Exception($generationCheck);
+        }
+
+        // 科目配置和分组参数可能在事务开始前发生变化，必须基于锁定后的源数据重新读取并校验。
+        $context = $this->resolveGenerationContext($rows);
+        if (!empty($context['error'])) {
+            throw new \Exception($context['error']);
+        }
+        $byDayFlag = (int)$this->manager->subjectConfigAccountSetFlag();
+        $byOutOrderNoFlag = (int)$this->manager->generateRefundVoucherByOutOrderNoFlag();
+        $groups = $this->rule->groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag);
+
         $generatedCount = 0;
         $voucherInfos = [];
 
-        foreach ($prepared['groups'] as $groupRows) {
+        foreach ($groups as $groupRows) {
             $firstRow = $groupRows[0];
             $period = substr($firstRow['refund_date'], 0, 7);
             $voucherDate = $firstRow['refund_date'];
-            $aggregateByOutOrderNo = $prepared['by_day_flag'] === 1
-                && $prepared['by_out_order_no_flag'] === 1;
+            $aggregateByOutOrderNo = $byDayFlag === 1 && $byOutOrderNoFlag === 1;
 
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
                 throw new \Exception('出账日期格式不正确：' . $voucherDate);
@@ -227,9 +221,9 @@ class RefundVoucherGenerationService
             $voucherNo = $this->callHook('generate_next_voucher_no', [$period]);
             $detailBuildResult = $this->rule->buildRefundVoucherDetailsData(
                 $groupRows,
-                $prepared['subject_config_map'],
+                $context['subject_config_map'],
                 $aggregateByOutOrderNo,
-                $prepared['biz_type']
+                $context['biz_type']
             );
             $detailsData = $detailBuildResult['details'];
             $totalDebit = $detailBuildResult['total_cents'];
@@ -311,9 +305,12 @@ class RefundVoucherGenerationService
             }
 
             foreach ($groupRows as $row) {
-                $this->db($this->refundTable)->where([
+                // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。
+                $affectedRows = $this->db($this->refundTable)->where([
                     'refund_id' => $row['refund_id'],
                     'account_set_id' => $this->callHook('account_set_id'),
+                    'fiscal_year' => $this->callHook('current_year'),
+                    'del_flag' => 0,
                 ])->update([
                     'voucher_status' => 'GENERATED',
                     'voucher_id' => $voucherId,
@@ -323,6 +320,9 @@ class RefundVoucherGenerationService
                     'updated_by' => $this->callHook('current_user_id'),
                     'updated_time' => $this->callHook('now'),
                 ]);
+                if ((int)$affectedRows !== 1) {
+                    throw new \Exception('退付记录状态已变化，请刷新后重试');
+                }
             }
 
             $generatedCount++;
@@ -335,10 +335,96 @@ class RefundVoucherGenerationService
 
         return [
             'generated_count' => $generatedCount,
-            'refund_count' => count($prepared['rows']),
+            'refund_count' => count($rows),
             'generate_scope' => $prepared['generate_scope'],
             'vouchers' => $voucherInfos,
         ];
+    }
+
+    protected function lockPreparedRows($prepared)
+    {
+        $refundIds = $this->normalizeIds($prepared['source_ids'] ?? []);
+        if (empty($refundIds)) {
+            throw new \Exception('所选退付记录不存在或已被删除，请刷新后重试');
+        }
+
+        $rows = $this->db($this->refundTable)
+            ->where([
+                'account_set_id' => $this->callHook('account_set_id'),
+                'fiscal_year' => $this->callHook('current_year'),
+                'del_flag' => 0,
+            ])
+            ->where('refund_id', 'in', $refundIds)
+            ->field($this->refundField)
+            ->order('refund_date asc, source_row_no asc')
+            ->lock(true)
+            ->select();
+        if (count($rows) !== count($refundIds)) {
+            throw new \Exception('所选退付记录不存在或已被删除，请刷新后重试');
+        }
+        return $rows;
+    }
+
+    protected function resolveGenerationContext($rows)
+    {
+        $bizType = $this->callHook('current_biz_type');
+        $subjectConfigMap = $this->resolver->configsByBusinessItems($bizType, 'REFUND');
+        foreach ($rows as $row) {
+            $outTypeConfigKey = $this->policy->voucherSubjectConfigKey(
+                $bizType,
+                'REFUND',
+                $row['out_type']
+            );
+            if (!isset($subjectConfigMap[$outTypeConfigKey])) {
+                return ['error' => '出账查询未配置借方/贷方科目'];
+            }
+            $debitCheck = $this->manager->validateVoucherSubjectCode(
+                $subjectConfigMap[$outTypeConfigKey]['debit_subject_code'],
+                '借方科目'
+            );
+            if ($debitCheck !== null) {
+                return ['error' => '案号【' . $row['case_no'] . '】' . $debitCheck];
+            }
+            $creditCheck = $this->manager->validateVoucherSubjectCode(
+                $subjectConfigMap[$outTypeConfigKey]['credit_subject_code'],
+                '贷方科目'
+            );
+            if ($creditCheck !== null) {
+                return ['error' => '案号【' . $row['case_no'] . '】' . $creditCheck];
+            }
+        }
+
+        return [
+            'error' => '',
+            'biz_type' => $bizType,
+            'subject_config_map' => $subjectConfigMap,
+        ];
+    }
+
+    protected function rowIds($rows, $idField)
+    {
+        $ids = [];
+        foreach ((array)$rows as $row) {
+            if (isset($row[$idField])) {
+                $ids[] = $row[$idField];
+            }
+        }
+        return $this->normalizeIds($ids);
+    }
+
+    protected function normalizeIds($ids)
+    {
+        if (!is_array($ids)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($ids as $id) {
+            $id = trim((string)$id);
+            if ($id !== '') {
+                $normalized[$id] = true;
+            }
+        }
+        return array_keys($normalized);
     }
 
     protected function errorResult($message)

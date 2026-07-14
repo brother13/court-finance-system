@@ -29,16 +29,105 @@ class RefundVoucherManagerStub
 class RefundVoucherRuleStub
 {
     public $receivedFlags = [];
+    public $groupRowsHistory = [];
 
     public function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
     {
         $this->receivedFlags = [$byDayFlag, $byOutOrderNoFlag];
+        $this->groupRowsHistory[] = $rows;
         $groups = [];
         foreach ($rows as $row) {
             $groups[$row['refund_date']][] = $row;
         }
         return $groups;
     }
+
+    public function buildRefundVoucherDetailsData($rows, $subjectConfigMap, $aggregateByOutOrderNo, $bizType)
+    {
+        $total = 0;
+        foreach ($rows as $row) {
+            $total += $this->amountToCents($row['refund_amount']);
+        }
+        return [
+            'total_cents' => $total,
+            'details' => [
+                [
+                    'detail_id' => 'refund-detail-1',
+                    'line_no' => 1,
+                    'subject_code' => '224101',
+                    'summary' => '退案款',
+                    'debit_amount' => number_format($total / 100, 2, '.', ''),
+                    'credit_amount' => '0.00',
+                    'verification_status' => 'NOT_REQUIRED',
+                    'aux_desc' => '',
+                    'aux_values' => [],
+                ],
+                [
+                    'detail_id' => 'refund-detail-2',
+                    'line_no' => 2,
+                    'subject_code' => '100201',
+                    'summary' => '退案款',
+                    'debit_amount' => '0.00',
+                    'credit_amount' => number_format($total / 100, 2, '.', ''),
+                    'verification_status' => 'NOT_REQUIRED',
+                    'aux_desc' => '',
+                    'aux_values' => [],
+                ],
+            ],
+        ];
+    }
+
+    public function buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
+    {
+        return '退案款';
+    }
+
+    protected function amountToCents($amount)
+    {
+        $parts = explode('.', trim((string)$amount), 2);
+        $yuan = (int)$parts[0];
+        $fraction = str_pad($parts[1] ?? '', 2, '0');
+        return $yuan * 100 + (int)substr($fraction, 0, 2);
+    }
+}
+
+class RefundVoucherDbStub
+{
+    public $selectRows = [];
+    public $lockValues = [];
+    public $orders = [];
+    public $whereCalls = [];
+    public $inserts = [];
+    public $updates = [];
+    public $updateResults = [];
+
+    public function where($field, $operator = null, $value = null)
+    {
+        $this->whereCalls[] = func_get_args();
+        return $this;
+    }
+
+    public function field($fields) { return $this; }
+    public function order($order) { $this->orders[] = $order; return $this; }
+    public function lock($value) { $this->lockValues[] = $value; return $this; }
+    public function select() { return $this->selectRows; }
+    public function insert($row) { $this->inserts[] = $row; return 1; }
+
+    public function update($row)
+    {
+        $this->updates[] = $row;
+        if (!empty($this->updateResults)) {
+            return array_shift($this->updateResults);
+        }
+        return 1;
+    }
+}
+
+class RefundVoucherRuntimeState
+{
+    public $guardSnapshots = [];
+    public $voucherNoCalls = 0;
+    public $idSequence = 0;
 }
 
 function refundServiceAssertSame($expected, $actual, $message)
@@ -47,6 +136,71 @@ function refundServiceAssertSame($expected, $actual, $message)
         fwrite(STDERR, $message . '; expected ' . var_export($expected, true) . ', got ' . var_export($actual, true) . PHP_EOL);
         exit(1);
     }
+}
+
+function refundServiceAssertThrows($expectedMessage, $callback, $message)
+{
+    try {
+        $callback();
+    } catch (\Exception $e) {
+        refundServiceAssertSame($expectedMessage, $e->getMessage(), $message);
+        return;
+    }
+    fwrite(STDERR, $message . '; expected exception was not thrown' . PHP_EOL);
+    exit(1);
+}
+
+function refundRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [])
+{
+    $policy = new CaseFundBusinessPolicy();
+    $resolver = new RefundVoucherResolverStub();
+    $manager = new RefundVoucherManagerStub();
+    $rule = new RefundVoucherRuleStub();
+    $state = new RefundVoucherRuntimeState();
+    $dbs = [
+        'fin_case_fund_refund' => new RefundVoucherDbStub(),
+        'fin_voucher' => new RefundVoucherDbStub(),
+        'fin_voucher_detail' => new RefundVoucherDbStub(),
+        'fin_voucher_aux_value' => new RefundVoucherDbStub(),
+    ];
+    $dbs['fin_case_fund_refund']->selectRows = $lockedRows;
+    $dbs['fin_case_fund_refund']->updateResults = $updateResults;
+    $hooks = [
+        'get_db' => function ($table) use (&$dbs) { return $dbs[$table]; },
+        'account_where' => function () { return ['account_set_id' => 'set-1', 'del_flag' => 0]; },
+        'account_set_id' => function () { return 'set-1'; },
+        'current_year' => function () { return '2026'; },
+        'current_biz_type' => function () { return 'CASE_FUND'; },
+        'normalize_date_filter' => function ($value) { return trim((string)$value); },
+        'assert_rows_can_generate' => function ($rows, $label) use ($state, $blockLockedGenerated) {
+            $state->guardSnapshots[] = $rows;
+            if ($blockLockedGenerated && count($state->guardSnapshots) > 1) {
+                return '案号【案二】的退付记录已生成凭证且原凭证仍有效，不允许重复生成';
+            }
+            return null;
+        },
+        'fiscal_year' => function ($period) { return substr($period, 0, 4); },
+        'generate_next_voucher_no' => function ($period) use ($state) {
+            $state->voucherNoCalls++;
+            return $state->voucherNoCalls;
+        },
+        'ensure_aux_archives' => function ($details) {},
+        'cents_to_decimal' => function ($cents) { return number_format($cents / 100, 2, '.', ''); },
+        'new_id' => function () use ($state) { return 'refund-id-' . (++$state->idSequence); },
+        'prepare_create' => function ($row) { return $row; },
+        'current_user_id' => function () { return 'user-1'; },
+        'now' => function () { return '2026-07-14 12:00:00'; },
+    ];
+    $service = new RefundVoucherGenerationService(
+        $policy,
+        $resolver,
+        $manager,
+        $rule,
+        $hooks,
+        'fin_case_fund_refund',
+        ['refund_id', 'refund_date', 'refund_amount', 'out_order_no', 'out_type', 'case_no', 'voucher_status', 'voucher_id']
+    );
+    return [$service, $dbs, $rule, $state];
 }
 
 $policy = new CaseFundBusinessPolicy();
@@ -111,6 +265,81 @@ refundServiceAssertSame('', $prepared['error'], 'Valid refund rows should be pre
 refundServiceAssertSame([1, 1], $rule->receivedFlags, 'Refund grouping flags should be delegated to voucher rule');
 refundServiceAssertSame(['2026-07-14'], array_keys($prepared['groups']), 'Daily refund groups should preserve source order');
 refundServiceAssertSame('QUERY', $prepared['generate_scope'], 'Generation scope should survive preparation');
+
+$initialRows = [
+    [
+        'refund_id' => 'refund-1',
+        'refund_date' => '2026-07-14',
+        'refund_amount' => '10.00',
+        'out_order_no' => 'OUT-1',
+        'out_type' => '执行、调解款发放',
+        'case_no' => '案一',
+        'voucher_status' => 'UNGENERATED',
+    ],
+    [
+        'refund_id' => 'refund-2',
+        'refund_date' => '2026-07-14',
+        'refund_amount' => '20.00',
+        'out_order_no' => 'OUT-1',
+        'out_type' => '执行、调解款发放',
+        'case_no' => '案二',
+        'voucher_status' => 'UNGENERATED',
+    ],
+];
+$lockedRows = $initialRows;
+$lockedRows[1]['voucher_status'] = 'GENERATED';
+$lockedRows[1]['voucher_id'] = 'deleted-voucher';
+[$runtimeService, $runtimeDbs, $runtimeRule, $runtimeState] = refundRuntimeFixture($lockedRows);
+$runtimePrepared = $runtimeService->prepareGeneration($initialRows, 'QUERY');
+$runtimeResult = $runtimeService->generatePrepared($runtimePrepared);
+refundServiceAssertSame([true], $runtimeDbs['fin_case_fund_refund']->lockValues, 'Refund source rows should be locked inside generation');
+refundServiceAssertSame(
+    ['refund_date asc, source_row_no asc'],
+    $runtimeDbs['fin_case_fund_refund']->orders,
+    'Refund source rows should preserve original import order'
+);
+refundServiceAssertSame('GENERATED', $runtimeState->guardSnapshots[1][1]['voucher_status'], 'Locked refund status must be rechecked');
+refundServiceAssertSame($lockedRows, $runtimeRule->groupRowsHistory[1], 'Refund groups must be rebuilt from locked rows');
+refundServiceAssertSame(1, $runtimeResult['generated_count'], 'Daily refund rows should create one voucher from locked rows');
+refundServiceAssertSame(2, $runtimeResult['refund_count'], 'Refund count should come from locked rows');
+refundServiceAssertSame(2, count($runtimeDbs['fin_case_fund_refund']->updates), 'Every locked refund row should be updated once');
+$refundUpdateScopeFound = false;
+foreach ($runtimeDbs['fin_case_fund_refund']->whereCalls as $whereCall) {
+    if (isset($whereCall[0]) && is_array($whereCall[0]) && ($whereCall[0]['refund_id'] ?? '') === 'refund-1') {
+        $refundUpdateScopeFound = $whereCall[0]['account_set_id'] === 'set-1'
+            && $whereCall[0]['fiscal_year'] === '2026'
+            && $whereCall[0]['del_flag'] === 0;
+    }
+}
+refundServiceAssertSame(true, $refundUpdateScopeFound, 'Refund source update must retain account, year and soft-delete scope');
+
+[$missingService, $missingDbs, $missingRule, $missingState] = refundRuntimeFixture([$initialRows[0]]);
+$missingPrepared = $missingService->prepareGeneration($initialRows, 'SELECTED');
+refundServiceAssertThrows(
+    '所选退付记录不存在或已被删除，请刷新后重试',
+    function () use ($missingService, $missingPrepared) { $missingService->generatePrepared($missingPrepared); },
+    'Missing locked refund rows should abort the whole batch'
+);
+refundServiceAssertSame(0, $missingState->voucherNoCalls, 'Missing refund rows should fail before voucher number allocation');
+refundServiceAssertSame(0, count($missingDbs['fin_voucher']->inserts), 'Missing refund rows should not insert voucher headers');
+
+[$blockedService, $blockedDbs, $blockedRule, $blockedState] = refundRuntimeFixture($lockedRows, true);
+$blockedPrepared = $blockedService->prepareGeneration($initialRows, 'SELECTED');
+refundServiceAssertThrows(
+    '案号【案二】的退付记录已生成凭证且原凭证仍有效，不允许重复生成',
+    function () use ($blockedService, $blockedPrepared) { $blockedService->generatePrepared($blockedPrepared); },
+    'Refund status that changes to an active generated voucher should be blocked after locking'
+);
+refundServiceAssertSame(0, $blockedState->voucherNoCalls, 'Blocked concurrent refund generation should not allocate voucher number');
+refundServiceAssertSame(0, count($blockedDbs['fin_voucher']->inserts), 'Blocked concurrent refund generation should not insert vouchers');
+
+[$failedUpdateService, $failedUpdateDbs] = refundRuntimeFixture([$initialRows[0]], false, [0]);
+$failedUpdatePrepared = $failedUpdateService->prepareGeneration([$initialRows[0]], 'SELECTED');
+refundServiceAssertThrows(
+    '退付记录状态已变化，请刷新后重试',
+    function () use ($failedUpdateService, $failedUpdatePrepared) { $failedUpdateService->generatePrepared($failedUpdatePrepared); },
+    'Refund source update must affect exactly one locked row'
+);
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');
 foreach (['requirePermission', 'Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {
