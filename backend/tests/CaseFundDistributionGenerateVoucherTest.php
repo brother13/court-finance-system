@@ -68,11 +68,11 @@ class DistributionVoucherProbe extends CaseFund
 {
     public function details($rows, $configMap)
     {
-        return $this->buildDistributionVoucherDetailsData($rows, $configMap);
+        return $this->voucherRule()->buildDistributionVoucherDetailsData($rows, $configMap);
     }
     public function groups($rows)
     {
-        return $this->groupDistributionRowsForVoucher($rows);
+        return $this->voucherRule()->groupDistributionRowsForVoucher($rows);
     }
     public function summary($row)
     {

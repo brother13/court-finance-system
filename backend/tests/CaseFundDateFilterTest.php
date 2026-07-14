@@ -45,21 +45,4 @@ foreach ($cases as [$inputValue, $expected]) {
     }
 }
 
-$whereMethod = new ReflectionMethod(CaseFund::class, 'applyDateRangeFilter');
-$whereMethod->setAccessible(true);
-$where = [];
-$whereMethod->invokeArgs($caseFund, [&$where, 'refund_date', '2026-06-01', null]);
-
-if (!isset($where['refund_date']) || count($where['refund_date']) !== 1 || $where['refund_date'][0] !== ['>=', '2026-06-01']) {
-    fwrite(STDERR, 'Start-only refund date filter should only add >= condition: ' . var_export($where, true) . PHP_EOL);
-    exit(1);
-}
-
-$where = [];
-$whereMethod->invokeArgs($caseFund, [&$where, 'refund_date', null, '2026-06-30']);
-if (!isset($where['refund_date']) || count($where['refund_date']) !== 1 || $where['refund_date'][0] !== ['<=', '2026-06-30']) {
-    fwrite(STDERR, 'End-only refund date filter should only add <= condition: ' . var_export($where, true) . PHP_EOL);
-    exit(1);
-}
-
 echo 'Case fund date filter test passed' . PHP_EOL;

@@ -3,6 +3,7 @@
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $policyPath = __DIR__ . '/../app/finance/service/casefund/policy/CaseFundBusinessPolicy.php';
 $applicationPath = __DIR__ . '/../app/finance/service/casefund/subject/SubjectConfigApplicationService.php';
+$managerPath = __DIR__ . '/../app/finance/service/casefund/subject/SubjectConfigManager.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
 $accountSetPresetPath = __DIR__ . '/../database/account_sets_preset.sql';
@@ -10,7 +11,8 @@ $accountSetPresetPath = __DIR__ . '/../database/account_sets_preset.sql';
 $source = file_get_contents($modelPath);
 $policySource = file_get_contents($policyPath);
 $applicationSource = file_get_contents($applicationPath);
-$implementationSource = $source . "\n" . $applicationSource;
+$managerSource = file_get_contents($managerPath);
+$implementationSource = $source . "\n" . $applicationSource . "\n" . $managerSource;
 $ddl = file_get_contents($ddlPath);
 $patch = file_get_contents($patchPath);
 $accountSetPreset = file_get_contents($accountSetPresetPath);
@@ -42,12 +44,12 @@ if (strpos($ddl, 'generate_voucher_by_day_flag tinyint not null default 1') === 
     exit(1);
 }
 
-if (strpos($source, 'allowedSubjectConfigItems') === false || strpos($source, 'validateVoucherSubjectCode') === false) {
-    fwrite(STDERR, 'CaseFund should validate allowed config item and voucher subjects' . PHP_EOL);
+if (strpos($policySource, 'allowedSubjectConfigItems') === false || strpos($managerSource, 'validateVoucherSubjectCode') === false) {
+    fwrite(STDERR, 'Subject config services should validate allowed config items and voucher subjects' . PHP_EOL);
     exit(1);
 }
 
-if (strpos($source, 'subjectConfigPaymentBusinessTypes') === false) {
+if (strpos($policySource, 'subjectConfigPaymentBusinessTypes') === false) {
     fwrite(STDERR, 'Subject config payment types should be separated from import aliases' . PHP_EOL);
     exit(1);
 }

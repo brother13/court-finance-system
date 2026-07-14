@@ -128,27 +128,6 @@ foreach ($cases as $case) {
     }
 }
 
-$validationMethod = new ReflectionMethod(CaseFund::class, 'paymentRowValidationErrors');
-$validationMethod->setAccessible(true);
-$row = [
-    'source_row_no' => 77,
-    'case_no' => '（2026）辽0106民初1号',
-    'business_type' => '诉讼费预收',
-    'payer_name' => '张三',
-    'party_name' => '',
-    'payment_amount' => '10.00',
-    'payment_date' => '2026-01-05',
-    'receipt_no' => '',
-    'bank_serial_no' => '1.3907186942727182889049956068E-309',
-    'payment_order_no' => '',
-    'bank_account_no' => '',
-];
-$errors = $validationMethod->invoke($caseFund, $row, 'LITIGATION_FEE', ['诉讼费预收']);
-if (empty($errors) || strpos(implode("\n", $errors), '银行流水号格式异常') === false) {
-    fwrite(STDERR, 'Payment import should reject scientific-notation bank serial numbers' . PHP_EOL);
-    exit(1);
-}
-
 $summaryMethod = new ReflectionMethod(CaseFund::class, 'buildPaymentMethodVoucherSummary');
 $summaryMethod->setAccessible(true);
 $posSummary = $summaryMethod->invoke($caseFund, 'POS', [

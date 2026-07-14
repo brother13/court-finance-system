@@ -54,7 +54,13 @@ class CaseFundVoucherRuleProbe extends CaseFund
 
     public function paymentDetails($rows, $subjectConfigMap, $methodConfigMap, $byMethod, $bizType)
     {
-        return $this->buildPaymentVoucherDetailsData($rows, $subjectConfigMap, $methodConfigMap, $byMethod, $bizType);
+        return $this->voucherRule()->buildPaymentVoucherDetailsData(
+            $rows,
+            $subjectConfigMap,
+            $methodConfigMap,
+            $byMethod,
+            $bizType
+        );
     }
 
     public function paymentGroups($rows, $byDay, $byMethod)
@@ -74,7 +80,7 @@ class CaseFundVoucherRuleProbe extends CaseFund
 
     public function distributionDetails($rows, $subjectConfigMap)
     {
-        return $this->buildDistributionVoucherDetailsData($rows, $subjectConfigMap);
+        return $this->voucherRule()->buildDistributionVoucherDetailsData($rows, $subjectConfigMap);
     }
 }
 
@@ -117,17 +123,10 @@ $probe = new CaseFundVoucherRuleProbe();
 voucherRuleAssertSame(true, $probe->ruleService() instanceof CaseFundVoucherRule, 'CaseFund should lazily create the extracted voucher rule');
 
 $wrapperSignatures = [
-    'buildPaymentVoucherDetailsData' => 5,
-    'paymentVoucherAuxValues' => 1,
     'filterAuxValuesBySubjectConfigs' => 2,
     'buildPaymentMethodVoucherSummary' => 2,
-    'groupRefundRowsForVoucher' => 3,
-    'groupDistributionRowsForVoucher' => 1,
-    'buildRefundVoucherDetailsData' => 4,
-    'buildDistributionVoucherDetailsData' => 2,
     'buildRefundDebitDetailData' => 4,
     'buildPaymentVoucherSummary' => 1,
-    'buildRefundVoucherHeaderSummary' => 3,
     'buildRefundNormalVoucherSummary' => 1,
     'buildRefundAggregateCreditSummary' => 1,
     'buildDistributionVoucherHeaderSummary' => 1,
@@ -142,7 +141,7 @@ foreach ($wrapperSignatures as $methodName => $parameterCount) {
     voucherRuleAssertSame(true, $method->isProtected(), 'Voucher compatibility wrapper should remain protected: ' . $methodName);
     voucherRuleAssertSame($parameterCount, count($method->getParameters()), 'Voucher wrapper parameter count should remain stable: ' . $methodName);
 }
-$refundDetailParameters = (new ReflectionMethod(CaseFund::class, 'buildRefundVoucherDetailsData'))->getParameters();
+$refundDetailParameters = (new ReflectionMethod(CaseFundVoucherRule::class, 'buildRefundVoucherDetailsData'))->getParameters();
 voucherRuleAssertSame('', $refundDetailParameters[3]->getDefaultValue(), 'Refund voucher detail biz-type default should remain empty');
 
 $probe->setSubjectAuxConfigs([

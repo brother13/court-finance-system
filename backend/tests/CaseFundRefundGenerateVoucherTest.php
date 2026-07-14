@@ -109,9 +109,15 @@ require_once __DIR__ . '/support/CaseFundTestBootstrap.php';
 
 use app\finance\model\CaseFund;
 
-$caseFund = new CaseFund();
-$groupMethod = new ReflectionMethod(CaseFund::class, 'groupRefundRowsForVoucher');
-$groupMethod->setAccessible(true);
+class CaseFundRefundGroupingProbe extends CaseFund
+{
+    public function groupRefundRows($rows, $byDayFlag, $byOutOrderNoFlag)
+    {
+        return $this->voucherRule()->groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag);
+    }
+}
+
+$caseFund = new CaseFundRefundGroupingProbe();
 $sampleRows = [
     ['refund_id' => 'refund-1', 'refund_date' => '2026-03-02', 'out_order_no' => 'OUT-001', 'case_no' => '案一'],
     ['refund_id' => 'refund-2', 'refund_date' => '2026-03-02', 'out_order_no' => 'OUT-001', 'case_no' => '案二'],
@@ -119,7 +125,7 @@ $sampleRows = [
     ['refund_id' => 'refund-4', 'refund_date' => '2026-03-03', 'out_order_no' => 'OUT-001', 'case_no' => '案四'],
 ];
 
-$singleGroups = $groupMethod->invoke($caseFund, $sampleRows, 0, 1);
+$singleGroups = $caseFund->groupRefundRows($sampleRows, 0, 1);
 if (count($singleGroups) !== 4) {
     fwrite(STDERR, 'Refund out-order grouping should require daily voucher generation; expected 4 single groups when by-day is off' . PHP_EOL);
     exit(1);
@@ -131,7 +137,7 @@ foreach ($singleGroups as $groupRows) {
     }
 }
 
-$outOrderGroups = $groupMethod->invoke($caseFund, $sampleRows, 1, 1);
+$outOrderGroups = $caseFund->groupRefundRows($sampleRows, 1, 1);
 $groupSizes = array_map('count', $outOrderGroups);
 sort($groupSizes);
 if ($groupSizes !== [1, 3] || count($outOrderGroups['2026-03-02'] ?? []) !== 3 || count($outOrderGroups['2026-03-03'] ?? []) !== 1) {
@@ -148,14 +154,16 @@ class CaseFundRefundDetailProbe extends CaseFund
 
     public function buildRefundDetails($rows, $subjectConfigMap, $aggregateByOutOrderNo)
     {
-        $method = new ReflectionMethod(CaseFund::class, 'buildRefundVoucherDetailsData');
-        $method->setAccessible(true);
-        return $method->invoke($this, $rows, $subjectConfigMap, $aggregateByOutOrderNo);
+        return $this->voucherRule()->buildRefundVoucherDetailsData(
+            $rows,
+            $subjectConfigMap,
+            $aggregateByOutOrderNo
+        );
     }
 
     public function refundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
     {
-        return $this->buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate);
+        return $this->voucherRule()->buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate);
     }
 }
 

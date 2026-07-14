@@ -131,7 +131,13 @@ class CaseFundGenerationGuardProbe extends CaseFund
 
     public function buildPaymentDetails($rows, $subjectConfigMap)
     {
-        return $this->buildPaymentVoucherDetailsData($rows, $subjectConfigMap, [], false, 'LITIGATION_FEE');
+        return $this->voucherRule()->buildPaymentVoucherDetailsData(
+            $rows,
+            $subjectConfigMap,
+            [],
+            false,
+            'LITIGATION_FEE'
+        );
     }
 }
 

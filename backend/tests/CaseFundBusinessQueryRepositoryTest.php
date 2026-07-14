@@ -213,6 +213,26 @@ foreach ($store->queries as $query) {
 businessQueryAssertSame('refund_date asc, source_row_no asc', $store->queries[0]['order'], 'Refund ordering should remain stable');
 
 $store->queries = [];
+$repository->refundList([
+    'startDate' => ' 2026-07-01 ',
+], 1, 50, ['执行、调解款发放']);
+businessQueryAssertSame(
+    [['>=', '2026-07-01']],
+    $store->queries[0]['where'][0][1]['refund_date'],
+    'Refund list should preserve a start-only date filter'
+);
+
+$store->queries = [];
+$repository->refundList([
+    'endDate' => ' 2026-07-31 ',
+], 1, 50, ['执行、调解款发放']);
+businessQueryAssertSame(
+    [['<=', '2026-07-31']],
+    $store->queries[0]['where'][0][1]['refund_date'],
+    'Refund list should preserve an end-only date filter'
+);
+
+$store->queries = [];
 $unknown = $repository->unknownPaymentList([
     'claim_status' => 'UNCLAIMED',
     'date_start' => '2026-07-01',

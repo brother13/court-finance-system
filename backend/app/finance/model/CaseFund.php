@@ -470,18 +470,6 @@ class CaseFund extends Common
         return '';
     }
 
-    protected function applyDateRangeFilter(&$where, $field, $dateStart, $dateEnd)
-    {
-        $dateStart = $this->normalizeDateFilterValue($dateStart);
-        $dateEnd = $this->normalizeDateFilterValue($dateEnd);
-        if ($dateStart !== '') {
-            $where[$field][] = ['>=', $dateStart];
-        }
-        if ($dateEnd !== '') {
-            $where[$field][] = ['<=', $dateEnd];
-        }
-    }
-
     public function refundImport($data = [])
     {
         $auth = $this->requirePermission('case_fund:import');
@@ -932,22 +920,6 @@ class CaseFund extends Common
         ], '成功生成 ' . $result['generated_count'] . ' 张凭证');
     }
 
-    protected function buildPaymentVoucherDetailsData($groupRows, $subjectConfigMap, $paymentMethodConfigMap, $byPaymentMethod, $bizType)
-    {
-        return $this->voucherRule()->buildPaymentVoucherDetailsData(
-            $groupRows,
-            $subjectConfigMap,
-            $paymentMethodConfigMap,
-            $byPaymentMethod,
-            $bizType
-        );
-    }
-
-    protected function paymentVoucherAuxValues($row)
-    {
-        return $this->voucherRule()->paymentVoucherAuxValues($row);
-    }
-
     protected function filterAuxValuesBySubjectConfigs($auxValues, $configs)
     {
         return $this->voucherRule()->filterAuxValuesBySubjectConfigs($auxValues, $configs);
@@ -1131,31 +1103,6 @@ class CaseFund extends Common
         return (int)$this->getdb('fin_voucher')->where($where)->count() > 0;
     }
 
-    protected function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
-    {
-        return $this->voucherRule()->groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag);
-    }
-
-    protected function groupDistributionRowsForVoucher($rows)
-    {
-        return $this->voucherRule()->groupDistributionRowsForVoucher($rows);
-    }
-
-    protected function buildRefundVoucherDetailsData($groupRows, $subjectConfigMap, $aggregateByOutOrderNo, $bizType = '')
-    {
-        return $this->voucherRule()->buildRefundVoucherDetailsData(
-            $groupRows,
-            $subjectConfigMap,
-            $aggregateByOutOrderNo,
-            $bizType
-        );
-    }
-
-    protected function buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap)
-    {
-        return $this->voucherRule()->buildDistributionVoucherDetailsData($groupRows, $subjectConfigMap);
-    }
-
     protected function buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary = false)
     {
         return $this->voucherRule()->buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary);
@@ -1164,11 +1111,6 @@ class CaseFund extends Common
     protected function buildPaymentVoucherSummary($row)
     {
         return $this->voucherRule()->buildPaymentVoucherSummary($row);
-    }
-
-    protected function buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
-    {
-        return $this->voucherRule()->buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate);
     }
 
     protected function buildRefundNormalVoucherSummary($row)
@@ -1373,16 +1315,6 @@ class CaseFund extends Common
         return $this->importPersistence()->paymentReceiptNoDuplicateErrors($rows);
     }
 
-    protected function loadExistingPaymentsByReceiptNos($receiptNos)
-    {
-        return $this->importPersistence()->loadExistingPaymentsByReceiptNos($receiptNos);
-    }
-
-    protected function paymentExistingDuplicateSummary($row)
-    {
-        return $this->importPersistence()->paymentExistingDuplicateSummary($row);
-    }
-
     protected function validateDistributionRows($rows, $bizType = '')
     {
         return $this->importValidator()->validateDistributionRows(
@@ -1395,31 +1327,6 @@ class CaseFund extends Common
     protected function validateUnknownPaymentRows($rows, $bizType = '')
     {
         return $this->importValidator()->validateUnknownPaymentRows($rows, $bizType);
-    }
-
-    protected function unknownPaymentRowHasTraceField($row)
-    {
-        return $this->importValidator()->unknownPaymentRowHasTraceField($row);
-    }
-
-    protected function isValidImportDate($value)
-    {
-        return $this->importValidator()->isValidImportDate($value);
-    }
-
-    protected function paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes = null)
-    {
-        return $this->importValidator()->paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes);
-    }
-
-    protected function isSuspiciousBankSerialNo($value)
-    {
-        return $this->importValidator()->isSuspiciousBankSerialNo($value);
-    }
-
-    protected function paymentRowHasTraceKey($row)
-    {
-        return $this->importValidator()->paymentRowHasTraceKey($row);
     }
 
     protected function validateRefundRows($rows, $bizType = '', $receiptTraceRequired = null)
@@ -1628,39 +1535,9 @@ class CaseFund extends Common
         return $this->bankingRule()->emptyBankReconcileCounts();
     }
 
-    protected function bankReconcileSummary($where)
-    {
-        return $this->bankReconcileRepository()->bankReconcileSummary($where, $this->emptyBankReconcileCounts());
-    }
-
-    protected function allowedSubjectConfigItems($bizType, $voucherBizType)
-    {
-        return $this->businessPolicy()->allowedSubjectConfigItems($bizType, $voucherBizType);
-    }
-
-    protected function subjectConfigPaymentBusinessTypes($bizType)
-    {
-        return $this->businessPolicy()->subjectConfigPaymentBusinessTypes($bizType);
-    }
-
-    protected function subjectConfigRefundBusinessTypes($bizType)
-    {
-        return $this->businessPolicy()->subjectConfigRefundBusinessTypes($bizType);
-    }
-
-    protected function voucherSubjectConfigAliases($bizType, $voucherBizType)
-    {
-        return $this->businessPolicy()->voucherSubjectConfigAliases($bizType, $voucherBizType);
-    }
-
     protected function voucherSubjectConfigKey($bizType, $voucherBizType, $businessItemType)
     {
         return $this->businessPolicy()->voucherSubjectConfigKey($bizType, $voucherBizType, $businessItemType);
-    }
-
-    protected function subjectConfigLookupItems($bizType, $voucherBizType, $businessItems)
-    {
-        return $this->businessPolicy()->subjectConfigLookupItems($bizType, $voucherBizType, $businessItems);
     }
 
     protected function normalizeVoucherBizType($value)
@@ -1683,24 +1560,9 @@ class CaseFund extends Common
         return $this->businessPolicy()->inferPaymentMethodByBankSerialNo($bankSerialNo, $rawPaymentMethod);
     }
 
-    protected function paymentMethodLabel($method)
-    {
-        return $this->businessPolicy()->paymentMethodLabel($method);
-    }
-
-    protected function paymentMethodSubjectConfigItems($bizType, $paymentItems)
-    {
-        return $this->subjectConfigManager()->paymentMethodSubjectConfigItems($bizType, $paymentItems);
-    }
-
     protected function paymentMethodSubjectConfigMap($bizType)
     {
         return $this->subjectConfigResolver()->paymentMethodConfigMap($bizType);
-    }
-
-    protected function savePaymentMethodSubjectConfigs($bizType, $methodItems, $paymentItems)
-    {
-        return $this->subjectConfigManager()->savePaymentMethodSubjectConfigs($bizType, $methodItems, $paymentItems);
     }
 
     protected function validateVoucherSubjectCode($subjectCode, $label)
@@ -1711,30 +1573,6 @@ class CaseFund extends Common
     protected function subjectNameMap($subjectCodes)
     {
         return $this->subjectConfigManager()->subjectNameMap($subjectCodes);
-    }
-
-    protected function subjectConfigAccountSetFlag()
-    {
-        return $this->subjectConfigManager()->subjectConfigAccountSetFlag();
-    }
-
-    protected function generateRefundVoucherByOutOrderNoFlag()
-    {
-        return $this->subjectConfigManager()->generateRefundVoucherByOutOrderNoFlag();
-    }
-
-    protected function generatePaymentVoucherByMethodFlag()
-    {
-        return $this->subjectConfigManager()->generatePaymentVoucherByMethodFlag();
-    }
-
-    protected function saveSubjectConfigAccountSetFlag($flag, $refundOutOrderFlag = null, $paymentMethodFlag = null)
-    {
-        return $this->subjectConfigManager()->saveSubjectConfigAccountSetFlag(
-            $flag,
-            $refundOutOrderFlag,
-            $paymentMethodFlag
-        );
     }
 
     protected function normalizeDailyVoucherFlag($value)
@@ -1750,11 +1588,6 @@ class CaseFund extends Common
     protected function refundImportErrorMessage($errors, $bizType = '')
     {
         return $this->importValidator()->refundImportErrorMessage($errors, $bizType);
-    }
-
-    protected function paymentDataLabelByBizType($bizType)
-    {
-        return $this->importValidator()->paymentDataLabelByBizType($bizType);
     }
 
     protected function isEmptyPaymentRawRow($raw)
@@ -1786,21 +1619,6 @@ class CaseFund extends Common
     {
         $key = $this->paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey);
         return $this->importIdentity()->rememberPaymentImportExistingRowByKey($existing, $key, $row);
-    }
-
-    protected function updateExistingPaymentFromImport($existingRow, $row, $data)
-    {
-        return $this->importPersistence()->updateExistingPaymentFromImport($existingRow, $row, $data);
-    }
-
-    protected function updateExistingRefundFromImport($existingRow, $row, $data)
-    {
-        return $this->importPersistence()->updateExistingRefundFromImport($existingRow, $row, $data);
-    }
-
-    protected function canOverwriteGeneratedBusinessRow($row)
-    {
-        return $this->importPersistence()->canOverwriteGeneratedBusinessRow($row);
     }
 
     protected function paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey = true)
