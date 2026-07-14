@@ -96,6 +96,7 @@ $service->persistVoucher([
             ['aux_type_code' => 'case_no', 'aux_value' => '案一'],
             ['aux_type_code' => '', 'aux_value' => '忽略'],
             ['aux_type_code' => 'receipt_no', 'aux_value' => ''],
+            ['aux_type_code' => 'party_name', 'aux_value' => '   '],
         ],
     ],
     [
@@ -173,16 +174,28 @@ try {
         'voucher_no' => 9,
         'summary' => '异常测试',
         'total_cents' => 100,
-    ], [[
-        'detail_id' => 'detail-3',
-        'line_no' => 1,
-        'subject_code' => '100201',
-        'summary' => '异常测试',
-        'debit_amount' => '1.00',
-        'credit_amount' => '0.00',
-        'verification_status' => 'NOT_REQUIRED',
-        'aux_desc' => '',
-    ]]);
+    ], [
+        [
+            'detail_id' => 'detail-3',
+            'line_no' => 1,
+            'subject_code' => '100201',
+            'summary' => '异常测试',
+            'debit_amount' => '1.00',
+            'credit_amount' => '0.00',
+            'verification_status' => 'NOT_REQUIRED',
+            'aux_desc' => '',
+        ],
+        [
+            'detail_id' => 'detail-4',
+            'line_no' => 2,
+            'subject_code' => '224101',
+            'summary' => '异常测试',
+            'debit_amount' => '0.00',
+            'credit_amount' => '1.00',
+            'verification_status' => 'NOT_REQUIRED',
+            'aux_desc' => '',
+        ],
+    ]);
     fwrite(STDERR, 'Voucher persistence should propagate database insert errors' . PHP_EOL);
     exit(1);
 } catch (\RuntimeException $e) {
