@@ -13,6 +13,7 @@ class CaseFund extends Common
     const TABLE_DISTRIBUTION = 'fin_case_fund_distribution';
     const TABLE_BANK_STATEMENT = 'fin_case_fund_bank_statement';
     const TABLE_BANK_RECONCILE = 'fin_case_fund_bank_reconcile';
+    const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE'];
     const TABLE_SUBJECT_CONFIG = 'fin_case_fund_subject_config';
     const PAYMENT_FIELD = [
         'payment_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'confirmed_flag',
@@ -214,12 +215,13 @@ class CaseFund extends Common
         }
 
         $bizType = $this->currentAccountSetBizType();
-        $errors = $this->validatePaymentRows($rows, $bizType);
+        $receiptNoDuplicateCheckRequired = $this->paymentImportRequiresReceiptNoDuplicateCheck($bizType);
+        $errors = $this->validatePaymentRows($rows, $bizType, $receiptNoDuplicateCheckRequired);
         if (!empty($errors)) {
             return $this->error($this->paymentImportErrorMessage($errors, $bizType), $errors);
         }
 
-        $existing = $this->loadExistingPaymentsForImport($rows);
+        $existing = $this->loadExistingPaymentsForImport($rows, $receiptNoDuplicateCheckRequired);
 
         $created = 0;
         $updated = 0;
@@ -228,7 +230,7 @@ class CaseFund extends Common
         Db::startTrans();
         try {
             foreach ($rows as $row) {
-                $duplicateKey = $this->paymentImportDuplicateKey($row);
+                $duplicateKey = $this->paymentImportDuplicateKey($row, $receiptNoDuplicateCheckRequired);
                 if ($duplicateKey !== '' && isset($seen[$duplicateKey])) {
                     $skipped++;
                     continue;
@@ -663,8 +665,9 @@ class CaseFund extends Common
         }
 
         $bizType = $this->currentAccountSetBizType();
+        $receiptTraceRequired = $this->refundImportRequiresReceiptTrace($bizType);
         try {
-            $rows = $this->parseRefundImportRowsFromXls($binary, $bizType);
+            $rows = $this->parseRefundImportRowsFromXls($binary, $bizType, $receiptTraceRequired);
         } catch (\Exception $e) {
             return $this->error('解析案款退付登记失败：' . $e->getMessage());
         }
@@ -672,7 +675,7 @@ class CaseFund extends Common
             return $this->error('导入文件没有案款退付数据');
         }
 
-        $errors = $this->validateRefundRows($rows, $bizType);
+        $errors = $this->validateRefundRows($rows, $bizType, $receiptTraceRequired);
         if (!empty($errors)) {
             return $this->error($this->refundImportErrorMessage($errors, $bizType), $errors);
         }
@@ -1073,16 +1076,18 @@ class CaseFund extends Common
             $bankAmount = $direction === 'CREDIT' ? $statement['credit_amount'] : $statement['debit_amount'];
             $bankCents = $this->decimalToCents($bankAmount);
             if ($direction === 'CREDIT') {
-                $candidates = $this->paymentCandidatesByBankSerial($statement['bank_serial_no']);
+                $candidates = $this->paymentCandidatesByBankStatement($statement);
                 $bizType = 'PAYMENT';
+                $matchRule = 'SERIAL_NO_DATE';
             } else {
-                $candidates = $this->refundCandidatesByOutOrderNo($statement['bank_serial_no']);
+                $candidates = $this->refundCandidatesByBankStatement($statement);
                 $bizType = 'REFUND';
+                $matchRule = 'PAYEE_ACCOUNT_DATE';
             }
 
             if (empty($candidates)) {
                 $status = 'BANK_ONLY';
-                $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, null, $status, $bankCents, 0);
+                $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, null, $status, $bankCents, 0, $matchRule);
                 $statementStatuses[$statement['statement_id']] = $status;
                 continue;
             }
@@ -1090,7 +1095,7 @@ class CaseFund extends Common
             if (count($candidates) > 1) {
                 foreach ($candidates as $candidate) {
                     $bizCents = $this->bankReconcileBizAmountCents($bizType, $candidate);
-                    $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, 'DUPLICATE', $bankCents, $bizCents);
+                    $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, 'DUPLICATE', $bankCents, $bizCents, $matchRule);
                     $matchedBiz[$bizType . ':' . $this->bankReconcileBizId($bizType, $candidate)] = true;
                 }
                 $statementStatuses[$statement['statement_id']] = 'DUPLICATE';
@@ -1100,24 +1105,24 @@ class CaseFund extends Common
             $candidate = $candidates[0];
             $bizCents = $this->bankReconcileBizAmountCents($bizType, $candidate);
             $status = $bankCents === $bizCents ? 'MATCHED' : 'AMOUNT_DIFF';
-            $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, $status, $bankCents, $bizCents);
+            $resultRows[] = $this->buildBankReconcileRow($statement, $bizType, $candidate, $status, $bankCents, $bizCents, $matchRule);
             $statementStatuses[$statement['statement_id']] = $status;
             $matchedBiz[$bizType . ':' . $this->bankReconcileBizId($bizType, $candidate)] = true;
         }
 
         foreach ($this->paymentCandidatesInScope($dateStart, $dateEnd) as $payment) {
             $key = 'PAYMENT:' . $payment['payment_id'];
-            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsBySerial($payment['bank_serial_no'], $bankCode, $dateStart, $dateEnd)) {
+            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsByPayment($payment, $bankCode, $dateStart, $dateEnd)) {
                 $bizCents = $this->decimalToCents($payment['payment_amount']);
-                $resultRows[] = $this->buildBankReconcileRow(null, 'PAYMENT', $payment, 'BIZ_ONLY', 0, $bizCents);
+                $resultRows[] = $this->buildBankReconcileRow(null, 'PAYMENT', $payment, 'BIZ_ONLY', 0, $bizCents, 'SERIAL_NO_DATE');
             }
         }
 
         foreach ($this->refundCandidatesInScope($dateStart, $dateEnd) as $refund) {
             $key = 'REFUND:' . $refund['refund_id'];
-            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsBySerial($refund['out_order_no'], $bankCode, $dateStart, $dateEnd)) {
+            if (!isset($matchedBiz[$key]) && !$this->bankStatementExistsByRefundPayee($refund, $bankCode, $dateStart, $dateEnd)) {
                 $bizCents = $this->decimalToCents($refund['refund_amount']);
-                $resultRows[] = $this->buildBankReconcileRow(null, 'REFUND', $refund, 'BIZ_ONLY', 0, $bizCents);
+                $resultRows[] = $this->buildBankReconcileRow(null, 'REFUND', $refund, 'BIZ_ONLY', 0, $bizCents, 'PAYEE_ACCOUNT_DATE');
             }
         }
 
@@ -1566,8 +1571,6 @@ class CaseFund extends Common
                     throw new \Exception('缴费日期不在会计期间内：' . $voucherDate);
                 }
 
-                $this->ensureAuxArchives($groupRows);
-
                 $fiscalYear = $this->fiscalYear($period);
                 $voucherTable = 'fin_voucher';
                 $detailTable = 'fin_voucher_detail';
@@ -1583,6 +1586,7 @@ class CaseFund extends Common
                 if ($totalDebit <= 0) {
                     throw new \Exception('凭证金额必须大于0');
                 }
+                $this->ensureAuxArchivesForVoucherDetails($detailsData);
 
                 $voucher = [
                     'voucher_id' => $voucherId,
@@ -1732,8 +1736,9 @@ class CaseFund extends Common
                 $summary = $this->buildPaymentVoucherSummary($row);
                 $amountCents = $this->decimalToCents($row['payment_amount']);
                 $amountDecimal = $this->centsToDecimal($amountCents);
-                $auxValues = $this->paymentVoucherAuxValues($row);
+                $rawAuxValues = $this->paymentVoucherAuxValues($row);
                 $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+                $creditAuxValues = $this->filterAuxValuesBySubjectConfigs($rawAuxValues, $creditConfigs);
                 $detailsData[] = [
                     'detail_id' => uuid(),
                     'line_no' => $lineNo++,
@@ -1742,8 +1747,8 @@ class CaseFund extends Common
                     'debit_amount' => '0.00',
                     'credit_amount' => $amountDecimal,
                     'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                    'aux_desc' => $this->buildAuxDesc($auxValues),
-                    'aux_values' => $auxValues,
+                    'aux_desc' => $this->buildAuxDesc($creditAuxValues),
+                    'aux_values' => $creditAuxValues,
                 ];
             }
 
@@ -1765,8 +1770,9 @@ class CaseFund extends Common
                 $debitSubjectCode = $paymentMethodConfigMap[$rowPaymentMethod]['debit_subject_code'];
             }
 
-            $auxValues = $this->paymentVoucherAuxValues($row);
+            $rawAuxValues = $this->paymentVoucherAuxValues($row);
             $debitConfigs = $this->getSubjectAuxConfigs($debitSubjectCode);
+            $debitAuxValues = $this->filterAuxValuesBySubjectConfigs($rawAuxValues, $debitConfigs);
             $detailsData[] = [
                 'detail_id' => uuid(),
                 'line_no' => $lineNo++,
@@ -1775,11 +1781,12 @@ class CaseFund extends Common
                 'debit_amount' => $amountDecimal,
                 'credit_amount' => '0.00',
                 'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($auxValues),
-                'aux_values' => $auxValues,
+                'aux_desc' => $this->buildAuxDesc($debitAuxValues),
+                'aux_values' => $debitAuxValues,
             ];
 
             $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+            $creditAuxValues = $this->filterAuxValuesBySubjectConfigs($rawAuxValues, $creditConfigs);
             $detailsData[] = [
                 'detail_id' => uuid(),
                 'line_no' => $lineNo++,
@@ -1788,8 +1795,8 @@ class CaseFund extends Common
                 'debit_amount' => '0.00',
                 'credit_amount' => $amountDecimal,
                 'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $this->buildAuxDesc($auxValues),
-                'aux_values' => $auxValues,
+                'aux_desc' => $this->buildAuxDesc($creditAuxValues),
+                'aux_values' => $creditAuxValues,
             ];
         }
 
@@ -1802,6 +1809,33 @@ class CaseFund extends Common
             ['aux_type_code' => 'case_no', 'aux_value' => $row['case_no'], 'aux_label' => $row['case_no']],
             ['aux_type_code' => 'receipt_no', 'aux_value' => $row['receipt_no'] ?? '', 'aux_label' => $row['receipt_no'] ?? ''],
         ];
+    }
+
+    protected function filterAuxValuesBySubjectConfigs($auxValues, $configs)
+    {
+        $allowed = [];
+        foreach ($configs as $config) {
+            $typeCode = trim((string)($config['aux_type_code'] ?? ''));
+            if ($typeCode !== '') {
+                $allowed[$typeCode] = true;
+            }
+        }
+        if (empty($allowed)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($auxValues as $aux) {
+            $typeCode = trim((string)($aux['aux_type_code'] ?? ''));
+            if ($typeCode === '' || empty($allowed[$typeCode])) {
+                continue;
+            }
+            if (!isset($aux['aux_value']) || $aux['aux_value'] === '') {
+                continue;
+            }
+            $result[] = $aux;
+        }
+        return $result;
     }
 
     protected function buildPaymentMethodVoucherSummary($paymentMethod, $groupRows)
@@ -2079,9 +2113,6 @@ class CaseFund extends Common
         $subjectConfigMap = [];
         foreach ($configRows as $config) {
             $subjectConfigMap[$config['business_item_type']] = $config;
-            if ($config['business_item_type'] === '执行、调解款') {
-                $subjectConfigMap['执行、调节款'] = $config;
-            }
         }
         if (empty($subjectConfigMap)) {
             return $this->error('案款分配未配置借方/贷方科目');
@@ -2142,8 +2173,6 @@ class CaseFund extends Common
                     }
                 }
 
-                $this->ensureDistributionAuxArchives($groupRows);
-
                 $fiscalYear = $this->fiscalYear($period);
                 $voucherTable = 'fin_voucher';
                 $detailTable = 'fin_voucher_detail';
@@ -2159,6 +2188,7 @@ class CaseFund extends Common
                 if ($totalDebit <= 0) {
                     throw new \Exception('凭证金额必须大于0');
                 }
+                $this->ensureAuxArchivesForVoucherDetails($detailsData);
 
                 $voucher = [
                     'voucher_id' => $voucherId,
@@ -2437,8 +2467,6 @@ class CaseFund extends Common
                     }
                 }
 
-                $this->ensureAuxArchives($groupRows);
-
                 $fiscalYear = $this->fiscalYear($period);
                 $voucherTable = 'fin_voucher';
                 $detailTable = 'fin_voucher_detail';
@@ -2454,6 +2482,7 @@ class CaseFund extends Common
                 if ($totalDebit <= 0) {
                     throw new \Exception('凭证金额必须大于0');
                 }
+                $this->ensureAuxArchivesForVoucherDetails($detailsData);
 
                 $voucher = [
                     'voucher_id' => $voucherId,
@@ -2717,6 +2746,7 @@ class CaseFund extends Common
 
             $creditDetailId = uuid();
             $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+            $creditAuxValues = $this->filterAuxValuesBySubjectConfigs($debitResult['raw_aux_values'], $creditConfigs);
             $detailsData[] = [
                 'detail_id' => $creditDetailId,
                 'line_no' => $lineNo++,
@@ -2725,8 +2755,8 @@ class CaseFund extends Common
                 'debit_amount' => '0.00',
                 'credit_amount' => $debitResult['amount_decimal'],
                 'verification_status' => $this->needVerification($creditConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
-                'aux_desc' => $debitResult['aux_desc'],
-                'aux_values' => $debitResult['aux_values'],
+                'aux_desc' => $this->buildAuxDesc($creditAuxValues),
+                'aux_values' => $creditAuxValues,
             ];
         }
 
@@ -2759,6 +2789,7 @@ class CaseFund extends Common
             ];
 
             $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
+            $outAuxValues = $this->filterAuxValuesBySubjectConfigs($outAuxValues, $debitConfigs);
             $detailsData[] = [
                 'detail_id' => uuid(),
                 'line_no' => $lineNo++,
@@ -2772,6 +2803,7 @@ class CaseFund extends Common
             ];
 
             $creditConfigs = $this->getSubjectAuxConfigs($config['credit_subject_code']);
+            $inAuxValues = $this->filterAuxValuesBySubjectConfigs($inAuxValues, $creditConfigs);
             $detailsData[] = [
                 'detail_id' => uuid(),
                 'line_no' => $lineNo++,
@@ -2804,7 +2836,8 @@ class CaseFund extends Common
             ['aux_type_code' => 'receipt_no', 'aux_value' => $receiptNo, 'aux_label' => $receiptNo],
         ];
         $debitConfigs = $this->getSubjectAuxConfigs($config['debit_subject_code']);
-        $auxDesc = $this->buildAuxDesc($auxValues);
+        $filteredAuxValues = $this->filterAuxValuesBySubjectConfigs($auxValues, $debitConfigs);
+        $auxDesc = $this->buildAuxDesc($filteredAuxValues);
 
         return [
             'detail' => [
@@ -2816,13 +2849,14 @@ class CaseFund extends Common
                 'credit_amount' => '0.00',
                 'verification_status' => $this->needVerification($debitConfigs) ? 'UNVERIFIED' : 'NOT_REQUIRED',
                 'aux_desc' => $auxDesc,
-                'aux_values' => $auxValues,
+                'aux_values' => $filteredAuxValues,
             ],
             'summary' => $summary,
             'amount_cents' => $amountCents,
             'amount_decimal' => $amountDecimal,
             'aux_desc' => $auxDesc,
-            'aux_values' => $auxValues,
+            'aux_values' => $filteredAuxValues,
+            'raw_aux_values' => $auxValues,
         ];
     }
 
@@ -2907,6 +2941,34 @@ class CaseFund extends Common
         $this->ensureAuxType('receipt_no', '收据号');
         $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
         $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
+    }
+
+    protected function ensureAuxArchivesForVoucherDetails($detailsData)
+    {
+        $caseNos = [];
+        $receiptNos = [];
+        foreach ($detailsData as $detail) {
+            foreach (($detail['aux_values'] ?? []) as $aux) {
+                $typeCode = trim((string)($aux['aux_type_code'] ?? ''));
+                $value = trim((string)($aux['aux_value'] ?? ''));
+                if ($value === '') {
+                    continue;
+                }
+                if ($typeCode === 'case_no') {
+                    $caseNos[] = $value;
+                } elseif ($typeCode === 'receipt_no') {
+                    $receiptNos[] = $value;
+                }
+            }
+        }
+        if (!empty($caseNos)) {
+            $this->ensureAuxType('case_no', '案号');
+            $this->ensureAuxArchivesByType('case_no', array_unique($caseNos));
+        }
+        if (!empty($receiptNos)) {
+            $this->ensureAuxType('receipt_no', '收据号');
+            $this->ensureAuxArchivesByType('receipt_no', array_unique($receiptNos));
+        }
     }
 
     protected function ensureDistributionAuxArchives($rows)
@@ -3028,7 +3090,6 @@ class CaseFund extends Common
         }
         $periodRow = $this->getdb('fin_fiscal_period')->where([
             'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
             'period' => $period,
             'status' => 'OPEN',
             'del_flag' => 0,
@@ -3051,7 +3112,6 @@ class CaseFund extends Common
         }
         $periodRow = $this->getdb('fin_fiscal_period')->where([
             'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
             'period' => $period,
             'status' => 'OPEN',
             'del_flag' => 0,
@@ -3198,7 +3258,7 @@ class CaseFund extends Common
         return $rows;
     }
 
-    protected function parseRefundImportRowsFromXls($binary, $bizType = '')
+    protected function parseRefundImportRowsFromXls($binary, $bizType = '', $receiptTraceRequired = null)
     {
         $cells = $this->parseBiffCells($this->readOleWorkbookStream($binary));
         if (empty($cells)) {
@@ -3216,11 +3276,15 @@ class CaseFund extends Common
         for ($col = 0; $col <= $maxCol; $col++) {
             $headers[$col] = $this->normalizeImportCellText($cells['0:' . $col] ?? '');
         }
-        $required = $this->refundImportRequiredHeaders($bizType);
+        $required = $this->refundImportRequiredHeaders($bizType, $receiptTraceRequired);
         $optional = ['总出账金额'];
-        if ($bizType === 'LITIGATION_FEE') {
-            $optional[] = '来源票据号码';
-            $optional[] = '来源票据开票日期';
+        if ($bizType === 'LITIGATION_FEE' || $receiptTraceRequired === false) {
+            foreach (['来源票据号码', '来源票据开票日期'] as $name) {
+                $optional[] = $name;
+            }
+        }
+        if ($bizType === 'CASE_FUND' && $receiptTraceRequired === false) {
+            $optional[] = '出账单号';
         }
         $optionalMap = array_fill_keys($optional, true);
         $index = [];
@@ -3299,7 +3363,7 @@ class CaseFund extends Common
         return $rows;
     }
 
-    protected function refundImportRequiredHeaders($bizType = '')
+    protected function refundImportRequiredHeaders($bizType = '', $receiptTraceRequired = null)
     {
         $headers = [
             '案号', '经办人', '书记员', '票据号码', '开票日期', '出账日期',
@@ -3310,6 +3374,9 @@ class CaseFund extends Common
         ];
         if ($bizType === 'LITIGATION_FEE') {
             $headers = array_values(array_diff($headers, ['来源票据号码', '来源票据开票日期']));
+        }
+        if ($bizType === 'CASE_FUND' && $receiptTraceRequired === false) {
+            $headers = array_values(array_diff($headers, ['来源票据号码', '来源票据开票日期', '出账单号']));
         }
         return $headers;
     }
@@ -3459,15 +3526,60 @@ class CaseFund extends Common
         return $rows;
     }
 
-    protected function validatePaymentRows($rows, $bizType = '')
+    protected function validatePaymentRows($rows, $bizType = '', $receiptNoDuplicateCheckRequired = true)
     {
         $errors = [];
         $allowedBusinessTypes = $this->allowedPaymentBusinessTypes($bizType);
         foreach ($rows as $row) {
             $errors = array_merge($errors, $this->paymentRowValidationErrors($row, $bizType, $allowedBusinessTypes));
         }
-        $errors = array_merge($errors, $this->paymentReceiptNoDuplicateErrors($rows));
+        if ($receiptNoDuplicateCheckRequired) {
+            $errors = array_merge($errors, $this->paymentReceiptNoDuplicateErrors($rows));
+        }
         return $errors;
+    }
+
+    protected function paymentImportRequiresReceiptNoDuplicateCheck($bizType)
+    {
+        $businessItems = $this->allowedSubjectConfigItems($bizType, 'PAYMENT');
+        if (empty($businessItems)) {
+            return true;
+        }
+
+        $lookupItems = $this->subjectConfigLookupItems($bizType, 'PAYMENT', $businessItems);
+        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
+            'account_set_id' => $this->accountSetId,
+            'biz_type' => $bizType,
+            'voucher_biz_type' => 'PAYMENT',
+            'del_flag' => 0,
+        ])->where('business_item_type', 'in', $lookupItems)->field(self::SUBJECT_CONFIG_FIELD)->select();
+
+        $configs = [];
+        foreach ($rows as $row) {
+            $key = $this->voucherSubjectConfigKey($bizType, 'PAYMENT', $row['business_item_type']);
+            if ($key === $row['business_item_type'] || !isset($configs[$key])) {
+                $configs[$key] = $row;
+            }
+        }
+
+        $creditSubjectCodes = [];
+        foreach ($businessItems as $businessItem) {
+            $creditSubjectCode = trim((string)($configs[$businessItem]['credit_subject_code'] ?? ''));
+            if ($creditSubjectCode !== '') {
+                $creditSubjectCodes[] = $creditSubjectCode;
+            }
+        }
+        $creditSubjectCodes = array_values(array_unique($creditSubjectCodes));
+        if (empty($creditSubjectCodes)) {
+            return true;
+        }
+
+        $exists = $this->getdb('fin_subject_aux_config')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => 'receipt_no',
+            'del_flag' => 0,
+        ])->where('subject_code', 'in', $creditSubjectCodes)->find();
+        return !empty($exists);
     }
 
     protected function paymentReceiptNoDuplicateErrors($rows)
@@ -3701,10 +3813,13 @@ class CaseFund extends Common
             && $this->decimalToCents($row['payment_amount'] ?? '0') > 0;
     }
 
-    protected function validateRefundRows($rows, $bizType = '')
+    protected function validateRefundRows($rows, $bizType = '', $receiptTraceRequired = null)
     {
         $errors = [];
         $allowedOutTypes = $this->allowedRefundOutTypes($bizType);
+        if ($receiptTraceRequired === null) {
+            $receiptTraceRequired = $this->refundImportRequiresReceiptTrace($bizType, $rows);
+        }
         foreach ($rows as $row) {
             $prefix = '第' . $row['source_row_no'] . '行：';
             if ($row['case_no'] === '') {
@@ -3726,11 +3841,88 @@ class CaseFund extends Common
             if ($row['refund_date'] === '') {
                 $errors[] = $prefix . '出账日期不能为空或格式不正确';
             }
-            if ($bizType !== 'LITIGATION_FEE' && $row['receipt_no'] === '' && $row['source_receipt_no'] === '' && $row['out_order_no'] === '') {
+            if ($receiptTraceRequired && $bizType !== 'LITIGATION_FEE' && $row['receipt_no'] === '' && $row['source_receipt_no'] === '' && $row['out_order_no'] === '') {
                 $errors[] = $prefix . '票据号码、来源票据号码、出账单号至少填写一项用于追溯';
             }
         }
         return $errors;
+    }
+
+    protected function refundImportRequiresReceiptTrace($bizType, $rows = [])
+    {
+        if ($bizType === 'LITIGATION_FEE') {
+            return false;
+        }
+        if ($bizType !== 'CASE_FUND') {
+            return true;
+        }
+
+        $configs = $this->refundSubjectConfigsForImport($bizType, $rows);
+        if (empty($configs)) {
+            return true;
+        }
+
+        $subjectCodes = [];
+        foreach ($configs as $config) {
+            if (!empty($config['debit_subject_code'])) {
+                $subjectCodes[] = $config['debit_subject_code'];
+            }
+            if (!empty($config['credit_subject_code'])) {
+                $subjectCodes[] = $config['credit_subject_code'];
+            }
+        }
+        $subjectCodes = array_values(array_unique(array_filter($subjectCodes)));
+        if (empty($subjectCodes)) {
+            return true;
+        }
+
+        $exists = $this->getdb('fin_subject_aux_config')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => 'receipt_no',
+            'del_flag' => 0,
+        ])->where('subject_code', 'in', $subjectCodes)->find();
+        return !empty($exists);
+    }
+
+    protected function refundSubjectConfigsForImport($bizType, $rows = [])
+    {
+        $businessItems = [];
+        foreach ($rows as $row) {
+            $outType = trim((string)($row['out_type'] ?? ''));
+            if ($outType !== '') {
+                $businessItems[] = $this->voucherSubjectConfigKey($bizType, 'REFUND', $outType);
+            }
+        }
+        if (empty($businessItems)) {
+            $businessItems = $this->allowedSubjectConfigItems($bizType, 'REFUND');
+        }
+        if (empty($businessItems)) {
+            return [];
+        }
+
+        $lookupItems = $this->subjectConfigLookupItems($bizType, 'REFUND', array_values(array_unique($businessItems)));
+        $rows = $this->getdb(self::TABLE_SUBJECT_CONFIG)->where([
+            'account_set_id' => $this->accountSetId,
+            'biz_type' => $bizType,
+            'voucher_biz_type' => 'REFUND',
+            'del_flag' => 0,
+        ])->where('business_item_type', 'in', $lookupItems)->field(self::SUBJECT_CONFIG_FIELD)->select();
+
+        $configs = [];
+        foreach ($rows as $row) {
+            $key = $this->voucherSubjectConfigKey($bizType, 'REFUND', $row['business_item_type']);
+            if ($key === $row['business_item_type'] || !isset($configs[$key])) {
+                $configs[$key] = $row;
+            }
+        }
+
+        $result = [];
+        foreach ($businessItems as $businessItem) {
+            if (isset($configs[$businessItem])) {
+                $result[] = $configs[$businessItem];
+            }
+        }
+        return $result;
     }
 
     protected function currentAccountSetBizType()
@@ -3767,7 +3959,7 @@ class CaseFund extends Common
     protected function allowedDistributionInvoiceTypes($bizType)
     {
         $map = [
-            'CASE_FUND' => ['执行、调解款', '执行、调节款'],
+            'CASE_FUND' => ['执行、调解款'],
         ];
         return $map[$bizType] ?? [];
     }
@@ -3949,7 +4141,7 @@ class CaseFund extends Common
         return md5(implode('|', $parts));
     }
 
-    protected function buildBankReconcileRow($statement, $bizType, $biz, $status, $bankCents, $bizCents)
+    protected function buildBankReconcileRow($statement, $bizType, $biz, $status, $bankCents, $bizCents, $matchRule = 'SERIAL_NO')
     {
         $reconcileDate = $statement ? $statement['transaction_date'] : $this->bankReconcileBizDate($bizType, $biz);
         $bankSummary = $statement ? trim(($statement['purpose'] ?? '') . ' ' . ($statement['postscript'] ?? '')) : '';
@@ -3968,7 +4160,7 @@ class CaseFund extends Common
             'biz_amount' => $this->centsToDecimal($bizCents),
             'diff_amount' => $this->centsToDecimal($bankCents - $bizCents),
             'match_status' => $status,
-            'match_rule' => 'SERIAL_NO',
+            'match_rule' => $matchRule,
             'matched_by' => $this->userid,
             'matched_time' => $this->now(),
             'bank_direction' => $statement['direction'] ?? ($bizType === 'PAYMENT' ? 'CREDIT' : 'DEBIT'),
@@ -3978,30 +4170,41 @@ class CaseFund extends Common
         ];
     }
 
-    protected function paymentCandidatesByBankSerial($bankSerialNo)
+    protected function paymentCandidatesByBankStatement($statement)
     {
-        $bankSerialNo = trim((string)$bankSerialNo);
-        if ($bankSerialNo === '') {
+        $bankSerialNo = trim((string)($statement['bank_serial_no'] ?? ''));
+        if ($bankSerialNo === '' || empty($statement['transaction_date'])) {
             return [];
         }
         return $this->getdb(self::TABLE_PAYMENT)
             ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
+            ->where('payment_date', $statement['transaction_date'])
             ->where('bank_serial_no', $bankSerialNo)
             ->field(self::PAYMENT_FIELD)
             ->select();
     }
 
-    protected function refundCandidatesByOutOrderNo($outOrderNo)
+    protected function refundCandidatesByBankStatement($statement)
     {
-        $outOrderNo = trim((string)$outOrderNo);
-        if ($outOrderNo === '') {
+        if (empty($statement['transaction_date'])) {
             return [];
         }
-        return $this->getdb(self::TABLE_REFUND)
+
+        $accountNo = trim((string)($statement['counterparty_account_no'] ?? ''));
+        $accountName = trim((string)($statement['counterparty_account_name'] ?? ''));
+        $query = $this->getdb(self::TABLE_REFUND)
             ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('out_order_no', $outOrderNo)
-            ->field(self::REFUND_FIELD)
-            ->select();
+            ->where('refund_date', $statement['transaction_date']);
+
+        if ($accountNo !== '') {
+            $query->where('payee_bank_account_no', $accountNo);
+        } elseif ($accountName !== '') {
+            $query->where('payee_bank_account_name|actual_payee_name', 'like', '%' . $accountName . '%');
+        } else {
+            return [];
+        }
+
+        return $query->field(self::REFUND_FIELD)->select();
     }
 
     protected function paymentCandidatesInScope($dateStart, $dateEnd)
@@ -4021,8 +4224,7 @@ class CaseFund extends Common
     protected function refundCandidatesInScope($dateStart, $dateEnd)
     {
         $query = $this->getdb(self::TABLE_REFUND)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('out_order_no', 'neq', '');
+            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0]);
         if ($dateStart !== '') {
             $query->where('refund_date', '>=', $dateStart);
         }
@@ -4032,27 +4234,69 @@ class CaseFund extends Common
         return $query->field(self::REFUND_FIELD)->select();
     }
 
-    protected function bankStatementExistsBySerial($bankSerialNo, $bankCode = '', $dateStart = '', $dateEnd = '')
+    protected function bankStatementExistsByPayment($payment, $bankCode = '', $dateStart = '', $dateEnd = '')
     {
-        $bankSerialNo = trim((string)$bankSerialNo);
-        if ($bankSerialNo === '') {
+        $bankSerialNo = trim((string)($payment['bank_serial_no'] ?? ''));
+        $paymentDate = trim((string)($payment['payment_date'] ?? ''));
+        if ($bankSerialNo === '' || $paymentDate === '') {
             return false;
         }
-        $where = [
+        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where([
             'account_set_id' => $this->accountSetId,
             'fiscal_year' => $this->currentYear(),
+            'direction' => 'CREDIT',
+            'transaction_date' => $paymentDate,
             'bank_serial_no' => $bankSerialNo,
             'del_flag' => 0,
-        ];
+        ]);
         if ($bankCode !== '') {
-            $where['bank_code'] = $bankCode;
+            $query->where('bank_code', $bankCode);
         }
-        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where($where);
         if ($dateStart !== '') {
             $query->where('transaction_date', '>=', $dateStart);
         }
         if ($dateEnd !== '') {
             $query->where('transaction_date', '<=', $dateEnd);
+        }
+        return $query->count() > 0;
+    }
+
+    protected function bankStatementExistsByRefundPayee($refund, $bankCode = '', $dateStart = '', $dateEnd = '')
+    {
+        $refundDate = trim((string)($refund['refund_date'] ?? ''));
+        if ($refundDate === '') {
+            return false;
+        }
+
+        $accountNo = trim((string)($refund['payee_bank_account_no'] ?? ''));
+        $accountName = trim((string)($refund['payee_bank_account_name'] ?? ''));
+        if ($accountName === '') {
+            $accountName = trim((string)($refund['actual_payee_name'] ?? ''));
+        }
+        if ($accountNo === '' && $accountName === '') {
+            return false;
+        }
+
+        $query = $this->getdb(self::TABLE_BANK_STATEMENT)->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->currentYear(),
+            'direction' => 'DEBIT',
+            'transaction_date' => $refundDate,
+            'del_flag' => 0,
+        ]);
+        if ($bankCode !== '') {
+            $query->where('bank_code', $bankCode);
+        }
+        if ($dateStart !== '') {
+            $query->where('transaction_date', '>=', $dateStart);
+        }
+        if ($dateEnd !== '') {
+            $query->where('transaction_date', '<=', $dateEnd);
+        }
+        if ($accountNo !== '') {
+            $query->where('counterparty_account_no', $accountNo);
+        } else {
+            $query->where('counterparty_account_name', 'like', '%' . $accountName . '%');
         }
         return $query->count() > 0;
     }
@@ -4093,10 +4337,11 @@ class CaseFund extends Common
         $where = [
             'account_set_id' => $this->accountSetId,
             'fiscal_year' => $this->currentYear(),
-            'match_rule' => 'SERIAL_NO',
             'del_flag' => 0,
         ];
-        $query = $this->getdb(self::TABLE_BANK_RECONCILE)->where($where);
+        $query = $this->getdb(self::TABLE_BANK_RECONCILE)
+            ->where($where)
+            ->where('match_rule', 'in', self::BANK_RECONCILE_AUTO_MATCH_RULES);
         if ($dateStart !== '') {
             $query->where('reconcile_date', '>=', $dateStart);
         }
@@ -4177,7 +4422,6 @@ class CaseFund extends Common
             'PAYMENT' => [
                 'CASE_FUND' => [
                     '执行、调解款' => '缴费登记',
-                    '执行、调节款' => '缴费登记',
                 ],
                 'LITIGATION_FEE' => [
                     '诉讼费直接结算' => '缴费登记',
@@ -4189,7 +4433,6 @@ class CaseFund extends Common
             'REFUND' => [
                 'CASE_FUND' => [
                     '执行、调解款发放' => '出账查询',
-                    '执行、调节款发放' => '出账查询',
                 ],
                 'LITIGATION_FEE' => [
                     '诉讼费退费' => '出账查询',
@@ -4575,7 +4818,7 @@ class CaseFund extends Common
         return false;
     }
 
-    protected function loadExistingPaymentsForImport($rows)
+    protected function loadExistingPaymentsForImport($rows, $useReceiptNoAsDuplicateKey = true)
     {
         $fingerprints = [];
         $receiptNos = [];
@@ -4586,8 +4829,11 @@ class CaseFund extends Common
                 $fingerprints[] = $fingerprint;
             }
             $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-            if ($receiptNo !== '') {
+            if ($useReceiptNoAsDuplicateKey && $receiptNo !== '') {
                 $receiptNos[] = $receiptNo;
+                continue;
+            }
+            if (!$useReceiptNoAsDuplicateKey && $receiptNo !== '' && $fingerprint !== '') {
                 continue;
             }
             $accountNo = trim((string)($row['bank_account_no'] ?? ''));
@@ -4602,7 +4848,7 @@ class CaseFund extends Common
                 'account_set_id' => $this->accountSetId,
             ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))->field(self::PAYMENT_FIELD)->select();
             foreach ($fingerprintRows as $row) {
-                $this->rememberPaymentImportExistingRow($existing, $row);
+                $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
             }
         }
         if (!empty($receiptNos)) {
@@ -4611,7 +4857,7 @@ class CaseFund extends Common
                 'del_flag' => 0,
             ])->where('receipt_no', 'in', array_values(array_unique($receiptNos)))->field(self::PAYMENT_FIELD)->select();
             foreach ($receiptRows as $row) {
-                $this->rememberPaymentImportExistingRow($existing, $row);
+                $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
             }
         }
         if (!empty($accountNos)) {
@@ -4620,15 +4866,15 @@ class CaseFund extends Common
                 'del_flag' => 0,
             ])->where('bank_account_no', 'in', array_values(array_unique($accountNos)))->field(self::PAYMENT_FIELD)->select();
             foreach ($accountRows as $row) {
-                $this->rememberPaymentImportExistingRow($existing, $row);
+                $this->rememberPaymentImportExistingRow($existing, $row, $useReceiptNoAsDuplicateKey);
             }
         }
         return $existing;
     }
 
-    protected function rememberPaymentImportExistingRow(&$existing, $row)
+    protected function rememberPaymentImportExistingRow(&$existing, $row, $useReceiptNoAsDuplicateKey = true)
     {
-        $key = $this->paymentImportDuplicateKey($row);
+        $key = $this->paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey);
         if ($key === '') {
             return;
         }
@@ -4688,18 +4934,22 @@ class CaseFund extends Common
         return $status === 'GENERATED' && !$this->hasActiveGeneratedVoucher($row);
     }
 
-    protected function paymentImportDuplicateKey($row)
+    protected function paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey = true)
     {
         $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-        if ($receiptNo !== '') {
+        if ($useReceiptNoAsDuplicateKey && $receiptNo !== '') {
             return 'receipt:' . $receiptNo;
         }
-        $bankAccountNo = trim((string)($row['bank_account_no'] ?? ''));
-        if ($bankAccountNo === '') {
-            return '';
+        $fingerprint = trim((string)($row['source_fingerprint'] ?? ''));
+        if (!$useReceiptNoAsDuplicateKey && $receiptNo !== '' && $fingerprint !== '') {
+            return 'fingerprint:' . $fingerprint;
         }
-        $amount = $this->centsToDecimal($this->decimalToCents($row['payment_amount'] ?? '0'));
-        return 'account_amount:' . $bankAccountNo . '|' . $amount;
+        $bankAccountNo = trim((string)($row['bank_account_no'] ?? ''));
+        if ($bankAccountNo !== '') {
+            $amount = $this->centsToDecimal($this->decimalToCents($row['payment_amount'] ?? '0'));
+            return 'account_amount:' . $bankAccountNo . '|' . $amount;
+        }
+        return $fingerprint === '' ? '' : 'fingerprint:' . $fingerprint;
     }
 
     protected function paymentFingerprint($row)

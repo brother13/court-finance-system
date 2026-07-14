@@ -74,18 +74,22 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, index) in form.details" :key="row.uid">
-            <td class="entry-index">{{ index + 1 }}</td>
+          <tr v-for="({ row, index }) in renderedVoucherLines" :key="row.uid">
+            <td class="entry-index">{{ visibleLineStart + index + 1 }}</td>
             <td>
+              <span v-if="isReadonly" class="readonly-cell-text" :title="row.summary || ''">{{ row.summary || '—' }}</span>
               <el-input
+                v-else
                 v-model="row.summary"
                 class="paper-cell-control"
                 :disabled="isReadonly"
-                @blur="applySummaryShortcut(row, index)"
+                @blur="applySummaryShortcut(row, visibleLineStart + index)"
               />
             </td>
             <td>
+              <span v-if="isReadonly" class="readonly-cell-text">{{ subjectDisplayName(row.subjectCode) }}</span>
               <el-select
+                v-else
                 v-model="row.subjectCode"
                 filterable
                 clearable
@@ -109,6 +113,7 @@
                 type="button"
                 class="aux-pill-button"
                 :class="{ warning: !isLineAuxComplete(row) }"
+                :title="auxSummary(row)"
                 @click="openAuxDialog(row)"
               >
                 {{ auxSummary(row) || '录入辅助核算' }}
@@ -116,17 +121,21 @@
               <span v-else class="muted">—</span>
             </td>
             <td>
+              <span v-if="isReadonly" class="readonly-cell-text money-text">{{ row.debitText || '—' }}</span>
               <el-input
+                v-else
                 v-model="row.debitText"
                 class="paper-cell-control paper-money-input"
                 placeholder="0.00"
                 :disabled="isReadonly"
                 @input="handleDebitInput(row)"
-                @blur="handleDebitBlur(row, index)"
+                @blur="handleDebitBlur(row, visibleLineStart + index)"
               />
             </td>
             <td>
+              <span v-if="isReadonly" class="readonly-cell-text money-text">{{ row.creditText || '—' }}</span>
               <el-input
+                v-else
                 v-model="row.creditText"
                 class="paper-cell-control paper-money-input"
                 placeholder="0.00"
@@ -137,8 +146,8 @@
             </td>
             <td class="entry-action">
               <template v-if="!isReadonly">
-                <el-button link type="primary" @click="insertLine(index)">插行</el-button>
-                <el-button link type="danger" :disabled="form.details.length <= 2" @click="removeLine(index)">删行</el-button>
+                <el-button link type="primary" @click="insertLine(visibleLineStart + index)">插行</el-button>
+                <el-button link type="danger" :disabled="form.details.length <= 2" @click="removeLine(visibleLineStart + index)">删行</el-button>
               </template>
               <span v-else class="muted">查看</span>
             </td>
@@ -156,6 +165,18 @@
           </tr>
         </tfoot>
       </table>
+      <div v-if="form.details.length > LARGE_VOUCHER_LINE_PAGE_SIZE" class="voucher-line-pagination">
+        <span>已载入 {{ form.details.length }} 条分录，当前显示第 {{ visibleLineStart + 1 }}-{{ visibleLineEnd }} 条</span>
+        <el-pagination
+          v-model:current-page="detailPage"
+          small
+          background
+          layout="prev, pager, next, jumper"
+          :page-size="LARGE_VOUCHER_LINE_PAGE_SIZE"
+          :total="form.details.length"
+          @current-change="handleDetailPageChange"
+        />
+      </div>
     </div>
 
     <div class="voucher-footer">
@@ -250,9 +271,11 @@ const currentLine = ref<VoucherLine | null>(null)
 const saving = ref(false)
 const voucherWords = ['记', '收', '付', '转']
 const DEFAULT_VOUCHER_LINE_COUNT = 6
+const LARGE_VOUCHER_LINE_PAGE_SIZE = 50
 const VOUCHER_DRAFT_STORAGE_PREFIX = 'court-finance-voucher-new-draft'
 const draftReady = ref(false)
 const suppressDraftPersist = ref(false)
+const detailPage = ref(1)
 
 const todayInPeriod = () => {
   const today = new Date()
@@ -324,6 +347,23 @@ const statusText = (status: string) =>
 const terminalVoucherSubjects = computed(() => subjects.value.filter((subject: any) => {
   return Number(subject.leaf_flag) === 1 && Number(subject.voucher_entry_flag ?? subject.leaf_flag) === 1 && Number((subject as any).status ?? 1) === 1
 }))
+const subjectNameMap = computed(() => {
+  const map = new Map<string, string>()
+  subjects.value.forEach((subject: any) => {
+    if (subject.subject_code) {
+      map.set(subject.subject_code, `${subject.subject_code} ${subject.subject_name || ''}`.trim())
+    }
+  })
+  return map
+})
+const maxDetailPage = computed(() => Math.max(1, Math.ceil(form.details.length / LARGE_VOUCHER_LINE_PAGE_SIZE)))
+const visibleLineStart = computed(() => (detailPage.value - 1) * LARGE_VOUCHER_LINE_PAGE_SIZE)
+const visibleLineEnd = computed(() => Math.min(form.details.length, visibleLineStart.value + LARGE_VOUCHER_LINE_PAGE_SIZE))
+const renderedVoucherLines = computed(() => {
+  return form.details
+    .slice(visibleLineStart.value, visibleLineEnd.value)
+    .map((row, index) => ({ row, index }))
+})
 const totalDebit = computed(() => form.details.reduce((sum, line) => sum + parseAmount(line.debitText), 0))
 const totalCredit = computed(() => form.details.reduce((sum, line) => sum + parseAmount(line.creditText), 0))
 const difference = computed(() => Number((totalDebit.value - totalCredit.value).toFixed(2)))
@@ -360,6 +400,19 @@ const parseAmount = (value: string) => {
 }
 
 const money = (value: number) => value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const subjectDisplayName = (subjectCode: string) => {
+  return subjectNameMap.value.get(subjectCode) || subjectCode || '—'
+}
+
+const clampDetailPage = () => {
+  if (detailPage.value > maxDetailPage.value) detailPage.value = maxDetailPage.value
+  if (detailPage.value < 1) detailPage.value = 1
+}
+
+const handleDetailPageChange = () => {
+  clampDetailPage()
+}
 
 const loadNextNo = async () => {
   const result = await voucherApi.nextNo(form.period)
@@ -478,9 +531,17 @@ const isLineAuxComplete = (line: VoucherLine) => {
   return lineAuxConfigs(line).every((config) => Number(config.required_flag) !== 1 || Boolean(line.auxValues[config.aux_type_code]))
 }
 
-const auxSummary = (line: VoucherLine) => {
-  return Object.entries(line.auxValues)
+const configuredAuxEntries = (line: VoucherLine) => {
+  return lineAuxConfigs(line)
+    .map((config) => {
+      const code = config.aux_type_code
+      return [code, line.auxValues[code] || ''] as const
+    })
     .filter(([, value]) => value)
+}
+
+const auxSummary = (line: VoucherLine) => {
+  return configuredAuxEntries(line)
     .map(([code, value]) => `${auxTypeName(code)}:${auxDisplayValue(code, value, line)}`)
     .join(' / ')
 }
@@ -556,7 +617,10 @@ const fillNextCreditLine = (row: VoucherLine, index: number) => {
   next.creditText = debit.toFixed(2)
 }
 
-const addLine = () => form.details.push(createLine())
+const addLine = () => {
+  form.details.push(createLine())
+  detailPage.value = maxDetailPage.value
+}
 const insertLine = (index: number) => form.details.splice(index + 1, 0, createLine())
 const removeLine = (index: number) => form.details.splice(index, 1)
 
@@ -574,6 +638,7 @@ const fillBalanceForLastLine = () => {
 
 const resetVoucher = async () => {
   suppressDraftPersist.value = true
+  detailPage.value = 1
   form.voucherWord = '记'
   form.period = context.period
   form.voucherDate = todayInPeriod()
@@ -626,8 +691,7 @@ const toPayload = (): Voucher => {
       summary: line.summary,
       debit_amount: parseAmount(line.debitText),
       credit_amount: parseAmount(line.creditText),
-      aux_values: Object.entries(line.auxValues)
-        .filter(([, value]) => value !== '')
+      aux_values: configuredAuxEntries(line)
         .map(([code, value]) => ({
           aux_type_code: code,
           aux_value: value,
@@ -780,6 +844,7 @@ const restoreCachedNewVoucherDraft = () => {
           auxLabels: { ...(line?.auxLabels || {}) }
         }))
       : createVoucherLines()
+    detailPage.value = 1
     return true
   } catch {
     clearCachedNewVoucherDraft()
@@ -795,6 +860,11 @@ watch(
   formSnapshot,
   () => persistNewVoucherDraft(),
   { deep: true }
+)
+
+watch(
+  () => form.details.length,
+  () => clampDetailPage()
 )
 
 async function loadVoucherDetail(period: string, voucherId: string) {
@@ -838,6 +908,7 @@ async function loadVoucherDetail(period: string, voucherId: string) {
     })
   }
   form.details = lines.length > 0 ? lines : [createLine(), createLine()]
+  detailPage.value = 1
   await loadSubjectConfigsForLines(form.details)
   selectedAuxEntries.forEach(({ code, value, label }) => ensureSelectedAuxArchive(code, value, label))
 }

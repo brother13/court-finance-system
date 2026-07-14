@@ -41,6 +41,7 @@ backend/thinkphp/composer.lock
 
 # Local design/tool scratch space
 .superdesign/
+.codegraph/
 
 # Local Composer launcher
 backend/composer.phar

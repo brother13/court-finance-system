@@ -82,6 +82,17 @@
         </el-button>
         <el-button plain :icon="Refresh" :disabled="isSelectedPeriodClosed" @click="runCheck">重新检查</el-button>
         <el-button :icon="RefreshLeft" :disabled="currentStatus !== 'CLOSED'" @click="reopenPeriod">反结账</el-button>
+        <el-button
+          class="preopen-year-action"
+          type="warning"
+          plain
+          :icon="Calendar"
+          :disabled="!canPreopenNextYear"
+          :title="preopenYearDisabledReason"
+          @click="preopenNextYear"
+        >
+          预开下一年度
+        </el-button>
         <el-button class="year-end-action" type="success" :icon="Calendar" :disabled="!canYearEnd" @click="yearEnd">
           年终结转生成下一年度
         </el-button>
@@ -147,6 +158,7 @@ import { useContextStore } from '../../stores/context'
 const context = useContextStore()
 const selectedPeriod = ref(context.period)
 const selectedYear = ref(context.year)
+const currentCalendarYear = new Date().getFullYear()
 const periodRows = ref<any[]>([])
 const checkResult = ref<PeriodCloseCheckResult | null>(null)
 
@@ -157,6 +169,8 @@ const selectedPeriodRow = computed(() => periodRows.value.find((row) => row.peri
 const currentStatus = computed(() => periodRows.value.find((row) => row.period === selectedPeriod.value)?.status || '')
 const isSelectedPeriodClosed = computed(() => currentStatus.value === 'CLOSED')
 const canYearEnd = computed(() => selectedPeriod.value.endsWith('-12') && currentStatus.value === 'CLOSED')
+const canPreopenNextYear = computed(() => selectedYear.value + 1 <= currentCalendarYear)
+const preopenYearDisabledReason = computed(() => canPreopenNextYear.value ? '' : '预开年度不能大于当前年份')
 const closedPeriodCount = computed(() => periodRows.value.filter((row) => row.status === 'CLOSED').length)
 const firstOpenPeriod = computed(() => periodRows.value.find((row) => row.status === 'OPEN')?.period || '')
 const blockCount = computed(() => checkResult.value?.blocks.length || 0)
@@ -269,6 +283,29 @@ const reopenPeriod = async () => {
   })
   await periodApi.reopen(selectedPeriod.value)
   ElMessage.success(`${selectedPeriod.value} 已恢复开放`)
+  await loadPeriods()
+  await runCheck()
+}
+
+const preopenNextYear = async () => {
+  const sourceYear = selectedYear.value
+  const targetYear = sourceYear + 1
+  if (!canPreopenNextYear.value) {
+    ElMessage.warning('预开年度不能大于当前年份')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确认在当前账套下预开 ${targetYear} 年度？该操作只生成 ${targetYear} 年度会计期间，不生成期初余额。`,
+    '预开下一年度',
+    {
+      type: 'warning',
+      confirmButtonText: '预开',
+      cancelButtonText: '取消'
+    }
+  )
+  const result = await periodApi.preopenYear(sourceYear)
+  ElMessage.success(`已预开 ${result.target_year} 年度，新增 ${result.created_periods} 个期间，不生成期初余额`)
+  switchPeriod(result.first_period)
   await loadPeriods()
   await runCheck()
 }
@@ -413,6 +450,10 @@ onMounted(async () => {
 
 .action-buttons .primary-action {
   grid-column: 1 / -1;
+}
+
+.action-buttons .preopen-year-action {
+  margin-left: 0;
 }
 
 .action-buttons .year-end-action {

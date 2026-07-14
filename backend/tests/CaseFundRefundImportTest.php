@@ -37,13 +37,23 @@ require_once $modelPath;
 
 use app\finance\model\CaseFund;
 
+class CaseFundRefundImportTestModel extends CaseFund
+{
+    public $receiptTraceRequired = true;
+
+    protected function refundImportRequiresReceiptTrace($bizType, $rows = [])
+    {
+        return $this->receiptTraceRequired;
+    }
+}
+
 $xlsPath = '/Users/apple/Documents/出账查询 2024(收据号).xls';
 if (!file_exists($xlsPath)) {
     fwrite(STDERR, 'Sample refund xls file does not exist' . PHP_EOL);
     exit(1);
 }
 
-$caseFund = new CaseFund();
+$caseFund = new CaseFundRefundImportTestModel();
 $parseMethod = new ReflectionMethod(CaseFund::class, 'parseRefundImportRowsFromXls');
 $parseMethod->setAccessible(true);
 $rows = $parseMethod->invoke($caseFund, file_get_contents($xlsPath));
@@ -125,12 +135,21 @@ $headersMethod = new ReflectionMethod(CaseFund::class, 'refundImportRequiredHead
 $headersMethod->setAccessible(true);
 $caseFundHeaders = $headersMethod->invoke($caseFund, 'CASE_FUND');
 $litigationHeaders = $headersMethod->invoke($caseFund, 'LITIGATION_FEE');
+$caseFundHeadersWithoutReceiptAux = $headersMethod->invoke($caseFund, 'CASE_FUND', false);
 if (!in_array('来源票据号码', $caseFundHeaders, true) || !in_array('来源票据开票日期', $caseFundHeaders, true)) {
     fwrite(STDERR, 'CASE_FUND refund import should still require source receipt headers' . PHP_EOL);
     exit(1);
 }
+if (in_array('来源票据号码', $caseFundHeadersWithoutReceiptAux, true) || in_array('出账单号', $caseFundHeadersWithoutReceiptAux, true)) {
+    fwrite(STDERR, 'CASE_FUND refund import should not require source receipt or out-order headers when refund subjects do not use receipt_no auxiliary accounting' . PHP_EOL);
+    exit(1);
+}
 if (in_array('来源票据号码', $litigationHeaders, true) || in_array('来源票据开票日期', $litigationHeaders, true)) {
     fwrite(STDERR, 'LITIGATION_FEE refund import should not require source receipt headers' . PHP_EOL);
+    exit(1);
+}
+if (!in_array('出账单号', $litigationHeaders, true)) {
+    fwrite(STDERR, 'LITIGATION_FEE refund import should keep requiring the out-order header' . PHP_EOL);
     exit(1);
 }
 if (in_array('总出账金额', $caseFundHeaders, true) || in_array('总出账金额', $litigationHeaders, true)) {
@@ -181,6 +200,14 @@ $caseFundRowsWithoutReceipt[0]['out_order_no'] = '';
 $errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND');
 if (empty($errors) || strpos(implode("\n", $errors), '至少填写一项用于追溯') === false) {
     fwrite(STDERR, 'CASE_FUND refund import should still require receipt or out-order trace fields' . PHP_EOL);
+    exit(1);
+}
+
+$caseFund->receiptTraceRequired = false;
+$errors = $validateMethod->invoke($caseFund, $caseFundRowsWithoutReceipt, 'CASE_FUND');
+$caseFund->receiptTraceRequired = true;
+if (!empty($errors)) {
+    fwrite(STDERR, 'CASE_FUND refund import should not require receipt or out-order trace fields when refund subjects do not use receipt_no auxiliary accounting' . PHP_EOL);
     exit(1);
 }
 

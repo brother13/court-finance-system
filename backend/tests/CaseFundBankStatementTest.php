@@ -24,7 +24,13 @@ $checks = [
     [$source, "requirePermission('case_fund:reconcile')", 'Bank reconcile run should require reconcile permission'],
     [$source, "\$bizType = 'PAYMENT'", 'Income bank statement should reconcile to payment registration'],
     [$source, "\$bizType = 'REFUND'", 'Debit bank statement should reconcile to refund registration'],
-    [$source, "'out_order_no'", 'Refund reconcile should use refund out_order_no'],
+    [$source, 'paymentCandidatesByBankStatement', 'Income bank statement should narrow payment candidates by transaction date before serial number'],
+    [$source, 'refundCandidatesByBankStatement', 'Debit bank statement should reconcile refund rows by bank statement counterparty fields'],
+    [$source, "->where('payment_date', \$statement['transaction_date'])", 'Payment reconcile should first narrow by bank transaction date'],
+    [$source, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
+    [$source, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
+    [$source, "const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']", 'Bank reconcile rerun should clean legacy and current automatic match rules'],
+    [$source, "->where('match_rule', 'in', self::BANK_RECONCILE_AUTO_MATCH_RULES)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
     [$source, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
     [$source, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
     [$source, 'supportedBankStatementBanks', 'CaseFund should validate supported banks'],
@@ -54,6 +60,21 @@ foreach ($checks as [$haystack, $needle, $message]) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }
+}
+
+if (strpos($source, "refundCandidatesByOutOrderNo(\$statement['bank_serial_no'])") !== false) {
+    fwrite(STDERR, 'Debit bank statement should not match bank serial number against refund out_order_no' . PHP_EOL);
+    exit(1);
+}
+
+if (strpos($source, "paymentCandidatesByBankSerial(\$statement['bank_serial_no'])") !== false) {
+    fwrite(STDERR, 'Income bank statement should not match serial number without narrowing by transaction date' . PHP_EOL);
+    exit(1);
+}
+
+if (strpos($source, "'match_rule' => 'SERIAL_NO'") !== false) {
+    fwrite(STDERR, 'Bank reconcile cleanup should not be limited to the legacy SERIAL_NO rule' . PHP_EOL);
+    exit(1);
 }
 
 echo 'Case fund bank statement test passed' . PHP_EOL;

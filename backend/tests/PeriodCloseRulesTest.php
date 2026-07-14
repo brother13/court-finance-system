@@ -90,6 +90,34 @@ if (count($values) !== 12 || $values[0] !== $nextJanuaryPeriod || $values[11] !=
     exit(1);
 }
 
+$preopenTarget = new ReflectionMethod(Period::class, 'preopenTargetYear');
+$preopenTarget->setAccessible(true);
+if ($preopenTarget->invoke($period, $sourceYear) !== $nextYearValue) {
+    fwrite(STDERR, 'Preopen target year should be the next fiscal year' . PHP_EOL);
+    exit(1);
+}
+
+$preopenMessage = new ReflectionMethod(Period::class, 'preopenAlreadyExistsMessage');
+$preopenMessage->setAccessible(true);
+$message = $preopenMessage->invoke($period, $nextYearValue, 12);
+if (strpos($message, (string)$nextYearValue) === false || strpos($message, '已存在') === false) {
+    fwrite(STDERR, 'Preopen duplicate message should name the target year and existing periods' . PHP_EOL);
+    exit(1);
+}
+
+$preopenLimit = new ReflectionMethod(Period::class, 'preopenTargetYearLimitReason');
+$preopenLimit->setAccessible(true);
+$currentCalendarYear = (int)date('Y');
+if ($preopenLimit->invoke($period, $currentCalendarYear) !== '') {
+    fwrite(STDERR, 'Preopen should allow target year equal to the current calendar year' . PHP_EOL);
+    exit(1);
+}
+$limitReason = $preopenLimit->invoke($period, $currentCalendarYear + 1);
+if (strpos($limitReason, '不能大于当前年份') === false) {
+    fwrite(STDERR, 'Preopen should block target year greater than the current calendar year' . PHP_EOL);
+    exit(1);
+}
+
 $yearBlock = new ReflectionMethod(Period::class, 'yearEndBlockReason');
 $yearBlock->setAccessible(true);
 if ($yearBlock->invoke($period, $novemberPeriod, 'CLOSED') === '') {

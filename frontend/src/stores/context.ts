@@ -11,6 +11,15 @@ const loadAuth = (): Partial<LoginUser> => {
   }
 }
 
+const normalizeMustChangePassword = (value: unknown) => {
+  if (value === true || value === 1) return true
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true'
+  }
+  return false
+}
+
 const savedAccountSetBankName = (auth: Partial<LoginUser>) => {
   const directName = String((auth as any).bank_name || (auth as any).account_set_bank_name || '').trim()
   if (directName !== '') return directName
@@ -64,7 +73,7 @@ export const useContextStore = defineStore('context', {
       unitName: auth.unit_name || '',
       permissions: auth.permissions || [],
       viewScope: auth.view_scope || 'ALL',
-      mustChangePassword: Boolean(auth.must_change_password),
+      mustChangePassword: normalizeMustChangePassword(auth.must_change_password),
       roles: auth.roles || [],
       accountSets: auth.account_sets || [],
       period,
@@ -96,7 +105,7 @@ export const useContextStore = defineStore('context', {
       this.unitName = user.unit_name
       this.permissions = user.permissions || []
       this.viewScope = user.view_scope || 'ALL'
-      this.mustChangePassword = Boolean(user.must_change_password)
+      this.mustChangePassword = normalizeMustChangePassword(user.must_change_password)
       this.roles = user.roles || []
       this.accountSets = user.account_sets || []
       localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
@@ -168,7 +177,8 @@ export const useContextStore = defineStore('context', {
       const saved = loadAuth()
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         ...saved,
-        must_change_password: false
+        must_change_password: false,
+        mustChangePassword: false
       }))
     }
   }

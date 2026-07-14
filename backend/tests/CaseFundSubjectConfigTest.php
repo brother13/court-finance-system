@@ -47,6 +47,16 @@ if (strpos($source, 'subjectConfigPaymentBusinessTypes') === false) {
     exit(1);
 }
 
+foreach ([
+    "'执行、调节款'",
+    "'执行、调节款发放'",
+] as $deprecatedAlias) {
+    if (strpos($source, $deprecatedAlias) !== false) {
+        fwrite(STDERR, 'Old typo compatibility alias should not appear in CaseFund subject config code: ' . $deprecatedAlias . PHP_EOL);
+        exit(1);
+    }
+}
+
 if (strpos($source, "'UNKNOWN_PAYMENT'") === false || strpos($source, "['不明款']") === false) {
     fwrite(STDERR, 'Subject config should expose unknown payment config item' . PHP_EOL);
     exit(1);

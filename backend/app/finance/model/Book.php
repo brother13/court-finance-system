@@ -1783,6 +1783,7 @@ class Book extends Common
         $fiscalYear = $this->fiscalYear($period);
         $groups = [];
         $subjectMap = $this->subjectInfoMap();
+        $receiptSubjectMap = $this->subjectAuxConfigSubjectMap('receipt_no');
 
         $openingRows = db('fin_aux_opening_balance')
             ->where([
@@ -1799,7 +1800,7 @@ class Book extends Common
                 $auxValues = [];
             }
             $caseNo = trim((string)($auxValues['case_no'] ?? ''));
-            $receiptNo = trim((string)($auxValues['receipt_no'] ?? ''));
+            $receiptNo = !empty($receiptSubjectMap[$rowSubjectCode]) ? trim((string)($auxValues['receipt_no'] ?? '')) : '';
             $subject = $subjectMap[$rowSubjectCode] ?? [];
             $this->addAuxBalanceAmount(
                 $groups,
@@ -1840,7 +1841,7 @@ class Book extends Common
             ->select();
         foreach ($voucherRows as $row) {
             $caseNo = trim((string)$row['case_no']);
-            $receiptNo = trim((string)$row['receipt_no']);
+            $receiptNo = !empty($receiptSubjectMap[$row['subject_code']]) ? trim((string)$row['receipt_no']) : '';
             $this->addAuxBalanceAmount(
                 $groups,
                 $row['subject_code'],
@@ -1898,6 +1899,7 @@ class Book extends Common
 
     protected function loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter)
     {
+        $receiptSubjectMap = $this->subjectAuxConfigSubjectMap('receipt_no');
         $query = db('fin_aux_balance_snapshot')
             ->where([
                 'account_set_id' => $this->accountSetId,
@@ -1927,7 +1929,7 @@ class Book extends Common
                 $row['subject_name'] ?? '',
                 $row['direction'] ?? 'DEBIT',
                 $row['case_no'],
-                $row['receipt_no'],
+                !empty($receiptSubjectMap[$row['subject_code']]) ? $row['receipt_no'] : '',
                 $this->decimalToCents($row['opening_debit_amount'] ?? 0),
                 $this->decimalToCents($row['opening_credit_amount'] ?? 0),
                 $this->decimalToCents($row['debit_amount'] ?? 0),
@@ -1936,7 +1938,7 @@ class Book extends Common
             );
         }
 
-        return $this->buildAuxBalanceRows($groups);
+        return $this->buildAuxBalanceRows($groups, $receiptSubjectMap);
     }
 
     protected function auxBalanceSnapshotTime($period)
@@ -1981,6 +1983,9 @@ class Book extends Common
             $this->maxUpdatedTime('fin_subject', [
                 'account_set_id' => $this->accountSetId,
             ]),
+            $this->maxUpdatedTime('fin_subject_aux_config', [
+                'account_set_id' => $this->accountSetId,
+            ]),
         ];
         $times = array_values(array_filter($times, 'strlen'));
         if (empty($times)) {
@@ -2009,7 +2014,6 @@ class Book extends Common
 
         $rows = db('fin_subject')->alias('s')
             ->join('fin_subject_aux_config case_cfg', 'case_cfg.subject_code=s.subject_code and case_cfg.account_set_id=s.account_set_id and case_cfg.del_flag=0')
-            ->join('fin_subject_aux_config receipt_cfg', 'receipt_cfg.subject_code=s.subject_code and receipt_cfg.account_set_id=s.account_set_id and receipt_cfg.del_flag=0')
             ->where([
                 's.account_set_id' => $this->accountSetId,
                 's.del_flag' => 0,
@@ -2017,7 +2021,6 @@ class Book extends Common
                 's.leaf_flag' => 1,
                 's.voucher_entry_flag' => 1,
                 'case_cfg.aux_type_code' => 'case_no',
-                'receipt_cfg.aux_type_code' => 'receipt_no',
             ])
             ->field('s.subject_code,s.subject_name,s.direction')
             ->group('s.subject_code,s.subject_name,s.direction')
@@ -2261,12 +2264,30 @@ class Book extends Common
         }
     }
 
-    protected function buildAuxBalanceRows($groups)
+    protected function subjectAuxConfigSubjectMap($auxTypeCode)
+    {
+        $rows = db('fin_subject_aux_config')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $auxTypeCode,
+            'del_flag' => 0,
+        ])->field('subject_code')->select();
+        $map = [];
+        foreach ($rows as $row) {
+            $subjectCode = (string)($row['subject_code'] ?? '');
+            if ($subjectCode !== '') {
+                $map[$subjectCode] = true;
+            }
+        }
+        return $map;
+    }
+
+    protected function buildAuxBalanceRows($groups, $receiptSubjectMap = [])
     {
         ksort($groups);
         $caseRows = [];
         foreach ($groups as $detail) {
             $caseKey = $detail['subject_code'] . '|' . $detail['case_no'];
+            $receiptDimensionEnabled = !empty($receiptSubjectMap[$detail['subject_code']]);
             if (!isset($caseRows[$caseKey])) {
                 $caseRows[$caseKey] = [
                     'row_key' => 'case|' . $caseKey,
@@ -2282,20 +2303,26 @@ class Book extends Common
                     'credit_cents' => 0,
                     'entry_count' => 0,
                     'monitor_count' => 0,
+                    'receipt_dimension_enabled' => $receiptDimensionEnabled,
                     'children' => [],
                 ];
             }
-            $receiptRow = $this->formatAuxBalanceRow('RECEIPT', $detail);
-            $caseRows[$caseKey]['children'][] = $receiptRow;
             foreach (['opening_debit_cents', 'opening_credit_cents', 'debit_cents', 'credit_cents', 'entry_count'] as $field) {
                 $caseRows[$caseKey][$field] += $detail[$field];
             }
-            if ($receiptRow['monitor_flag']) {
-                $caseRows[$caseKey]['monitor_count']++;
+            if ($receiptDimensionEnabled) {
+                $receiptRow = $this->formatAuxBalanceRow('RECEIPT', $detail);
+                $caseRows[$caseKey]['children'][] = $receiptRow;
+                if ($receiptRow['monitor_flag']) {
+                    $caseRows[$caseKey]['monitor_count']++;
+                }
             }
         }
         $rows = [];
         foreach ($caseRows as $caseRow) {
+            if (!$caseRow['receipt_dimension_enabled']) {
+                $caseRow['children'] = [];
+            }
             $rows[] = $this->formatAuxBalanceRow('CASE', $caseRow);
         }
         return $rows;
@@ -2322,7 +2349,7 @@ class Book extends Common
             'credit_amount' => $this->centsToDecimal($row['credit_cents']),
             'ending_balance_amount' => $this->centsToDecimal($endingBalanceCents),
             'entry_count' => $row['entry_count'],
-            'monitor_flag' => $rowType === 'RECEIPT' && $endingBalanceCents !== 0,
+            'monitor_flag' => ($rowType === 'RECEIPT' || ($rowType === 'CASE' && empty($row['children']))) && $endingBalanceCents !== 0,
             'monitor_count' => $row['monitor_count'] ?? 0,
         ];
         if ($rowType === 'CASE') {

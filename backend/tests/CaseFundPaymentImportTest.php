@@ -63,6 +63,11 @@ class CaseFundPaymentImportFakeQuery
         return $this->rows;
     }
 
+    public function find()
+    {
+        return $this->rows[0] ?? null;
+    }
+
     public function count()
     {
         return $this->count;
@@ -80,6 +85,23 @@ class CaseFundPaymentImportDuplicateProbe extends CaseFund
             return new CaseFundPaymentImportFakeQuery([], self::$activeVoucherCount);
         }
         return new CaseFundPaymentImportFakeQuery(self::$existingPaymentRows);
+    }
+}
+
+class CaseFundPaymentReceiptConfigProbe extends CaseFund
+{
+    public static $subjectConfigRows = [];
+    public static $subjectAuxConfigRows = [];
+
+    public static function getdb($table = '')
+    {
+        if ($table === 'fin_case_fund_subject_config') {
+            return new CaseFundPaymentImportFakeQuery(self::$subjectConfigRows);
+        }
+        if ($table === 'fin_subject_aux_config') {
+            return new CaseFundPaymentImportFakeQuery(self::$subjectAuxConfigRows);
+        }
+        return new CaseFundPaymentImportFakeQuery([]);
     }
 }
 
@@ -165,6 +187,25 @@ if ($receiptKey !== 'receipt:0000665970') {
     fwrite(STDERR, 'Payment import duplicate key should prefer receipt no' . PHP_EOL);
     exit(1);
 }
+$accountAmountKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
+    'receipt_no' => '0000665970',
+    'bank_account_no' => 'A001',
+    'payment_amount' => '100.00',
+], false);
+if ($accountAmountKeyWithoutReceiptCheck !== 'account_amount:A001|100.00') {
+    fwrite(STDERR, 'Payment import duplicate key should ignore receipt no when the credit subject has no receipt auxiliary config' . PHP_EOL);
+    exit(1);
+}
+$fingerprintKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
+    'receipt_no' => '0000665970',
+    'bank_account_no' => 'A001',
+    'payment_amount' => '100.00',
+    'source_fingerprint' => 'fingerprint-one',
+], false);
+if ($fingerprintKeyWithoutReceiptCheck !== 'fingerprint:fingerprint-one') {
+    fwrite(STDERR, 'Payment import should use the source fingerprint instead of receipt no when receipt duplicate checking is disabled' . PHP_EOL);
+    exit(1);
+}
 $accountAmountKey = $duplicateKeyMethod->invoke($caseFund, [
     'receipt_no' => '',
     'bank_account_no' => '0334210102000370000717900',
@@ -247,6 +288,38 @@ if (empty($duplicateFileErrors) || strpos(implode("\n", $duplicateFileErrors), '
     fwrite(STDERR, 'Payment import validation should report duplicate receipt numbers inside the same file' . PHP_EOL);
     exit(1);
 }
+$duplicateFileErrorsWithoutReceiptCheck = $validateMethod->invoke($caseFund, $duplicateFileRows, 'CASE_FUND', false);
+if (strpos(implode("\n", $duplicateFileErrorsWithoutReceiptCheck), '票据号码') !== false) {
+    fwrite(STDERR, 'Payment import should skip receipt-number duplicate validation when the credit subject has no receipt auxiliary config' . PHP_EOL);
+    exit(1);
+}
+
+$receiptConfigMethod = new ReflectionMethod(CaseFund::class, 'paymentImportRequiresReceiptNoDuplicateCheck');
+$receiptConfigMethod->setAccessible(true);
+$receiptConfigProbe = new CaseFundPaymentReceiptConfigProbe();
+CaseFundPaymentReceiptConfigProbe::$subjectConfigRows = [[
+    'business_item_type' => '缴费登记',
+    'credit_subject_code' => '220301',
+]];
+CaseFundPaymentReceiptConfigProbe::$subjectAuxConfigRows = [];
+if ($receiptConfigMethod->invoke($receiptConfigProbe, 'CASE_FUND') !== false) {
+    fwrite(STDERR, 'Payment import should not check duplicate receipt numbers when the configured credit subject has no receipt auxiliary config' . PHP_EOL);
+    exit(1);
+}
+CaseFundPaymentReceiptConfigProbe::$subjectAuxConfigRows = [[
+    'subject_code' => '220301',
+    'aux_type_code' => 'receipt_no',
+]];
+if ($receiptConfigMethod->invoke($receiptConfigProbe, 'CASE_FUND') !== true) {
+    fwrite(STDERR, 'Payment import should check duplicate receipt numbers when the configured credit subject has a receipt auxiliary config' . PHP_EOL);
+    exit(1);
+}
+CaseFundPaymentReceiptConfigProbe::$subjectConfigRows = [];
+CaseFundPaymentReceiptConfigProbe::$subjectAuxConfigRows = [];
+if ($receiptConfigMethod->invoke($receiptConfigProbe, 'CASE_FUND') !== true) {
+    fwrite(STDERR, 'Payment import should keep duplicate receipt-number validation when payment subject config is missing' . PHP_EOL);
+    exit(1);
+}
 
 $duplicateProbe = new CaseFundPaymentImportDuplicateProbe();
 CaseFundPaymentImportDuplicateProbe::$existingPaymentRows = [[
@@ -282,6 +355,11 @@ if (empty($databaseDuplicateErrors)
     || strpos($databaseDuplicateText, '原导入第12行') === false
 ) {
     fwrite(STDERR, 'Payment import validation should report active generated database receipt-number duplicates with source detail' . PHP_EOL);
+    exit(1);
+}
+$databaseDuplicateErrorsWithoutReceiptCheck = $validateMethod->invoke($duplicateProbe, [$rows[0]], 'CASE_FUND', false);
+if (strpos(implode("\n", $databaseDuplicateErrorsWithoutReceiptCheck), '票据号码') !== false) {
+    fwrite(STDERR, 'Payment import should skip existing receipt-number duplicate validation when the credit subject has no receipt auxiliary config' . PHP_EOL);
     exit(1);
 }
 CaseFundPaymentImportDuplicateProbe::$existingPaymentRows = [];

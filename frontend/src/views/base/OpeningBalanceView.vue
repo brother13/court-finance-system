@@ -114,10 +114,19 @@
 
       <div class="filter-row aux-editor-toolbar">
         <el-button v-permission="['opening:save', 'base:edit']" type="primary" :icon="Plus" @click="addAuxRow">新增明细</el-button>
-        <el-button :icon="Refresh" @click="loadAuxOpening">刷新</el-button>
+        <el-button :icon="Refresh" :loading="auxLoading" @click="loadAuxOpening">刷新</el-button>
+        <span class="panel-hint">
+          共 {{ auxRows.length }} 条 · 本页 {{ pagedAuxRows.length }} 条 · 借方合计 {{ money(auxDebitTotal) }} · 贷方合计 {{ money(auxCreditTotal) }}
+        </span>
       </div>
 
-      <el-table :data="auxRows" border height="calc(100vh - 280px)">
+      <el-table
+        v-loading="auxLoading"
+        :data="pagedAuxRows"
+        border
+        height="calc(100vh - 340px)"
+        row-key="__row_key"
+      >
         <el-table-column
           v-for="config in auxConfigs"
           :key="config.aux_type_code"
@@ -153,11 +162,21 @@
           </template>
         </el-table-column>
         <el-table-column label="操作" width="80" fixed="right">
-          <template #default="{ $index }">
-            <el-button v-permission="['opening:save', 'base:edit']" link type="danger" @click="auxRows.splice($index, 1)">删除</el-button>
+          <template #default="{ row }">
+            <el-button v-permission="['opening:save', 'base:edit']" link type="danger" @click="removeAuxRow(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="auxRows.length > auxPageSize" class="pagination-bar">
+        <el-pagination
+          v-model:current-page="auxPage"
+          v-model:page-size="auxPageSize"
+          :page-sizes="[50, 100, 200]"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="auxRows.length"
+          @size-change="auxPage = 1"
+        />
+      </div>
     </template>
     <template #footer>
       <el-button @click="auxDrawerVisible = false">取消</el-button>
@@ -179,11 +198,14 @@ const periodOptions = Array.from({ length: 12 }, (_, index) => `${context.year}-
 const rows = ref<any[]>([])
 const saving = ref(false)
 const auxDrawerVisible = ref(false)
+const auxLoading = ref(false)
 const auxSaving = ref(false)
 const currentSubject = ref<any>(null)
 const auxConfigs = ref<any[]>([])
 const archives = ref<Record<string, any[]>>({})
 const auxRows = ref<any[]>([])
+const auxPage = ref(1)
+const auxPageSize = ref(50)
 const subjectTypeMap: Record<string, string> = {
   ASSET: '资产',
   LIABILITY: '负债',
@@ -196,6 +218,12 @@ const subjectTypeMap: Record<string, string> = {
 const totalDebit = computed(() => rows.value.reduce((sum, row) => sum + Number(row.debit_amount || 0), 0))
 const totalCredit = computed(() => rows.value.reduce((sum, row) => sum + Number(row.credit_amount || 0), 0))
 const difference = computed(() => Number((totalDebit.value - totalCredit.value).toFixed(2)))
+const auxDebitTotal = computed(() => Number(auxRows.value.reduce((sum, row) => sum + Number(row.debit_amount || 0), 0).toFixed(2)))
+const auxCreditTotal = computed(() => Number(auxRows.value.reduce((sum, row) => sum + Number(row.credit_amount || 0), 0).toFixed(2)))
+const pagedAuxRows = computed(() => {
+  const start = (auxPage.value - 1) * auxPageSize.value
+  return auxRows.value.slice(start, start + auxPageSize.value)
+})
 
 const subjectTypeLabel = (type: string) => subjectTypeMap[type] || type
 const auxTypeLabel = (code: string) => {
@@ -244,19 +272,28 @@ const save = async () => {
 
 const loadAuxOpening = async () => {
   if (!currentSubject.value) return
-  const result = await baseApi.auxOpeningBalances(period.value, currentSubject.value.subject_code)
-  auxConfigs.value = result.configs || []
-  archives.value = result.archives || {}
-  auxRows.value = (result.rows || []).map((row: any) => ({
-    ...row,
-    aux_values: row.aux_values || {},
-    debit_amount: Number(row.debit_amount || 0),
-    credit_amount: Number(row.credit_amount || 0)
-  }))
+  auxLoading.value = true
+  try {
+    const result = await baseApi.auxOpeningBalances(period.value, currentSubject.value.subject_code)
+    auxConfigs.value = result.configs || []
+    archives.value = result.archives || {}
+    auxRows.value = (result.rows || []).map((row: any, index: number) => ({
+      ...row,
+      __row_key: row.balance_id || `loaded-${index}`,
+      aux_values: row.aux_values || {},
+      debit_amount: Number(row.debit_amount || 0),
+      credit_amount: Number(row.credit_amount || 0)
+    }))
+    auxPage.value = 1
+  } finally {
+    auxLoading.value = false
+  }
 }
 
 const openAuxOpening = async (row: any) => {
   currentSubject.value = row
+  auxRows.value = []
+  auxPage.value = 1
   auxDrawerVisible.value = true
   await loadAuxOpening()
 }
@@ -267,18 +304,29 @@ const addAuxRow = () => {
     auxValues[config.aux_type_code] = ''
   })
   auxRows.value.push({
+    __row_key: `new-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     aux_values: auxValues,
     debit_amount: 0,
     credit_amount: 0,
     remark: ''
   })
+  auxPage.value = Math.max(1, Math.ceil(auxRows.value.length / auxPageSize.value))
+}
+
+const removeAuxRow = (row: any) => {
+  const index = auxRows.value.findIndex((item) => item.__row_key === row.__row_key)
+  if (index >= 0) {
+    auxRows.value.splice(index, 1)
+  }
+  const maxPage = Math.max(1, Math.ceil(auxRows.value.length / auxPageSize.value))
+  if (auxPage.value > maxPage) {
+    auxPage.value = maxPage
+  }
 }
 
 const saveAuxOpening = async () => {
   if (!currentSubject.value) return
-  const auxDebit = Number(auxRows.value.reduce((sum, row) => sum + Number(row.debit_amount || 0), 0).toFixed(2))
-  const auxCredit = Number(auxRows.value.reduce((sum, row) => sum + Number(row.credit_amount || 0), 0).toFixed(2))
-  if (auxDebit !== Number(currentSubject.value.debit_amount || 0) || auxCredit !== Number(currentSubject.value.credit_amount || 0)) {
+  if (auxDebitTotal.value !== Number(currentSubject.value.debit_amount || 0) || auxCreditTotal.value !== Number(currentSubject.value.credit_amount || 0)) {
     ElMessage.warning('辅助期初明细合计必须等于该科目的期初余额')
     return
   }

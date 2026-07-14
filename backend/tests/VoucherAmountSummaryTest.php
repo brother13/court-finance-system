@@ -52,4 +52,36 @@ if ($totals['credit_amount'] !== '10.30') {
     exit(1);
 }
 
+$subjectStyleMethod = new ReflectionMethod(Voucher::class, 'voucherPrintSubjectStyle');
+$subjectStyleMethod->setAccessible(true);
+if ($subjectStyleMethod->invoke($voucher, '执行案款执行案款执行案款') !== '') {
+    fwrite(STDERR, 'Voucher print subject text should keep normal font at 24 display-width characters' . PHP_EOL);
+    exit(1);
+}
+$longSubjectStyle = $subjectStyleMethod->invoke($voucher, '执行案款执行案款执行案款执');
+if (strpos($longSubjectStyle, 'font-size:') === false || strpos($longSubjectStyle, 'white-space: nowrap') === false) {
+    fwrite(STDERR, 'Voucher print subject text should shrink and stay single-line after 24 display-width characters' . PHP_EOL);
+    exit(1);
+}
+
+$summaryStyleMethod = new ReflectionMethod(Voucher::class, 'voucherPrintSummaryStyle');
+$summaryStyleMethod->setAccessible(true);
+if ($summaryStyleMethod->invoke($voucher, str_repeat('摘', 30)) !== '') {
+    fwrite(STDERR, 'Voucher print summary text should keep normal font at 60 display-width units' . PHP_EOL);
+    exit(1);
+}
+$longSummaryStyle = $summaryStyleMethod->invoke($voucher, str_repeat('摘', 31));
+if (strpos($longSummaryStyle, 'font-size:') === false || strpos($longSummaryStyle, 'white-space: nowrap') === false) {
+    fwrite(STDERR, 'Voucher print summary text should shrink and stay single-line after 60 display-width units' . PHP_EOL);
+    exit(1);
+}
+if ($summaryStyleMethod->invoke($voucher, str_repeat('A', 60)) !== '') {
+    fwrite(STDERR, 'Voucher print summary should count ASCII as one display-width unit' . PHP_EOL);
+    exit(1);
+}
+if (strpos($summaryStyleMethod->invoke($voucher, str_repeat('A', 61)), 'font-size:') === false) {
+    fwrite(STDERR, 'Voucher print summary should shrink ASCII text after 60 display-width units' . PHP_EOL);
+    exit(1);
+}
+
 echo 'Voucher amount summary test passed' . PHP_EOL;

@@ -83,8 +83,8 @@
             <strong :class="isYearBalanced ? 'text-success' : 'text-danger'">{{ money(yearBalanceDifference) }}</strong>
           </div>
           <div class="dashboard-check-item" v-if="context.bizType === 'CASE_FUND'">
-            <span>未清收据</span>
-            <strong :class="unsettledReceiptCount > 0 ? 'amount-credit' : 'text-success'">{{ unsettledReceiptCount }} 张</strong>
+            <span>未清明细</span>
+            <strong :class="unsettledDetailCount > 0 ? 'amount-credit' : 'text-success'">{{ unsettledDetailCount }} 条</strong>
           </div>
           <div class="dashboard-check-item" v-if="context.bizType === 'CASE_FUND'">
             <span>未清金额</span>
@@ -166,10 +166,10 @@ const yearBalanceDifference = computed(() => Math.abs(yearDebit.value - yearCred
 const isBalanced = computed(() => balanceDifference.value < 0.01)
 const isYearBalanced = computed(() => yearBalanceDifference.value < 0.01)
 
-const auxReceiptRows = computed(() => auxBalanceRows.value.flatMap((row) => row.children || []))
-const unsettledReceiptCount = computed(() => auxReceiptRows.value.filter((row) => row.monitor_flag).length)
+const auxDetailRows = computed(() => auxBalanceRows.value.flatMap((row) => (row.children || []).length > 0 ? row.children || [] : [row]))
+const unsettledDetailCount = computed(() => auxDetailRows.value.filter((row) => row.monitor_flag).length)
 const unsettledAmount = computed(() =>
-  auxReceiptRows.value
+  auxDetailRows.value
     .filter((row) => row.monitor_flag)
     .reduce((sum, row) => sum + Math.abs(Number(row.ending_balance_amount) || 0), 0)
 )
@@ -184,11 +184,11 @@ const dashboardMetrics = computed(() => {
   if (context.bizType === 'CASE_FUND') {
     metrics[3] = {
       key: 'unsettled',
-      label: '未清案款收据',
-      value: `${unsettledReceiptCount.value} 张`,
+      label: '未清案款明细',
+      value: `${unsettledDetailCount.value} 条`,
       desc: `辅助余额未清金额 ${money(unsettledAmount.value)}`,
       icon: Tickets,
-      tone: unsettledReceiptCount.value > 0 ? 'amber' : 'green'
+      tone: unsettledDetailCount.value > 0 ? 'amber' : 'green'
     }
   }
   return metrics

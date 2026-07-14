@@ -109,5 +109,6 @@ assert(distributionView.includes('分配单号'), 'distribution view should show
 assert(distributionView.includes('单据号'), 'distribution view should show original document number')
 assert(distributionView.includes('转入案号') && distributionView.includes('转出案号'), 'distribution view should show transfer-in and transfer-out cases')
 assert(distributionView.includes('按分配单号合并'), 'distribution view should explain voucher grouping')
+assert(!distributionView.includes('执行、调节款'), 'distribution view should not expose the old typo compatibility option')
 
 console.log('Case fund menu test passed')

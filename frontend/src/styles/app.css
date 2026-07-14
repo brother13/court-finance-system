@@ -3055,6 +3055,35 @@ body {
   color: var(--brand-danger);
 }
 
+.readonly-cell-text {
+  display: block;
+  min-height: 28px;
+  line-height: 28px;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readonly-cell-text.money-text {
+  text-align: right;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.voucher-line-pagination {
+  min-width: 1120px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid #E3E8F0;
+  background: #F8FAFD;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .entry-money-total {
   text-align: right;
   color: var(--text-main);

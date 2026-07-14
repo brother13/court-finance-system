@@ -27,6 +27,17 @@ export const periodApi = {
   reopen(period: string) {
     return apiAction('/period/reopen', { period }) as Promise<{ period: string; status: string }>
   },
+  preopenYear(sourceYear: number) {
+    return apiAction('/period/preopenYear', { source_year: sourceYear }) as Promise<{
+      source_year: number
+      target_year: number
+      first_period: string
+      last_period: string
+      created_periods: number
+      existing_periods: number
+      opening_generated: number
+    }>
+  },
   yearEnd(period: string) {
     return apiAction('/period/yearEnd', { period }) as Promise<{
       source_period: string

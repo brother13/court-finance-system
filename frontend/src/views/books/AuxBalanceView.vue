@@ -2,7 +2,7 @@
   <div class="page-header">
     <div>
       <h1>辅助核算余额表</h1>
-      <p>按科目、案号、收据号汇总辅助核算余额,用于识别尚未划拨或退还的案款收据。</p>
+      <p>按科目、案号及已启用的收据号维度汇总辅助核算余额,用于识别尚未划拨或退还的案款。</p>
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load(true)">刷新数据</el-button>
@@ -28,7 +28,7 @@
       </el-select>
       <el-input v-model.trim="filters.caseNo" placeholder="案号" :prefix-icon="Search" clearable />
       <el-input v-model.trim="filters.receiptNo" placeholder="收据号" :prefix-icon="Search" clearable />
-      <el-switch v-model="onlyMonitor" active-text="仅看未清收据" inactive-text="全部" />
+      <el-switch v-model="onlyMonitor" active-text="仅看未清明细" inactive-text="全部" />
       <el-button type="primary" :icon="Search" @click="load">查询记录</el-button>
     </div>
   </div>
@@ -40,7 +40,7 @@
         辅助核算余额表
       </strong>
       <span class="muted">
-        案号 {{ filteredRows.length }} 个 · 未清收据 {{ monitorReceiptCount }} 张 · 期末余额 ¥ {{ totalEnding.toFixed(2) }}
+        案号 {{ filteredRows.length }} 个 · 未清明细 {{ monitorItemCount }} 条 · 期末余额 ¥ {{ totalEnding.toFixed(2) }}
       </span>
     </div>
     <div class="panel-body compact">
@@ -55,7 +55,7 @@
           <template #default="{ row }">
             <div class="aux-tree-cell">
               <strong v-if="row.row_type === 'CASE'">{{ row.case_no }}</strong>
-              <span v-else>{{ row.receipt_no || '未填收据号' }}</span>
+              <span v-else>{{ row.receipt_no }}</span>
               <el-tag v-if="row.monitor_flag" type="danger" size="small">未清</el-tag>
               <el-tag v-else-if="row.row_type === 'CASE' && row.monitor_count > 0" type="warning" size="small">{{ row.monitor_count }} 张未清</el-tag>
             </div>
@@ -117,16 +117,23 @@ const subjectLoading = ref(false)
 const filteredRows = computed(() => {
   if (!onlyMonitor.value) return rows.value
   return rows.value
-    .map((row) => ({
-      ...row,
-      children: (row.children || []).filter((child) => child.monitor_flag)
-    }))
-    .filter((row) => (row.children || []).length > 0)
+    .map((row) => {
+      const children = row.children || []
+      if (children.length > 0) {
+        return {
+          ...row,
+          children: children.filter((child) => child.monitor_flag)
+        }
+      }
+      return row.monitor_flag ? { ...row } : null
+    })
+    .filter((row): row is AuxBalanceRow => !!row && ((row.children || []).length > 0 || row.monitor_flag))
 })
 
-const leafRows = computed(() => rows.value.flatMap((row) => row.children || []))
-const filteredLeafRows = computed(() => filteredRows.value.flatMap((row) => row.children || []))
-const monitorReceiptCount = computed(() => leafRows.value.filter((row) => row.monitor_flag).length)
+const balanceLeafRows = (items: AuxBalanceRow[]) => items.flatMap((row) => (row.children || []).length > 0 ? row.children || [] : [row])
+const leafRows = computed(() => balanceLeafRows(rows.value))
+const filteredLeafRows = computed(() => balanceLeafRows(filteredRows.value))
+const monitorItemCount = computed(() => leafRows.value.filter((row) => row.monitor_flag).length)
 const totalEnding = computed(() => filteredLeafRows.value.reduce((sum, row) => sum + Math.abs(Number(row.ending_balance_amount) || 0), 0))
 
 const amountText = (val: string | number) => {
@@ -186,7 +193,7 @@ const exportData = async () => {
     row.subject_code,
     row.subject_name,
     row.case_no,
-    row.receipt_no || '未填收据号',
+    row.receipt_no || '',
     Number(row.opening_balance_amount || 0),
     Number(row.debit_amount || 0),
     Number(row.credit_amount || 0),

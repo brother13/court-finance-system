@@ -18,7 +18,6 @@
         </el-select>
         <el-select v-model="filters.invoice_type" placeholder="开票种类" clearable class="type-select">
           <el-option label="执行、调解款" value="执行、调解款" />
-          <el-option label="执行、调节款" value="执行、调节款" />
         </el-select>
         <el-input v-model="filters.keyword" placeholder="分配单号 / 案号 / 当事人 / 单据号" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>

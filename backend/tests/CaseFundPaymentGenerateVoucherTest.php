@@ -71,6 +71,13 @@ if (!function_exists('getNowTime')) {
     }
 }
 
+if (!function_exists('uuid')) {
+    function uuid()
+    {
+        return '00000000-0000-4000-8000-000000000000';
+    }
+}
+
 require_once __DIR__ . '/../app/finance/model/Common.php';
 require_once $modelPath;
 
@@ -79,6 +86,7 @@ use app\finance\model\CaseFund;
 class CaseFundGenerationGuardProbe extends CaseFund
 {
     private $activeVoucher;
+    private $subjectAuxConfigMap = [];
 
     public function __construct($activeVoucher)
     {
@@ -98,6 +106,21 @@ class CaseFundGenerationGuardProbe extends CaseFund
     public function paymentSummary($row)
     {
         return $this->buildPaymentVoucherSummary($row);
+    }
+
+    public function setSubjectAuxConfigMap($map)
+    {
+        $this->subjectAuxConfigMap = $map;
+    }
+
+    protected function getSubjectAuxConfigs($subjectCode)
+    {
+        return $this->subjectAuxConfigMap[$subjectCode] ?? [];
+    }
+
+    public function buildPaymentDetails($rows, $subjectConfigMap)
+    {
+        return $this->buildPaymentVoucherDetailsData($rows, $subjectConfigMap, [], false, 'LITIGATION_FEE');
     }
 }
 
@@ -125,6 +148,36 @@ $voidedMessage = $inactiveGuard->checkRows([['voucher_status' => 'VOIDED', 'case
 if (strpos((string)$voidedMessage, '不允许生成凭证') === false) {
     fwrite(STDERR, 'Unsupported payment voucher statuses should not be regeneratable' . PHP_EOL);
     exit(1);
+}
+
+$auxGuard = new CaseFundGenerationGuardProbe(false);
+$auxGuard->setSubjectAuxConfigMap([]);
+$paymentDetails = $auxGuard->buildPaymentDetails([
+    [
+        'business_type' => '诉讼费预收',
+        'case_no' => '（2026）辽0111民初4157号',
+        'receipt_no' => '0000147531',
+        'payment_amount' => '25.00',
+        'payment_method' => 'TRANSFER',
+        'payment_date' => '2026-05-01',
+        'party_name' => '张三',
+    ],
+], [
+    '缴费登记' => [
+        'business_item_type' => '缴费登记',
+        'debit_subject_code' => '100201',
+        'credit_subject_code' => '210301',
+    ],
+]);
+foreach ($paymentDetails['details'] as $detail) {
+    if ($detail['aux_desc'] !== '') {
+        fwrite(STDERR, 'Payment details without subject aux config should not write aux_desc' . PHP_EOL);
+        exit(1);
+    }
+    if (!empty($detail['aux_values'])) {
+        fwrite(STDERR, 'Payment details without subject aux config should not write voucher aux values' . PHP_EOL);
+        exit(1);
+    }
 }
 
 echo 'Case fund payment generate voucher test passed' . PHP_EOL;

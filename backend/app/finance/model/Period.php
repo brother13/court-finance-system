@@ -20,6 +20,8 @@ class Period extends Common
                 return $this->close($data);
             case 'reopen':
                 return $this->reopen($data);
+            case 'preopenYear':
+                return $this->preopenYear($data);
             case 'yearEnd':
                 return $this->yearEnd($data);
             default:
@@ -126,6 +128,52 @@ class Period extends Common
         ])->update($update);
         $this->logAudit('FISCAL_PERIOD', $period, 'REOPEN', $row, $update);
         return $this->ok(['period' => $period, 'status' => 'OPEN'], '反结账成功');
+    }
+
+    public function preopenYear($data = [])
+    {
+        $auth = $this->requirePermission('period:close');
+        if ($auth) {
+            return $auth;
+        }
+        $sourceYear = (int)($data['source_year'] ?? $this->year);
+        if ($sourceYear < 1900 || $sourceYear > 2999) {
+            return $this->error('源年度不正确');
+        }
+        if ($this->fiscalYearPeriodCount($sourceYear) === 0) {
+            return $this->error($sourceYear . ' 年度尚未建立会计期间，不能预开下一年度');
+        }
+
+        $targetYear = $this->preopenTargetYear($sourceYear);
+        $limitReason = $this->preopenTargetYearLimitReason($targetYear);
+        if ($limitReason !== '') {
+            return $this->error($limitReason);
+        }
+        $existingCount = $this->fiscalYearPeriodCount($targetYear);
+        if ($existingCount >= 12) {
+            return $this->error($this->preopenAlreadyExistsMessage($targetYear, $existingCount));
+        }
+
+        Db::startTrans();
+        try {
+            $createdPeriods = $this->ensureYearPeriods($targetYear);
+            $after = [
+                'source_year' => $sourceYear,
+                'target_year' => $targetYear,
+                'first_period' => sprintf('%04d-01', $targetYear),
+                'last_period' => sprintf('%04d-12', $targetYear),
+                'created_periods' => $createdPeriods,
+                'existing_periods' => $existingCount,
+                'opening_generated' => 0,
+            ];
+            $this->logAudit('FISCAL_YEAR', (string)$targetYear, 'PREOPEN_YEAR', null, $after);
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('预开下一年度失败：' . $e->getMessage());
+        }
+
+        return $this->ok($after, '预开下一年度成功');
     }
 
     public function yearEnd($data = [])
@@ -295,6 +343,36 @@ class Period extends Common
             $values[] = sprintf('%04d-%02d', (int)$year, $month);
         }
         return $values;
+    }
+
+    protected function preopenTargetYear($sourceYear)
+    {
+        return (int)$sourceYear + 1;
+    }
+
+    protected function preopenAlreadyExistsMessage($targetYear, $existingCount)
+    {
+        return $targetYear . ' 年度已存在' . (int)$existingCount . '个会计期间，无需重复预开';
+    }
+
+    protected function preopenTargetYearLimitReason($targetYear)
+    {
+        $currentYear = (int)date('Y');
+        if ((int)$targetYear > $currentYear) {
+            return '预开年度不能大于当前年份';
+        }
+        return '';
+    }
+
+    protected function fiscalYearPeriodCount($year)
+    {
+        return (int)$this->getdb(self::TABLE)->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->where('period', 'between', [
+            sprintf('%04d-01', (int)$year),
+            sprintf('%04d-12', (int)$year),
+        ])->count();
     }
 
     protected function yearPeriodStatuses($period)

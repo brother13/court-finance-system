@@ -85,7 +85,12 @@ class DistributionVoucherProbe extends CaseFund
 
 class DistributionPeriodDbProbe
 {
-    public function where($where) { return $this; }
+    public function where($where) {
+        if (array_key_exists('fiscal_year', $where)) {
+            throw new \Exception('fin_fiscal_period should be queried by account_set_id and period, not fiscal_year');
+        }
+        return $this;
+    }
     public function find() { return ['status' => 'CLOSED']; }
 }
 

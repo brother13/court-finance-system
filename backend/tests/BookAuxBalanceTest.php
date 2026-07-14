@@ -38,7 +38,7 @@ $checks = [
     [$book, 'public function auxBalanceSubjects', 'Book should expose auxiliary balance subject options'],
     [$book, "requirePermission('book:view')", 'Aux balance should require book view permission'],
     [$book, "'case_cfg.aux_type_code' => 'case_no'", 'Aux balance subject options should require case number auxiliary config'],
-    [$book, "'receipt_cfg.aux_type_code' => 'receipt_no'", 'Aux balance subject options should require receipt number auxiliary config'],
+    [$book, 'subjectAuxConfigSubjectMap', 'Aux balance should read subject auxiliary config before deciding receipt hierarchy'],
     [$book, 'fin_aux_opening_balance', 'Aux balance should include auxiliary opening balance'],
     [$book, "refresh_snapshot", 'Aux balance should accept an explicit snapshot refresh flag'],
     [$book, 'ensureAuxBalanceSnapshot($period, $refreshSnapshot)', 'Aux balance should ensure a reusable snapshot before reading report rows'],
@@ -81,6 +81,8 @@ $normalBalance = new ReflectionMethod(app\finance\model\Book::class, 'normalBala
 $normalBalance->setAccessible(true);
 $auxKey = new ReflectionMethod(app\finance\model\Book::class, 'auxBalanceKey');
 $auxKey->setAccessible(true);
+$buildRows = new ReflectionMethod(app\finance\model\Book::class, 'buildAuxBalanceRows');
+$buildRows->setAccessible(true);
 $snapshotRow = new ReflectionMethod(app\finance\model\Book::class, 'buildAuxBalanceSnapshotInsertRow');
 $snapshotRow->setAccessible(true);
 
@@ -96,6 +98,46 @@ if ($normalBalance->invoke($model, 'DEBIT', 1000, 7000) !== -6000) {
 
 if ($auxKey->invoke($model, '220101', '（2026）辽0111执1号', 'SJ001') !== '220101|（2026）辽0111执1号|SJ001') {
     fwrite(STDERR, 'Aux balance key should combine subject, case no and receipt no' . PHP_EOL);
+    exit(1);
+}
+
+$caseOnlyRows = $buildRows->invoke($model, [
+    '20030107|（2026）辽0111执1号|' => [
+        'subject_code' => '20030107',
+        'subject_name' => '正常执行款',
+        'direction' => 'CREDIT',
+        'case_no' => '（2026）辽0111执1号',
+        'receipt_no' => '',
+        'opening_debit_cents' => 0,
+        'opening_credit_cents' => 7000,
+        'debit_cents' => 0,
+        'credit_cents' => 0,
+        'entry_count' => 0,
+    ],
+], []);
+
+if (($caseOnlyRows[0]['children'] ?? []) !== [] || $caseOnlyRows[0]['row_type'] !== 'CASE' || !$caseOnlyRows[0]['monitor_flag']) {
+    fwrite(STDERR, 'Subject without receipt auxiliary config should return a monitored case-level row without receipt children' . PHP_EOL);
+    exit(1);
+}
+
+$receiptRows = $buildRows->invoke($model, [
+    '220101|（2026）辽0111执1号|SJ001' => [
+        'subject_code' => '220101',
+        'subject_name' => '案款暂存',
+        'direction' => 'CREDIT',
+        'case_no' => '（2026）辽0111执1号',
+        'receipt_no' => 'SJ001',
+        'opening_debit_cents' => 0,
+        'opening_credit_cents' => 7000,
+        'debit_cents' => 0,
+        'credit_cents' => 0,
+        'entry_count' => 0,
+    ],
+], ['220101' => true]);
+
+if (count($receiptRows[0]['children'] ?? []) !== 1 || $receiptRows[0]['children'][0]['receipt_no'] !== 'SJ001') {
+    fwrite(STDERR, 'Subject with receipt auxiliary config should keep receipt-level children' . PHP_EOL);
     exit(1);
 }
 
