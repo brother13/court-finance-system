@@ -57,6 +57,11 @@ class CaseFundVoucherRuleProbe extends CaseFund
         return $this->buildPaymentVoucherDetailsData($rows, $subjectConfigMap, $methodConfigMap, $byMethod, $bizType);
     }
 
+    public function paymentGroups($rows, $byDay, $byMethod)
+    {
+        return $this->voucherRule()->groupPaymentRowsForVoucher($rows, $byDay, $byMethod);
+    }
+
     public function distributionDetails($rows, $subjectConfigMap)
     {
         return $this->buildDistributionVoucherDetailsData($rows, $subjectConfigMap);
@@ -154,6 +159,27 @@ voucherRuleAssertSame(1001, $payment['total_debit'], 'Payment detail total shoul
 voucherRuleAssertSame('10.01', $payment['details'][0]['debit_amount'], 'Payment debit should be rounded once from cents');
 voucherRuleAssertSame('UNVERIFIED', $payment['details'][1]['verification_status'], 'Credit verification status should follow subject aux config');
 voucherRuleAssertSame('case_no:（2026）辽0111执1号; receipt_no:R-001', $payment['details'][1]['aux_desc'], 'Configured payment aux values should remain ordered');
+
+$paymentGroupRows = [
+    ['payment_id' => 'p1', 'payment_date' => '2026-07-14', 'payment_method' => 'POS'],
+    ['payment_id' => 'p2', 'payment_date' => '2026-07-14', 'payment_method' => 'POS收款'],
+    ['payment_id' => 'p3', 'payment_date' => '2026-07-14', 'payment_method' => 'TRANSFER'],
+];
+voucherRuleAssertSame(
+    ['2026-07-14|POS' => [$paymentGroupRows[0], $paymentGroupRows[1]], '2026-07-14|TRANSFER' => [$paymentGroupRows[2]]],
+    $probe->paymentGroups($paymentGroupRows, 1, 1),
+    'Daily payment grouping should split normalized payment methods'
+);
+voucherRuleAssertSame(
+    ['2026-07-14|ALL' => $paymentGroupRows],
+    $probe->paymentGroups($paymentGroupRows, 1, 0),
+    'Daily payment grouping should merge methods when method grouping is off'
+);
+voucherRuleAssertSame(
+    ['p1|POS' => [$paymentGroupRows[0]], 'p2|POS' => [$paymentGroupRows[1]], 'p3|TRANSFER' => [$paymentGroupRows[2]]],
+    $probe->paymentGroups($paymentGroupRows, 0, 1),
+    'Non-daily payment grouping should keep one voucher per payment row'
+);
 
 $override = new CaseFundVoucherRuleOverrideProbe();
 $override->setSubjectAuxConfigs(['100201' => [], '224101' => []]);

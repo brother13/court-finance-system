@@ -20,6 +20,7 @@ use app\finance\service\casefund\subject\SubjectConfigManager;
 use app\finance\service\casefund\subject\SubjectConfigApplicationService;
 use app\finance\service\casefund\validation\CaseFundImportValidator;
 use app\finance\service\casefund\voucher\CaseFundVoucherRule;
+use app\finance\service\casefund\voucher\PaymentVoucherGenerationService;
 use think\Db;
 
 class CaseFund extends Common
@@ -42,6 +43,7 @@ class CaseFund extends Common
     protected $subjectConfigManager;
     protected $subjectConfigApplicationService;
     protected $voucherRule;
+    protected $paymentVoucherGenerationService;
 
     const ACTION = 'caseFund';
     const TABLE_PAYMENT = 'fin_case_fund_payment';
@@ -870,22 +872,11 @@ class CaseFund extends Common
             return $auth;
         }
 
-        $paymentIds = $data['payment_ids'] ?? [];
-        if (!is_array($paymentIds) || empty($paymentIds)) {
-            return $this->error('请选择要生成凭证的缴费记录');
+        $result = $this->paymentVoucherGenerationService()->selectedRows($data['payment_ids'] ?? []);
+        if (!empty($result['error'])) {
+            return $this->error($result['error']);
         }
-
-        $rows = $this->getdb(self::TABLE_PAYMENT)
-            ->where(['account_set_id' => $this->accountSetId, 'fiscal_year' => $this->currentYear(), 'del_flag' => 0])
-            ->where('payment_id', 'in', $paymentIds)
-            ->field(self::PAYMENT_FIELD)
-            ->select();
-
-        if (empty($rows)) {
-            return $this->error('所选缴费记录不存在');
-        }
-
-        return $this->paymentGenerateVoucherFromRows($rows, 'SELECTED');
+        return $this->paymentGenerateVoucherFromRows($result['rows'], 'SELECTED');
     }
 
     public function paymentGenerateVoucherByQuery($data = [])
@@ -909,236 +900,25 @@ class CaseFund extends Common
 
     protected function paymentRowsByGenerateQuery($data)
     {
-        $where = $this->accountWhere();
-        $where['fiscal_year'] = $this->currentYear();
-        $where['voucher_status'] = 'UNGENERATED';
-        if (!empty($data['period'])) {
-            $where['period'] = $data['period'];
-        }
-        $paymentMethodFilter = trim((string)($data['payment_method'] ?? ($data['paymentMethod'] ?? '')));
-        if ($paymentMethodFilter !== '') {
-            $paymentMethod = $this->normalizePaymentMethodCode($paymentMethodFilter);
-            if (isset($this->paymentMethodOptions()[$paymentMethod])) {
-                $where['payment_method'] = $paymentMethod;
-            }
-        }
-        if (!empty($data['date_start'])) {
-            $where['payment_date'][] = ['>=', $data['date_start']];
-        }
-        if (!empty($data['date_end'])) {
-            $where['payment_date'][] = ['<=', $data['date_end']];
-        }
-        $bizType = $this->currentAccountSetBizType();
-        $allowedBusinessTypes = $this->allowedPaymentBusinessTypes($bizType);
-        if (empty($allowedBusinessTypes)) {
-            return ['error' => '当前账套类型不支持案款缴费登记：' . $bizType, 'rows' => []];
-        }
-        $where['business_type'] = ['in', $allowedBusinessTypes];
-
-        $keyword = trim($data['keyword'] ?? '');
-        $query = $this->getdb(self::TABLE_PAYMENT)->where($where);
-        if ($keyword !== '') {
-            $query->where('case_no|trial_case_no|payer_name|party_name|receipt_no|bank_serial_no|payment_order_no', 'like', '%' . $keyword . '%');
-        }
-        $rows = $query->field(self::PAYMENT_FIELD)
-            ->order('payment_date asc, source_row_no asc')
-            ->select();
-        return ['error' => '', 'rows' => $rows];
+        return $this->paymentVoucherGenerationService()->rowsByQuery($data);
     }
 
     protected function paymentGenerateVoucherFromRows($rows, $generateScope = 'SELECTED')
     {
-        $generationCheck = $this->assertRowsCanGenerateVoucher($rows, '缴费记录');
-        if ($generationCheck !== null) {
-            return $this->error($generationCheck);
+        $prepared = $this->paymentVoucherGenerationService()->prepareGeneration($rows, $generateScope);
+        if (!empty($prepared['error'])) {
+            return $this->error($prepared['error']);
         }
-
-        $bizType = $this->currentAccountSetBizType();
-        $subjectConfigMap = $this->subjectConfigResolver()->configsByBusinessItems($bizType, 'PAYMENT');
-
-        $byPaymentMethodFlag = $this->generatePaymentVoucherByMethodFlag();
-        $paymentMethodConfigMap = $byPaymentMethodFlag === 1 ? $this->paymentMethodSubjectConfigMap($bizType) : [];
-
-        foreach ($rows as $row) {
-            $businessType = $row['business_type'];
-            $businessTypeConfigKey = $this->voucherSubjectConfigKey($bizType, 'PAYMENT', $businessType);
-            if (!isset($subjectConfigMap[$businessTypeConfigKey])) {
-                return $this->error('缴费登记未配置借方/贷方科目');
-            }
-            $debitCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$businessTypeConfigKey]['debit_subject_code'], '借方科目');
-            if ($debitCheck !== null) {
-                return $this->error('案号【' . $row['case_no'] . '】' . $debitCheck);
-            }
-            $creditCheck = $this->validateVoucherSubjectCode($subjectConfigMap[$businessTypeConfigKey]['credit_subject_code'], '贷方科目');
-            if ($creditCheck !== null) {
-                return $this->error('案号【' . $row['case_no'] . '】' . $creditCheck);
-            }
-            if ($byPaymentMethodFlag === 1) {
-                $paymentMethod = $this->normalizePaymentMethodCode($row['payment_method'] ?? '');
-                if (!isset($paymentMethodConfigMap[$paymentMethod])) {
-                    return $this->error('案号【' . $row['case_no'] . '】的收费方式【' . $this->paymentMethodLabel($paymentMethod) . '】未配置借方科目');
-                }
-                $methodDebitCheck = $this->validateVoucherSubjectCode($paymentMethodConfigMap[$paymentMethod]['debit_subject_code'], $this->paymentMethodLabel($paymentMethod) . '借方科目');
-                if ($methodDebitCheck !== null) {
-                    return $this->error('案号【' . $row['case_no'] . '】' . $methodDebitCheck);
-                }
-            }
-        }
-
-        $byDayFlag = $this->subjectConfigAccountSetFlag();
-
-        $groups = [];
-        if ($byDayFlag === 1) {
-            foreach ($rows as $row) {
-                $date = $row['payment_date'];
-                $methodKey = $byPaymentMethodFlag === 1 ? $this->normalizePaymentMethodCode($row['payment_method'] ?? '') : 'ALL';
-                $groupKey = $date . '|' . $methodKey;
-                if (!isset($groups[$groupKey])) {
-                    $groups[$groupKey] = [];
-                }
-                $groups[$groupKey][] = $row;
-            }
-        } else {
-            foreach ($rows as $row) {
-                $methodKey = $byPaymentMethodFlag === 1 ? $this->normalizePaymentMethodCode($row['payment_method'] ?? '') : 'ALL';
-                $groups[$row['payment_id'] . '|' . $methodKey] = [$row];
-            }
-        }
-
-        $generatedCount = 0;
-        $voucherInfos = [];
 
         Db::startTrans();
         try {
-            foreach ($groups as $groupKey => $groupRows) {
-                $firstRow = $groupRows[0];
-                $period = substr($firstRow['payment_date'], 0, 7);
-                $voucherDate = $firstRow['payment_date'];
-
-                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
-                    throw new \Exception('缴费日期格式不正确：' . $voucherDate);
-                }
-                if (substr($voucherDate, 0, 7) !== $period) {
-                    throw new \Exception('缴费日期不在会计期间内：' . $voucherDate);
-                }
-
-                $fiscalYear = $this->fiscalYear($period);
-                $voucherTable = 'fin_voucher';
-                $detailTable = 'fin_voucher_detail';
-                $auxTable = 'fin_voucher_aux_value';
-
-                $voucherId = uuid();
-                $voucherNo = $this->generateNextVoucherNo($period);
-
-                $detailBuildResult = $this->buildPaymentVoucherDetailsData($groupRows, $subjectConfigMap, $paymentMethodConfigMap, $byPaymentMethodFlag === 1, $bizType);
-                $totalDebit = $detailBuildResult['total_debit'];
-                $detailsData = $detailBuildResult['details'];
-
-                if ($totalDebit <= 0) {
-                    throw new \Exception('凭证金额必须大于0');
-                }
-                $this->ensureAuxArchivesForVoucherDetails($detailsData);
-
-                $voucher = [
-                    'voucher_id' => $voucherId,
-                    'account_set_id' => $this->accountSetId,
-                    'fiscal_year' => $fiscalYear,
-                    'period' => $period,
-                    'voucher_date' => $voucherDate,
-                    'voucher_word' => '记',
-                    'voucher_no' => $voucherNo,
-                    'summary' => $detailsData[0]['summary'] ?? $this->buildPaymentVoucherSummary($firstRow),
-                    'debit_amount' => $this->centsToDecimal($totalDebit),
-                    'credit_amount' => $this->centsToDecimal($totalDebit),
-                    'attachment_count' => 0,
-                    'status' => 'SUBMITTED',
-                    'source_type' => 'BUSINESS',
-                    'printed_flag' => '0',
-                    'prepared_by' => $this->userid,
-                    'prepared_time' => $this->now(),
-                    'audit_by' => null,
-                    'audit_time' => null,
-                    'posted_by' => null,
-                    'posted_time' => null,
-                    'void_flag' => '0',
-                    'remark' => '',
-                ];
-                $this->fillCreate($voucher);
-                $this->getdb($voucherTable)->insert($voucher);
-
-                foreach ($detailsData as $detail) {
-                    $auxValues = $detail['aux_values'];
-                    unset($detail['aux_values']);
-
-                    $detailRow = [
-                        'detail_id' => $detail['detail_id'],
-                        'account_set_id' => $this->accountSetId,
-                        'fiscal_year' => $fiscalYear,
-                        'period' => $period,
-                        'voucher_id' => $voucherId,
-                        'line_no' => $detail['line_no'],
-                        'subject_code' => $detail['subject_code'],
-                        'summary' => $detail['summary'],
-                        'debit_amount' => $detail['debit_amount'],
-                        'credit_amount' => $detail['credit_amount'],
-                        'verification_status' => $detail['verification_status'],
-                        'aux_desc' => $detail['aux_desc'],
-                        'remark' => '',
-                    ];
-                    $this->fillCreate($detailRow);
-                    $this->getdb($detailTable)->insert($detailRow);
-
-                    foreach ($auxValues as $aux) {
-                        if (empty($aux['aux_type_code']) || !isset($aux['aux_value']) || $aux['aux_value'] === '') {
-                            continue;
-                        }
-                        $auxRow = [
-                            'id' => uuid(),
-                            'account_set_id' => $this->accountSetId,
-                            'fiscal_year' => $fiscalYear,
-                            'period' => $period,
-                            'voucher_id' => $voucherId,
-                            'detail_id' => $detail['detail_id'],
-                            'aux_type_code' => $aux['aux_type_code'],
-                            'aux_value' => $aux['aux_value'],
-                            'aux_label' => $aux['aux_label'] ?? $aux['aux_value'],
-                            'remark' => '',
-                        ];
-                        $this->fillCreate($auxRow);
-                        $this->getdb($auxTable)->insert($auxRow);
-                    }
-                }
-
-                foreach ($groupRows as $row) {
-                    $this->getdb(self::TABLE_PAYMENT)->where([
-                        'payment_id' => $row['payment_id'],
-                        'account_set_id' => $this->accountSetId,
-                    ])->update([
-                        'voucher_status' => 'GENERATED',
-                        'voucher_id' => $voucherId,
-                        'voucher_no' => $voucherNo,
-                        'voucher_period' => $period,
-                        'voucher_generated_time' => $this->now(),
-                        'updated_by' => $this->userid,
-                        'updated_time' => $this->now(),
-                    ]);
-                }
-
-                $generatedCount++;
-                $voucherInfos[] = [
-                    'voucher_id' => $voucherId,
-                    'voucher_no' => $voucherNo,
-                    'period' => $period,
-                ];
-            }
-
+            $result = $this->paymentVoucherGenerationService()->generatePrepared($prepared);
             $this->logAudit('CASE_FUND_PAYMENT', 'VOUCHER_GENERATE', 'GENERATE', null, [
-                'payment_count' => count($rows),
-                'voucher_count' => $generatedCount,
-                'generate_scope' => $generateScope,
-                'vouchers' => $voucherInfos,
+                'payment_count' => $result['payment_count'],
+                'voucher_count' => $result['generated_count'],
+                'generate_scope' => $result['generate_scope'],
+                'vouchers' => $result['vouchers'],
             ]);
-
             Db::commit();
         } catch (\Exception $e) {
             Db::rollback();
@@ -1146,10 +926,10 @@ class CaseFund extends Common
         }
 
         return $this->ok([
-            'generated_count' => $generatedCount,
-            'payment_count' => count($rows),
-            'vouchers' => $voucherInfos,
-        ], '成功生成 ' . $generatedCount . ' 张凭证');
+            'generated_count' => $result['generated_count'],
+            'payment_count' => $result['payment_count'],
+            'vouchers' => $result['vouchers'],
+        ], '成功生成 ' . $result['generated_count'] . ' 张凭证');
     }
 
     protected function buildPaymentVoucherDetailsData($groupRows, $subjectConfigMap, $paymentMethodConfigMap, $byPaymentMethod, $bizType)
@@ -3133,6 +2913,66 @@ class CaseFund extends Common
             ]);
         }
         return $this->voucherRule;
+    }
+
+    protected function paymentVoucherGenerationService()
+    {
+        if ($this->paymentVoucherGenerationService === null) {
+            $this->paymentVoucherGenerationService = new PaymentVoucherGenerationService(
+                $this->businessPolicy(),
+                $this->subjectConfigResolver(),
+                $this->subjectConfigManager(),
+                $this->voucherRule(),
+                [
+                    'get_db' => function ($table) {
+                        return $this->getdb($table);
+                    },
+                    'account_where' => function () {
+                        return $this->accountWhere();
+                    },
+                    'account_set_id' => function () {
+                        return $this->accountSetId;
+                    },
+                    'current_year' => function () {
+                        return $this->currentYear();
+                    },
+                    'current_biz_type' => function () {
+                        return $this->currentAccountSetBizType();
+                    },
+                    'assert_rows_can_generate' => function ($rows, $recordLabel) {
+                        return $this->assertRowsCanGenerateVoucher($rows, $recordLabel);
+                    },
+                    'fiscal_year' => function ($period) {
+                        return $this->fiscalYear($period);
+                    },
+                    'generate_next_voucher_no' => function ($period) {
+                        return $this->generateNextVoucherNo($period);
+                    },
+                    'ensure_aux_archives' => function ($detailsData) {
+                        $this->ensureAuxArchivesForVoucherDetails($detailsData);
+                    },
+                    'cents_to_decimal' => function ($cents) {
+                        return $this->centsToDecimal($cents);
+                    },
+                    'new_id' => function () {
+                        return uuid();
+                    },
+                    'prepare_create' => function ($row) {
+                        $this->fillCreate($row);
+                        return $row;
+                    },
+                    'current_user_id' => function () {
+                        return $this->userid;
+                    },
+                    'now' => function () {
+                        return $this->now();
+                    },
+                ],
+                self::TABLE_PAYMENT,
+                self::PAYMENT_FIELD
+            );
+        }
+        return $this->paymentVoucherGenerationService;
     }
 
     protected function businessPolicy()

@@ -1,6 +1,8 @@
 <?php
 
 $source = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
+$paymentServiceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php');
+$implementationSource = $source . "\n" . $paymentServiceSource;
 
 $checks = [
     ["case 'paymentGenerateVoucherByQuery'", 'CaseFund should route paymentGenerateVoucherByQuery'],
@@ -18,7 +20,7 @@ $checks = [
 ];
 
 foreach ($checks as [$needle, $message]) {
-    if (strpos($source, $needle) === false) {
+    if (strpos($implementationSource, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }

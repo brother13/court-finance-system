@@ -181,6 +181,32 @@ class CaseFundVoucherRule
         return trim($date . ' 收 ' . $label . ' 合计');
     }
 
+    public function groupPaymentRowsForVoucher($rows, $byDayFlag, $byPaymentMethodFlag)
+    {
+        $groups = [];
+        if ((int)$byDayFlag === 1) {
+            foreach ($rows as $row) {
+                $methodKey = (int)$byPaymentMethodFlag === 1
+                    ? $this->callHook('normalize_payment_method', [$row['payment_method'] ?? ''])
+                    : 'ALL';
+                $groupKey = $row['payment_date'] . '|' . $methodKey;
+                if (!isset($groups[$groupKey])) {
+                    $groups[$groupKey] = [];
+                }
+                $groups[$groupKey][] = $row;
+            }
+            return $groups;
+        }
+
+        foreach ($rows as $row) {
+            $methodKey = (int)$byPaymentMethodFlag === 1
+                ? $this->callHook('normalize_payment_method', [$row['payment_method'] ?? ''])
+                : 'ALL';
+            $groups[$row['payment_id'] . '|' . $methodKey] = [$row];
+        }
+        return $groups;
+    }
+
     public function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
     {
         $groups = [];
