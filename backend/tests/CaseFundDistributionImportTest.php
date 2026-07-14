@@ -56,6 +56,7 @@ if (!function_exists('getNowTime')) {
     function getNowTime() { return date('Y-m-d H:i:s'); }
 }
 
+require_once __DIR__ . '/../app/finance/service/casefund/support/LegacySpreadsheetReader.php';
 require_once __DIR__ . '/../app/finance/model/Common.php';
 require_once $modelPath;
 

@@ -27,6 +27,7 @@ function unknownPaymentImportCents($amount) {
 $modelPath = __DIR__ . '/../app/finance/model/CaseFund.php';
 $ddlPath = __DIR__ . '/../database/court_finance_ddl.sql';
 $patchPath = __DIR__ . '/../database/finance_standard_patch.sql';
+require_once __DIR__ . '/../app/finance/service/casefund/support/LegacySpreadsheetReader.php';
 require_once __DIR__ . '/../app/finance/model/Common.php';
 require_once $modelPath;
 
