@@ -62,86 +62,300 @@ use app\finance\model\CaseFund;
 
 function distributionImportCents($row)
 {
-    return (int)round(((float)$row['distribution_amount']) * 100);
+    $amount = trim((string)($row['distribution_amount'] ?? ''));
+    if (!preg_match('/^([0-9]+)(?:\.([0-9]{1,2}))?$/', $amount, $matches)) {
+        throw new RuntimeException('Invalid distribution amount: ' . $amount);
+    }
+    $fraction = isset($matches[2]) ? str_pad($matches[2], 2, '0') : '00';
+    return ((int)$matches[1] * 100) + (int)$fraction;
 }
 
-$xlsPath = __DIR__ . '/../../分配清单(带单据号) (3).xls';
-if (!is_file($xlsPath)) {
-    fwrite(STDERR, 'Missing distribution sample xls file' . PHP_EOL);
-    exit(1);
+function distributionImportExcelXml($headers, $rows)
+{
+    $xml = '<?xml version="1.0" encoding="UTF-8"?>'
+        . '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" '
+        . 'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'
+        . '<Worksheet ss:Name="匿名合成样例"><Table>';
+    $orderedRows = [$headers];
+    foreach ($rows as $row) {
+        $ordered = [];
+        foreach ($headers as $header) {
+            $ordered[] = $row[$header] ?? '';
+        }
+        $orderedRows[] = $ordered;
+    }
+    foreach ($orderedRows as $row) {
+        $xml .= '<Row>';
+        foreach ($row as $cell) {
+            $type = 'String';
+            $value = $cell;
+            if (is_array($cell)) {
+                $type = (string)($cell['type'] ?? 'String');
+                $value = $cell['value'] ?? '';
+            }
+            $xml .= '<Cell><Data ss:Type="' . htmlspecialchars($type, ENT_QUOTES | ENT_XML1, 'UTF-8') . '">'
+                . htmlspecialchars((string)$value, ENT_QUOTES | ENT_XML1, 'UTF-8')
+                . '</Data></Cell>';
+        }
+        $xml .= '</Row>';
+    }
+    return $xml . '</Table></Worksheet></Workbook>';
 }
+
+function distributionImportAssertProfile($rows, $profile, $profileKey)
+{
+    if (empty($rows)) {
+        fwrite(STDERR, 'Distribution import should parse at least one row for ' . $profileKey . PHP_EOL);
+        exit(1);
+    }
+    if (count($rows) !== $profile['row_count']) {
+        fwrite(STDERR, 'Distribution import row count mismatch for ' . $profileKey . ': expected '
+            . $profile['row_count'] . ', got ' . count($rows) . PHP_EOL);
+        exit(1);
+    }
+
+    $first = $rows[0];
+    $expectedFirst = $profile['first'] ?? [];
+    foreach ($expectedFirst as $field => $expected) {
+        if (($first[$field] ?? null) !== $expected) {
+            fwrite(STDERR, "First distribution row {$field} mismatch for {$profileKey}" . PHP_EOL);
+            exit(1);
+        }
+    }
+    if (isset($profile['first_sha256'])) {
+        $firstValues = [];
+        foreach ($profile['first_fields'] as $field) {
+            $firstValues[] = array_key_exists($field, $first) ? $first[$field] : null;
+        }
+        $firstSha256 = hash('sha256', json_encode($firstValues, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        if ($firstSha256 !== $profile['first_sha256']) {
+            fwrite(STDERR, 'First distribution row digest mismatch for ' . $profileKey . ': got ' . $firstSha256 . PHP_EOL);
+            exit(1);
+        }
+    }
+
+    $totalCents = 0;
+    foreach ($rows as $row) {
+        $totalCents += distributionImportCents($row);
+    }
+    if ($totalCents !== $profile['total_cents']) {
+        fwrite(STDERR, 'Distribution import total cents mismatch for ' . $profileKey . ': expected '
+            . $profile['total_cents'] . ', got ' . $totalCents . PHP_EOL);
+        exit(1);
+    }
+    return $first;
+}
+
+date_default_timezone_set('Asia/Shanghai');
 
 $caseFund = new CaseFund();
 $parseMethod = new ReflectionMethod(CaseFund::class, 'parseDistributionImportRowsFromXls');
 $parseMethod->setAccessible(true);
-$rows = $parseMethod->invoke($caseFund, file_get_contents($xlsPath));
+$validateMethod = new ReflectionMethod(CaseFund::class, 'validateDistributionRows');
+$validateMethod->setAccessible(true);
+$fingerprintMethod = new ReflectionMethod(CaseFund::class, 'distributionFingerprint');
+$fingerprintMethod->setAccessible(true);
 
-if (count($rows) !== 32) {
-    fwrite(STDERR, 'Distribution import should parse 32 rows, got ' . count($rows) . PHP_EOL);
+$distributionHeaders = [
+    '序号', '分配单号', '转入案号', '转入承办法官', '转入当事人',
+    '转出案号', '转出承办法官', '转出当事人', '开票种类', '单据号',
+    '分配金额', '申请人', '申请日期', '接收日期', '状态', '情况说明',
+    '原开票日期',
+];
+$syntheticXml = distributionImportExcelXml($distributionHeaders, [
+    [
+        '序号' => ['type' => 'Number', 'value' => '1'],
+        '分配单号' => 'SYN-DIST-001',
+        '转入案号' => 'SYN-IN-001',
+        '转入承办法官' => '匿名人员A',
+        '转入当事人' => '匿名主体A',
+        '转出案号' => 'SYN-OUT-001',
+        '转出承办法官' => '匿名人员B',
+        '转出当事人' => '匿名主体B',
+        '开票种类' => '执行、调解款',
+        '单据号' => 'SYN-REC-001',
+        '分配金额' => ['type' => 'Number', 'value' => '123.45'],
+        '申请人' => '匿名申请人A',
+        '申请日期' => '2026/07/03',
+        '接收日期' => '2026-07-04',
+        '状态' => '正常可操作',
+        '情况说明' => '合成样例-字符串日期',
+        '原开票日期' => '2026/07/01',
+    ],
+    [
+        '序号' => ['type' => 'Number', 'value' => '2'],
+        '分配单号' => 'SYN-DIST-002',
+        '转入案号' => 'SYN-IN-002',
+        '转入承办法官' => '匿名人员C',
+        '转入当事人' => '匿名主体C',
+        '转出案号' => 'SYN-OUT-002',
+        '转出承办法官' => '匿名人员D',
+        '转出当事人' => '匿名主体D',
+        '开票种类' => '执行、调解款',
+        '单据号' => 'SYN-REC-002',
+        '分配金额' => ['type' => 'Number', 'value' => '76.55'],
+        '申请人' => '匿名申请人B',
+        '申请日期' => ['type' => 'Number', 'value' => '46172'],
+        '接收日期' => ['type' => 'Number', 'value' => '46182'],
+        '状态' => '正常可操作',
+        '情况说明' => '合成样例-序列日期',
+        '原开票日期' => ['type' => 'Number', 'value' => '46110'],
+    ],
+]);
+$syntheticRows = $parseMethod->invoke($caseFund, $syntheticXml);
+$syntheticProfile = [
+    'row_count' => 2,
+    'total_cents' => 20000,
+    'first' => [
+        'source_row_no' => 2,
+        'distribution_no' => 'SYN-DIST-001',
+        'in_case_no' => 'SYN-IN-001',
+        'in_judge_name' => '匿名人员A',
+        'in_party_name' => '匿名主体A',
+        'out_case_no' => 'SYN-OUT-001',
+        'out_judge_name' => '匿名人员B',
+        'out_party_name' => '匿名主体B',
+        'invoice_type' => '执行、调解款',
+        'receipt_no' => 'SYN-REC-001',
+        'distribution_amount' => '123.45',
+        'applicant_name' => '匿名申请人A',
+        'apply_date' => '2026-07-03',
+        'receive_date' => '2026-07-04',
+        'period' => '2026-07',
+        'fiscal_year' => '2026',
+        'business_status' => '正常可操作',
+        'description' => '合成样例-字符串日期',
+        'original_invoice_date' => '2026-07-01',
+        'source_fingerprint' => 'cbdce40542313114f4ce2838ddb62a5d3c4e9d41a5bf3ba5bf9679fc566c4938',
+    ],
+];
+$first = distributionImportAssertProfile($syntheticRows, $syntheticProfile, 'inline-anonymous-excel-xml');
+$second = $syntheticRows[1] ?? [];
+foreach ([
+    'source_row_no' => 3,
+    'distribution_amount' => '76.55',
+    'apply_date' => '2026-05-30',
+    'receive_date' => '2026-06-09',
+    'original_invoice_date' => '2026-03-29',
+    'period' => '2026-06',
+    'fiscal_year' => '2026',
+] as $field => $expected) {
+    if (($second[$field] ?? null) !== $expected) {
+        fwrite(STDERR, 'Synthetic Excel serial date row mismatch: ' . $field . PHP_EOL);
+        exit(1);
+    }
+}
+if ($validateMethod->invoke($caseFund, $syntheticRows, 'CASE_FUND') !== []) {
+    fwrite(STDERR, 'Synthetic CASE_FUND distribution rows should validate cleanly' . PHP_EOL);
     exit(1);
 }
 
-$first = $rows[0];
-$expectedFirst = [
-    'source_row_no' => 2,
-    'distribution_no' => 'ZXFP60726051900001',
-    'in_case_no' => '（2024）辽0111执3548号',
-    'in_judge_name' => '赵之泽',
-    'in_party_name' => '吴健',
-    'out_case_no' => '（2017）辽0111执611号',
-    'out_judge_name' => '',
-    'out_party_name' => '李洁',
-    'invoice_type' => '执行、调解款',
-    'receipt_no' => '0001759490',
-    'distribution_amount' => '5084.00',
-    'applicant_name' => '赵之泽',
-    'apply_date' => '2026-05-19',
-    'receive_date' => '2026-05-20',
-    'period' => '2026-05',
-    'fiscal_year' => '2026',
-    'business_status' => '正常可操作',
-    'description' => '',
-    'original_invoice_date' => '2026-02-09',
+$legacyProfiles = [
+    'ZXFP60726051900001' => [
+        'row_count' => 32,
+        'total_cents' => 327331559,
+        'first' => [
+            'source_row_no' => 2,
+            'distribution_no' => 'ZXFP60726051900001',
+            'in_case_no' => '（2024）辽0111执3548号',
+            'in_judge_name' => '赵之泽',
+            'in_party_name' => '吴健',
+            'out_case_no' => '（2017）辽0111执611号',
+            'out_judge_name' => '',
+            'out_party_name' => '李洁',
+            'invoice_type' => '执行、调解款',
+            'receipt_no' => '0001759490',
+            'distribution_amount' => '5084.00',
+            'applicant_name' => '赵之泽',
+            'apply_date' => '2026-05-19',
+            'receive_date' => '2026-05-20',
+            'period' => '2026-05',
+            'fiscal_year' => '2026',
+            'business_status' => '正常可操作',
+            'description' => '',
+            'original_invoice_date' => '2026-02-09',
+        ],
+    ],
 ];
-foreach ($expectedFirst as $field => $expected) {
-    if (($first[$field] ?? null) !== $expected) {
-        fwrite(STDERR, "First distribution row {$field} mismatch: expected {$expected}, got " . ($first[$field] ?? 'NULL') . PHP_EOL);
+$newSampleSha256 = 'd4b6b1d12dac0e1ddd8fa15c87f491a9009f6a707b06b617f8aee1949a734b70';
+$rootSamplePath = __DIR__ . '/../../分配清单(带单据号) (3).xls';
+$envSamplePath = trim((string)getenv('CASE_FUND_DISTRIBUTION_SAMPLE_XLS'));
+$realSamplePath = '';
+if ($envSamplePath !== '') {
+    if (!is_file($envSamplePath)) {
+        fwrite(STDERR, 'CASE_FUND_DISTRIBUTION_SAMPLE_XLS does not point to a file' . PHP_EOL);
+        exit(1);
+    }
+    $realSamplePath = $envSamplePath;
+} elseif (is_file($rootSamplePath)) {
+    $realSamplePath = $rootSamplePath;
+}
+if ($realSamplePath !== '') {
+    $realSampleContents = file_get_contents($realSamplePath);
+    $realSampleSha256 = hash('sha256', $realSampleContents);
+    $realRows = $parseMethod->invoke($caseFund, $realSampleContents);
+    if ($realSampleSha256 === $newSampleSha256) {
+        $realProfileKey = 'sha256:' . $realSampleSha256;
+        $realProfile = [
+            'row_count' => 7,
+            'total_cents' => 2770324,
+            'first_fields' => [
+                'source_row_no',
+                'distribution_no',
+                'in_case_no',
+                'in_judge_name',
+                'in_party_name',
+                'out_case_no',
+                'out_judge_name',
+                'out_party_name',
+                'invoice_type',
+                'receipt_no',
+                'distribution_amount',
+                'applicant_name',
+                'apply_date',
+                'receive_date',
+                'period',
+                'fiscal_year',
+                'business_status',
+                'description',
+                'original_invoice_date',
+                'source_fingerprint',
+            ],
+            'first_sha256' => 'c3042aef7ead2b65be873ac136522e6ceafeb44d6f73330e7dbcf751eb3438b4',
+        ];
+    } else {
+        $realProfileKey = (string)($realRows[0]['distribution_no'] ?? '');
+        if (!isset($legacyProfiles[$realProfileKey])) {
+            fwrite(STDERR, 'Unexpected distribution sample profile: sha256:' . $realSampleSha256 . PHP_EOL);
+            exit(1);
+        }
+        $realProfile = $legacyProfiles[$realProfileKey];
+    }
+    distributionImportAssertProfile($realRows, $realProfile, $realProfileKey);
+    if ($validateMethod->invoke($caseFund, $realRows, 'CASE_FUND') !== []) {
+        fwrite(STDERR, 'Real CASE_FUND distribution rows should validate cleanly' . PHP_EOL);
         exit(1);
     }
 }
 
-$totalCents = 0;
-foreach ($rows as $row) {
-    $totalCents += distributionImportCents($row);
-}
-if ($totalCents !== 327331559) {
-    fwrite(STDERR, 'Distribution import total cents mismatch: ' . $totalCents . PHP_EOL);
-    exit(1);
-}
-
-$validateMethod = new ReflectionMethod(CaseFund::class, 'validateDistributionRows');
-$validateMethod->setAccessible(true);
-if ($validateMethod->invoke($caseFund, $rows, 'CASE_FUND') !== []) {
-    fwrite(STDERR, 'CASE_FUND distribution rows should validate cleanly' . PHP_EOL);
-    exit(1);
-}
-$litigationErrors = $validateMethod->invoke($caseFund, $rows, 'LITIGATION_FEE');
+$litigationErrors = $validateMethod->invoke($caseFund, $syntheticRows, 'LITIGATION_FEE');
 if (empty($litigationErrors) || strpos($litigationErrors[0], '当前账套类型不支持案款分配') === false) {
     fwrite(STDERR, 'Distribution import should reject non-CASE_FUND account sets' . PHP_EOL);
     exit(1);
 }
 
-$badRows = $rows;
+$badRows = $syntheticRows;
 $badRows[0]['receipt_no'] = '';
 $badRows[0]['distribution_amount'] = '0.00';
 $badErrors = $validateMethod->invoke($caseFund, [$badRows[0]], 'CASE_FUND');
-if (count($badErrors) < 2) {
+if ($badErrors !== [
+    '第2行：单据号不能为空',
+    '第2行：分配金额必须大于0',
+]) {
     fwrite(STDERR, 'Distribution validation should reject missing receipt and zero amount' . PHP_EOL);
     exit(1);
 }
 
-$fingerprintMethod = new ReflectionMethod(CaseFund::class, 'distributionFingerprint');
-$fingerprintMethod->setAccessible(true);
 $changedReceipt = $first;
 $changedReceipt['receipt_no'] = 'DIFFERENT';
 if ($fingerprintMethod->invoke($caseFund, $first) === $fingerprintMethod->invoke($caseFund, $changedReceipt)) {
