@@ -186,6 +186,20 @@ businessQueryAssertSame(
 );
 
 $store->queries = [];
+$repository->paymentList([
+    'payment_id' => 'P-LINKED',
+    'period' => '2026-01',
+    'voucher_status' => 'UNGENERATED',
+    'date_start' => '2026-01-01',
+    'keyword' => 'SHOULD-NOT-APPLY',
+], 1, 50, ['执行、调解款']);
+$paymentExactWhere = $store->queries[0]['where'][0][1];
+businessQueryAssertSame('P-LINKED', $paymentExactWhere['payment_id'], 'Payment drilldown should filter the exact payment id');
+businessQueryAssertSame(false, isset($paymentExactWhere['period']), 'Exact payment drilldown should not be hidden by stale period filters');
+businessQueryAssertSame(false, isset($paymentExactWhere['payment_date']), 'Exact payment drilldown should not be hidden by date filters');
+businessQueryAssertSame(1, count($store->queries[0]['where']), 'Exact payment drilldown should ignore keyword conditions');
+
+$store->queries = [];
 $refund = $repository->refundList([
     'period' => '2026-07',
     'voucher_status' => 'UNGENERATED',
@@ -211,6 +225,20 @@ foreach ($store->queries as $query) {
     businessQueryAssertSame(['case_no|party_name|actual_payee_name|receipt_no|source_receipt_no|out_order_no|payee_bank_account_no', 'like', '%OUT-001%'], $query['where'][3], 'Refund keyword filter should apply to every query object');
 }
 businessQueryAssertSame('refund_date asc, source_row_no asc', $store->queries[0]['order'], 'Refund ordering should remain stable');
+
+$store->queries = [];
+$repository->refundList([
+    'refund_id' => 'R-LINKED',
+    'period' => '2026-01',
+    'voucher_status' => 'UNGENERATED',
+    'startDate' => '2026-01-01',
+    'caseNo' => 'SHOULD-NOT-APPLY',
+    'keyword' => 'SHOULD-NOT-APPLY',
+], 1, 50, ['执行、调解款发放']);
+$refundExactWhere = $store->queries[0]['where'][0][1];
+businessQueryAssertSame('R-LINKED', $refundExactWhere['refund_id'], 'Refund drilldown should filter the exact refund id');
+businessQueryAssertSame(false, isset($refundExactWhere['refund_date']), 'Exact refund drilldown should not be hidden by date filters');
+businessQueryAssertSame(1, count($store->queries[0]['where']), 'Exact refund drilldown should ignore case, party and keyword conditions');
 
 $store->queries = [];
 $repository->refundList([
@@ -243,6 +271,21 @@ businessQueryAssertSame(4, $unknown['total'], 'Unknown payment list should prese
 businessQueryAssertSame('77.00', $unknown['total_amount'], 'Unknown payment list should preserve total amount');
 businessQueryAssertSame(3, count($store->queries), 'Unknown payment list should not reuse a count query after aggregation');
 businessQueryAssertSame('transaction_date asc, source_row_no asc', $store->queries[0]['order'], 'Unknown payment ordering should remain stable');
+
+$store->queries = [];
+$repository->unknownPaymentList([
+    'unknown_payment_id' => 'U-LINKED',
+    'period' => '2026-01',
+    'voucher_status' => 'UNGENERATED',
+    'claim_status' => '已认领',
+    'date_start' => '2026-01-01',
+    'keyword' => 'SHOULD-NOT-APPLY',
+], 1, 50);
+$unknownExactWhere = $store->queries[0]['where'][0][1];
+businessQueryAssertSame('U-LINKED', $unknownExactWhere['unknown_payment_id'], 'Unknown-payment drilldown should filter the exact business id');
+businessQueryAssertSame(false, isset($unknownExactWhere['claim_status']), 'Exact unknown-payment drilldown should not be hidden by claim status');
+businessQueryAssertSame(false, isset($unknownExactWhere['transaction_date']), 'Exact unknown-payment drilldown should not be hidden by date filters');
+businessQueryAssertSame(1, count($store->queries[0]['where']), 'Exact unknown-payment drilldown should ignore keyword conditions');
 
 $store->queries = [];
 $distribution = $repository->distributionList([

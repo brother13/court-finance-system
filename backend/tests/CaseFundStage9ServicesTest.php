@@ -208,14 +208,56 @@ $prepareUpdate = function ($row) {
     return $row;
 };
 
-$store->rows['payment'] = [[
-    'account_set_id' => 'account-set-stage9',
-    'fiscal_year' => 2026,
-    'del_flag' => 0,
-    'payment_id' => 'payment-1',
-    'payment_date' => '2026-07-10',
-    'bank_serial_no' => 'BANK-001',
-]];
+$store->rows['payment'] = [
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'payment_id' => 'payment-hyphen',
+        'payment_date' => '2026-07-10',
+        'bank_serial_no' => '210001500985TVNOPGN',
+    ],
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'payment_id' => 'payment-ccb-suffix',
+        'payment_date' => '2026-07-11',
+        'bank_serial_no' => '1234567890123456789',
+    ],
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'payment_id' => 'payment-claimed-without-serial',
+        'payment_date' => '2026-07-12',
+        'bank_serial_no' => '',
+        'payment_method' => 'UNKNOWN',
+        'payer_name' => '已认领缴费人',
+    ],
+];
+$store->rows['unknown_payment'] = [
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'unknown_payment_id' => 'unknown-pending',
+        'transaction_date' => '2026-07-13',
+        'unknown_amount' => '88.00',
+        'payer_account_no' => '6222 0002',
+        'claim_status' => '待认领',
+    ],
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'unknown_payment_id' => 'unknown-claimed',
+        'transaction_date' => '2026-07-13',
+        'unknown_amount' => '88.00',
+        'payer_account_no' => '62220002',
+        'claim_status' => '已认领',
+    ],
+];
 $store->rows['refund'] = [[
     'account_set_id' => 'account-set-stage9',
     'fiscal_year' => 2026,
@@ -232,7 +274,36 @@ $store->rows['statement'] = [
         'del_flag' => 0,
         'direction' => 'CREDIT',
         'transaction_date' => '2026-07-10',
-        'bank_serial_no' => 'BANK-001',
+        'bank_serial_no' => '106007-210001500985TVNOPGN',
+        'bank_code' => 'CCB',
+    ],
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'direction' => 'CREDIT',
+        'transaction_date' => '2026-07-11',
+        'bank_serial_no' => '76543211234567890123456789',
+        'bank_code' => 'CCB',
+    ],
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'direction' => 'CREDIT',
+        'transaction_date' => '2026-07-12',
+        'bank_serial_no' => 'CCB-20260712-0001880000',
+        'counterparty_account_name' => '已认领缴费人',
+        'bank_code' => 'CCB',
+    ],
+    [
+        'account_set_id' => 'account-set-stage9',
+        'fiscal_year' => 2026,
+        'del_flag' => 0,
+        'direction' => 'CREDIT',
+        'transaction_date' => '2026-07-13',
+        'bank_serial_no' => 'CCB-20260713-0001990000',
+        'counterparty_account_no' => '6222-0002',
         'bank_code' => 'CCB',
     ],
     [
@@ -264,25 +335,55 @@ $repository = new CaseFundBankReconcileRepository([
 ], [
     'payment' => 'payment',
     'refund' => 'refund',
+    'unknown_payment' => 'unknown_payment',
     'statement' => 'statement',
     'reconcile' => 'reconcile',
 ], [
     'payment' => ['payment_id'],
     'refund' => ['refund_id'],
+    'unknown_payment' => ['unknown_payment_id'],
     'statement' => ['statement_id'],
     'reconcile' => ['reconcile_id'],
 ]);
 
-stage9AssertSame('payment-1', $repository->paymentCandidatesByBankStatement([
+stage9AssertSame('payment-hyphen', $repository->paymentCandidatesByBankStatement([
     'transaction_date' => '2026-07-10',
-    'bank_serial_no' => 'BANK-001',
-])[0]['payment_id'], 'Payment candidate query should scope account set, year, date and serial');
+    'bank_serial_no' => '106007-210001500985TVNOPGN',
+    'bank_code' => 'CCB',
+])[0]['payment_id'], 'Payment candidate should compare the complete alphanumeric segment after the final bank-serial hyphen');
+stage9AssertSame('payment-ccb-suffix', $repository->paymentCandidatesByBankStatement([
+    'transaction_date' => '2026-07-11',
+    'bank_serial_no' => '76543211234567890123456789',
+    'bank_code' => 'CCB',
+])[0]['payment_id'], 'CCB payment candidate should still support the 26-character statement to 19-character payment suffix');
 stage9AssertSame([], $repository->paymentCandidatesByBankStatement(['transaction_date' => '2026-07-10']), 'Payment candidate query should reject an empty serial');
+stage9AssertSame([], $repository->paymentCandidatesByBankStatement([
+    'transaction_date' => '2026-07-12',
+    'bank_serial_no' => 'CCB-20260712-0001880000',
+    'bank_code' => 'CCB',
+    'counterparty_account_name' => '已认领缴费人',
+]), 'Claimed unknown payments without a bank serial should not participate by payer name');
+stage9AssertSame(
+    ['payment-hyphen', 'payment-ccb-suffix'],
+    array_column($repository->paymentCandidatesInScope('2026-07-01', '2026-07-31'), 'payment_id'),
+    'Payment business-only scope should skip every payment registration without a bank serial'
+);
+stage9AssertSame('unknown-pending', $repository->unknownPaymentCandidatesByBankStatement([
+    'transaction_date' => '2026-07-13',
+    'counterparty_account_no' => '6222-0002',
+])[0]['unknown_payment_id'], 'Unclaimed unknown payment should match by exact normalized counterparty account and date');
+stage9AssertSame(
+    ['unknown-pending'],
+    array_column($repository->unknownPaymentCandidatesInScope('2026-07-01', '2026-07-31'), 'unknown_payment_id'),
+    'Claimed unknown payments should not participate in business-only reconciliation scope'
+);
 stage9AssertSame('refund-1', $repository->refundCandidatesByBankStatement([
     'transaction_date' => '2026-07-10',
     'counterparty_account_no' => '62220001',
 ])[0]['refund_id'], 'Refund candidate query should prefer exact payee account matching');
-stage9AssertSame(true, $repository->bankStatementExistsByPayment($store->rows['payment'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Payment bank existence query should preserve bank and date scope');
+stage9AssertSame(true, $repository->bankStatementExistsByPayment($store->rows['payment'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Payment bank existence should use the same final-hyphen serial normalization');
+stage9AssertSame(false, $repository->bankStatementExistsByPayment($store->rows['payment'][2], 'CCB', '2026-07-01', '2026-07-31'), 'Payment bank existence should skip claimed registrations without a serial');
+stage9AssertSame(true, $repository->bankStatementExistsByUnknownPayment($store->rows['unknown_payment'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Unknown-payment bank existence should match normalized payer account and date');
 stage9AssertSame(true, $repository->bankStatementExistsByRefundPayee($store->rows['refund'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Refund bank existence query should preserve payee, bank and date scope');
 $summary = $repository->bankReconcileSummary([
     'account_set_id' => 'account-set-stage9',

@@ -389,6 +389,7 @@ export interface CaseFundBankStatement {
   postscript?: string
   bank_serial_no: string
   reconcile_status?: string
+  reconcile_items?: CaseFundBankReconcile[]
   source_file_name?: string
   source_row_no?: number
 }
@@ -400,7 +401,7 @@ export interface CaseFundBankReconcile {
   period?: string
   reconcile_date: string
   statement_id?: string
-  biz_type?: 'PAYMENT' | 'REFUND' | string
+  biz_type?: 'PAYMENT' | 'UNKNOWN_PAYMENT' | 'REFUND' | string
   biz_id?: string
   biz_no?: string
   bank_serial_no?: string

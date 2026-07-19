@@ -135,6 +135,7 @@ $hooks = [
 $tables = [
     'payment' => 'payment',
     'refund' => 'refund',
+    'unknown_payment' => 'unknown_payment',
     'statement' => 'statement',
     'reconcile' => 'reconcile',
 ];
@@ -156,7 +157,12 @@ $store->counts = ['statement' => 6, 'reconcile' => 4];
 $store->sums = ['statement' => ['debit_amount' => '12.00', 'credit_amount' => '34.00']];
 $store->rows = [
     'statement' => [['statement_id' => 'S-1']],
-    'reconcile' => [['reconcile_id' => 'RC-1']],
+    'reconcile' => [[
+        'reconcile_id' => 'RC-1',
+        'statement_id' => 'S-1',
+        'biz_type' => 'PAYMENT',
+        'biz_id' => 'P-1',
+    ]],
 ];
 $store->groupRows = [
     'reconcile' => [
@@ -174,6 +180,7 @@ $repository = new CaseFundBankReconcileRepository([
 ], $tables, [
     'payment' => ['payment_id'],
     'refund' => ['refund_id'],
+    'unknown_payment' => ['unknown_payment_id'],
     'statement' => ['statement_id'],
     'reconcile' => ['reconcile_id'],
 ]);
@@ -187,13 +194,21 @@ $statementList = $repository->bankStatementList([
     'keyword' => '流水-001',
 ], 2, 25);
 bankQueryAssertSame([
-    'items' => [['statement_id' => 'S-1']],
+    'items' => [[
+        'statement_id' => 'S-1',
+        'reconcile_items' => [[
+            'reconcile_id' => 'RC-1',
+            'statement_id' => 'S-1',
+            'biz_type' => 'PAYMENT',
+            'biz_id' => 'P-1',
+        ]],
+    ]],
     'total' => 6,
     'debit_amount' => '12.00',
     'credit_amount' => '34.00',
-], $statementList, 'Bank statement list should preserve result totals and amount totals');
-bankQueryAssertSame(4, count($store->queries), 'Bank statement list should use independent list, count and sum query objects');
-foreach ($store->queries as $query) {
+], $statementList, 'Bank statement list should preserve totals and attach active reconcile associations');
+bankQueryAssertSame(5, count($store->queries), 'Bank statement list should use four statement queries and one page association query');
+foreach (array_slice($store->queries, 0, 4) as $query) {
     $where = $query['where'][0][1];
     bankQueryAssertSame('account-bank-query', $where['account_set_id'], 'Bank statement list should scope current account set');
     bankQueryAssertSame(2026, $where['fiscal_year'], 'Bank statement list should scope current fiscal year');
@@ -206,6 +221,22 @@ foreach ($store->queries as $query) {
 }
 bankQueryAssertSame('transaction_time asc, source_row_no asc', $store->queries[0]['order'], 'Bank statement list order should remain stable');
 bankQueryAssertSame([2, 25], $store->queries[0]['page'], 'Bank statement list pagination should remain stable');
+bankQueryAssertSame('reconcile', $store->queries[4]['table'], 'Bank statement list should batch-load reconcile rows from the reconcile table');
+bankQueryAssertSame([
+    'account_set_id' => 'account-bank-query',
+    'fiscal_year' => 2026,
+    'del_flag' => 0,
+], $store->queries[4]['where'][0][1], 'Association query should keep account, year and active-row scope');
+bankQueryAssertSame(
+    ['statement_id', 'in', ['S-1']],
+    $store->queries[4]['where'][1],
+    'Association query should only load reconcile rows for the current statement page'
+);
+bankQueryAssertSame(
+    'statement_id asc, match_status asc, biz_type asc, biz_no asc',
+    $store->queries[4]['order'],
+    'Association query should keep duplicate candidates deterministic'
+);
 
 $store->queries = [];
 $scopeRows = $repository->bankStatementsInScope('CCB', '2026-07-01', '2026-07-31');
@@ -283,7 +314,7 @@ $reconcileList = $repository->bankReconcileList([
     'keyword' => 'RC-001',
 ], 1, 50, $emptyCounts);
 bankQueryAssertSame(4, $reconcileList['total'], 'Bank reconcile list should preserve filtered total');
-bankQueryAssertSame([['reconcile_id' => 'RC-1']], $reconcileList['items'], 'Bank reconcile list should preserve list rows');
+bankQueryAssertSame($store->rows['reconcile'], $reconcileList['items'], 'Bank reconcile list should preserve list rows');
 bankQueryAssertSame([
     'MATCHED' => 3,
     'BANK_ONLY' => 1,

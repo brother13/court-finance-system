@@ -13,6 +13,11 @@ class Voucher extends Common
     const TABLE_NO = 'fin_voucher_no_sequence';
     const TABLE_CONFIG = 'fin_subject_aux_config';
 
+    protected $fiscalPeriodStatusCache = [];
+    protected $subjectCache = [];
+    protected $subjectAuxConfigCache = [];
+    protected $importUserIdCache = [];
+
     public function index($action = '', $data = [])
     {
         switch ($action) {
@@ -140,6 +145,11 @@ class Voucher extends Common
         $where['fiscal_year'] = $periodRange['year'];
         $where['period'][] = ['>=', $periodRange['start']];
         $where['period'][] = ['<=', $periodRange['end']];
+
+        $voucherId = trim((string)($data['voucher_id'] ?? ''));
+        if ($voucherId !== '') {
+            $where['voucher_id'] = $voucherId;
+        }
 
         $summaryKeyword = trim($data['summary_keyword'] ?? ($data['keyword'] ?? ''));
         if ($summaryKeyword !== '') {
@@ -370,7 +380,7 @@ class Voucher extends Common
         }
     }
 
-    public function saveVoucher($data, $status)
+    public function saveVoucher($data, $status, $returnInfo = true, $softDeletedConflictsPrepared = false)
     {
         if ($status === 'POSTED') {
             return $this->error('凭证记账请通过记账功能执行');
@@ -435,7 +445,9 @@ class Voucher extends Common
                 } else {
                     $voucherNo = $this->nextVoucherNo($period);
                 }
-                $this->evacuateSoftDeletedVoucherNoConflicts($period, [$voucherNo]);
+                if (!$softDeletedConflictsPrepared) {
+                    $this->evacuateSoftDeletedVoucherNoConflicts($period, [$voucherNo]);
+                }
                 $voucher = [
                     'voucher_id' => $voucherId,
                     'account_set_id' => $this->accountSetId,
@@ -587,6 +599,12 @@ class Voucher extends Common
             return $this->error('凭证保存失败：' . $e->getMessage());
         }
 
+        if (!$returnInfo) {
+            return $this->ok([
+                'period' => $period,
+                'voucher_id' => $voucherId,
+            ], '保存成功');
+        }
         return $this->getInfo(['period' => $period, 'voucher_id' => $voucherId]);
     }
 
@@ -950,7 +968,12 @@ class Voucher extends Common
                     'voucher_id' => $voucherId,
                     'del_flag' => 0,
                 ])->update($update);
-                $this->logAudit('VOUCHER', $voucherId, 'DELETE', $voucher, $update);
+                $businessSourceReset = $this->resetGeneratedBusinessSources($voucher);
+                $auditAfter = $update;
+                if (array_sum($businessSourceReset) > 0) {
+                    $auditAfter['business_source_reset'] = $businessSourceReset;
+                }
+                $this->logAudit('VOUCHER', $voucherId, 'DELETE', $voucher, $auditAfter);
             }
             $this->evacuateSoftDeletedVoucherNoConflicts($period, $deletedVoucherNumbers);
             Db::commit();
@@ -962,14 +985,99 @@ class Voucher extends Common
         return $this->ok(['deleted_count' => count($beforeRows)], '删除成功', count($beforeRows));
     }
 
+    /**
+     * 删除业务生成凭证时，同步解除案款业务记录的制证关联。
+     *
+     * 业务记录保留在原表中，恢复为未制证后可再次生成；所有更新都处于凭证删除事务内，
+     * 避免出现凭证已删除但业务表仍显示“已制证”的中间状态。
+     */
+    protected function resetGeneratedBusinessSources($voucher)
+    {
+        $voucherId = trim((string)($voucher['voucher_id'] ?? ''));
+        if ($voucherId === '') {
+            return [];
+        }
+
+        $fiscalYear = isset($voucher['fiscal_year'])
+            ? (int)$voucher['fiscal_year']
+            : $this->fiscalYear((string)($voucher['period'] ?? ''));
+        $update = [
+            'voucher_status' => 'UNGENERATED',
+            'voucher_id' => null,
+            'voucher_no' => null,
+            'voucher_period' => null,
+            'voucher_generated_time' => null,
+        ];
+        $this->fillUpdate($update);
+
+        $resetCounts = [];
+        foreach ($this->caseFundBusinessSourceTables() as $table) {
+            $resetCounts[$table] = (int)$this->getdb($table)->where([
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $fiscalYear,
+                'voucher_id' => $voucherId,
+                'voucher_status' => 'GENERATED',
+                'del_flag' => 0,
+            ])->update($update);
+        }
+
+        return $resetCounts;
+    }
+
+    /**
+     * 凭证号整理后，同步案款业务表中的冗余凭证号和凭证期间。
+     */
+    protected function syncGeneratedBusinessSourceVoucherNo($voucherId, $period, $voucherNo)
+    {
+        $voucherId = trim((string)$voucherId);
+        $period = trim((string)$period);
+        $voucherNo = (int)$voucherNo;
+        if ($voucherId === '' || $period === '' || $voucherNo <= 0) {
+            return [];
+        }
+
+        $update = [
+            'voucher_no' => $voucherNo,
+            'voucher_period' => $period,
+        ];
+        $this->fillUpdate($update);
+
+        $syncCounts = [];
+        foreach ($this->caseFundBusinessSourceTables() as $table) {
+            $syncCounts[$table] = (int)$this->getdb($table)->where([
+                'account_set_id' => $this->accountSetId,
+                'fiscal_year' => $this->fiscalYear($period),
+                'voucher_id' => $voucherId,
+                'voucher_status' => 'GENERATED',
+                'del_flag' => 0,
+            ])->update($update);
+        }
+
+        return $syncCounts;
+    }
+
+    protected function caseFundBusinessSourceTables()
+    {
+        return [
+            'fin_case_fund_payment',
+            'fin_case_fund_refund',
+            'fin_case_fund_unknown_payment',
+            'fin_case_fund_distribution',
+        ];
+    }
+
     protected function fiscalPeriodStatus($period)
     {
+        if (array_key_exists($period, $this->fiscalPeriodStatusCache)) {
+            return $this->fiscalPeriodStatusCache[$period];
+        }
         $row = $this->getdb('fin_fiscal_period')->where([
             'account_set_id' => $this->accountSetId,
             'period' => $period,
             'del_flag' => 0,
         ])->find();
-        return $row['status'] ?? '';
+        $this->fiscalPeriodStatusCache[$period] = $row['status'] ?? '';
+        return $this->fiscalPeriodStatusCache[$period];
     }
 
     protected function ensurePeriodWritable($period, $message)
@@ -1587,12 +1695,16 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         if (trim($line['summary'] ?? '') === '') {
             return $this->error('明细摘要不能为空');
         }
-        $subject = $this->getdb('fin_subject')->where([
-            'account_set_id' => $this->accountSetId,
-            'subject_code' => $line['subject_code'],
-            'del_flag' => 0,
-            'status' => 1,
-        ])->find();
+        $subjectCode = $line['subject_code'];
+        if (!array_key_exists($subjectCode, $this->subjectCache)) {
+            $this->subjectCache[$subjectCode] = $this->getdb('fin_subject')->where([
+                'account_set_id' => $this->accountSetId,
+                'subject_code' => $subjectCode,
+                'del_flag' => 0,
+                'status' => 1,
+            ])->find() ?: null;
+        }
+        $subject = $this->subjectCache[$subjectCode];
         if (!$subject) {
             return $this->error('科目不存在或已禁用：' . $line['subject_code']);
         }
@@ -1710,6 +1822,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             }
 
             $changedItems = [];
+            $businessSourceSyncCounts = [];
             foreach ($items as $item) {
                 $this->getdb($voucherTable)->where($this->voucherWhere($item['voucher_id'], $period))->update([
                     'voucher_no' => $item['new_voucher_no'],
@@ -1733,6 +1846,14 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
                     ];
                     $this->fillCreate($logRow);
                     $this->getdb('fin_voucher_no_adjust_log')->insert($logRow);
+                    $sourceSyncCounts = $this->syncGeneratedBusinessSourceVoucherNo(
+                        $item['voucher_id'],
+                        $period,
+                        $item['new_voucher_no']
+                    );
+                    foreach ($sourceSyncCounts as $table => $count) {
+                        $businessSourceSyncCounts[$table] = (int)($businessSourceSyncCounts[$table] ?? 0) + (int)$count;
+                    }
                 }
             }
 
@@ -1743,6 +1864,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
                 'start_no' => $startNo,
                 'change_count' => count($changedItems),
                 'items' => $changedItems,
+                'business_source_sync_count' => $businessSourceSyncCounts,
             ]);
             Db::commit();
         } catch (\Exception $e) {
@@ -2053,9 +2175,13 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 
     protected function subjectAuxConfigs($subjectCode)
     {
+        if (array_key_exists($subjectCode, $this->subjectAuxConfigCache)) {
+            return $this->subjectAuxConfigCache[$subjectCode];
+        }
         $where = $this->accountWhere();
         $where['subject_code'] = $subjectCode;
-        return $this->getdb(self::TABLE_CONFIG)->where($where)->select();
+        $this->subjectAuxConfigCache[$subjectCode] = $this->getdb(self::TABLE_CONFIG)->where($where)->select();
+        return $this->subjectAuxConfigCache[$subjectCode];
     }
 
     protected function checkRequiredAux($subjectCode, $configs, $auxValues)
@@ -2201,6 +2327,8 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         $errors = [];
         $maxNoByPeriod = [];
 
+        $this->prepareImportSoftDeletedVoucherNoConflicts($vouchers);
+
         foreach ($vouchers as $index => $voucherData) {
             $period = $voucherData['period'] ?? '';
             $voucherNo = isset($voucherData['voucher_no']) ? (int)$voucherData['voucher_no'] : null;
@@ -2236,7 +2364,8 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             $voucherData['prepared_by'] = $preparedBy;
             $voucherData['audit_by'] = $auditBy;
 
-            $result = $this->saveVoucher($voucherData, 'AUDITED');
+            $conflictsPrepared = $voucherNo !== null && $voucherNo > 0;
+            $result = $this->saveVoucher($voucherData, 'AUDITED', false, $conflictsPrepared);
             if ($result['code'] !== self::CODE_SUCCESS) {
                 $failed++;
                 $errors[] = '第' . ($index + 1) . '张凭证（' . $period . ' ' . $voucherWord . '-' . ($voucherNo ?? '?') . '）：' . $result['message'];
@@ -2269,6 +2398,9 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         if ($name === '') {
             return $this->userid;
         }
+        if (array_key_exists($name, $this->importUserIdCache)) {
+            return $this->importUserIdCache[$name];
+        }
         $user = $this->getdb('sys_user')
             ->where('del_flag', 0)
             ->where(function ($query) use ($name) {
@@ -2276,7 +2408,24 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             })
             ->field('user_id')
             ->find();
-        return $user ? $user['user_id'] : $this->userid;
+        $this->importUserIdCache[$name] = $user ? $user['user_id'] : $this->userid;
+        return $this->importUserIdCache[$name];
+    }
+
+    protected function prepareImportSoftDeletedVoucherNoConflicts($vouchers)
+    {
+        $numbersByPeriod = [];
+        foreach ($vouchers as $voucherData) {
+            $period = trim((string)($voucherData['period'] ?? ''));
+            $voucherNo = isset($voucherData['voucher_no']) ? (int)$voucherData['voucher_no'] : 0;
+            if ($period === '' || $voucherNo <= 0) {
+                continue;
+            }
+            $numbersByPeriod[$period][$voucherNo] = true;
+        }
+        foreach ($numbersByPeriod as $period => $numberSet) {
+            $this->evacuateSoftDeletedVoucherNoConflicts($period, array_keys($numberSet));
+        }
     }
 
     protected function updateVoucherNoSequence($period, $maxNo)

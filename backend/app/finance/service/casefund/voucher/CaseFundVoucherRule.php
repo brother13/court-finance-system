@@ -411,6 +411,15 @@ class CaseFundVoucherRule
             ];
 
             $debitConfigs = $this->callHook('get_subject_aux_configs', [$config['debit_subject_code']]);
+            $creditConfigs = $this->callHook('get_subject_aux_configs', [$config['credit_subject_code']]);
+            if (trim((string)($row['receipt_no'] ?? '')) === ''
+                && ($this->configsUseAuxType($debitConfigs, 'receipt_no')
+                    || $this->configsUseAuxType($creditConfigs, 'receipt_no'))
+            ) {
+                throw new \InvalidArgumentException(
+                    '案款分配记录的借方或贷方科目已关联单据号辅助核算，单据号不能为空'
+                );
+            }
             $outAuxValues = $this->callHook('filter_aux_values', [$outAuxValues, $debitConfigs]);
             $detailsData[] = [
                 'detail_id' => $this->callHook('new_id'),
@@ -424,7 +433,6 @@ class CaseFundVoucherRule
                 'aux_values' => $outAuxValues,
             ];
 
-            $creditConfigs = $this->callHook('get_subject_aux_configs', [$config['credit_subject_code']]);
             $inAuxValues = $this->callHook('filter_aux_values', [$inAuxValues, $creditConfigs]);
             $detailsData[] = [
                 'detail_id' => $this->callHook('new_id'),
@@ -440,6 +448,16 @@ class CaseFundVoucherRule
         }
 
         return ['details' => $detailsData, 'total_cents' => $totalDebit];
+    }
+
+    protected function configsUseAuxType($configs, $auxTypeCode)
+    {
+        foreach ($configs as $config) {
+            if (trim((string)($config['aux_type_code'] ?? '')) === $auxTypeCode) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public function buildRefundDebitDetailData($row, $config, $lineNo, $useNormalSummary = false)

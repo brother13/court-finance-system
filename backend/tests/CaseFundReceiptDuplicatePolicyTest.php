@@ -325,6 +325,33 @@ receiptPolicyAssertSame(
     'Case-fund refund credit subject receipt auxiliary accounting must require trace'
 );
 
+$distributionConfig = receiptSubjectConfig('DISTRIBUTION', '执行、调解款', '224101', '224101');
+list($policy) = receiptPolicyFixture([], []);
+receiptPolicyAssertSame(
+    true,
+    $policy->distributionImportRequiresReceiptTrace('CASE_FUND'),
+    'Missing distribution subject config must conservatively require receipt trace'
+);
+receiptPolicyAssertSame(
+    true,
+    $policy->distributionImportRequiresReceiptTrace('UNKNOWN'),
+    'Unknown distribution account-set types must conservatively require receipt trace'
+);
+
+list($policy) = receiptPolicyFixture([$distributionConfig], []);
+receiptPolicyAssertSame(
+    false,
+    $policy->distributionImportRequiresReceiptTrace('CASE_FUND'),
+    'Distribution import may omit document numbers only when neither configured subject uses receipt_no'
+);
+
+list($policy) = receiptPolicyFixture([$distributionConfig], [receiptAuxConfig('224101')]);
+receiptPolicyAssertSame(
+    true,
+    $policy->distributionImportRequiresReceiptTrace('CASE_FUND'),
+    'Distribution subject receipt auxiliary accounting must require document numbers'
+);
+
 list($policy, $store) = receiptPolicyFixture([$paymentConfig], []);
 $store->throwOnAuxFind = true;
 try {
@@ -335,7 +362,7 @@ try {
 }
 
 $modelSource = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
-foreach (['paymentImportRequiresReceiptNoDuplicateCheck', 'refundImportRequiresReceiptTrace'] as $policyMethod) {
+foreach (['paymentImportRequiresReceiptNoDuplicateCheck', 'refundImportRequiresReceiptTrace', 'distributionImportRequiresReceiptTrace'] as $policyMethod) {
     if (strpos($modelSource, '->' . $policyMethod . '(') === false) {
         receiptPolicyFail('CaseFund import flow must delegate to receipt policy: ' . $policyMethod);
     }

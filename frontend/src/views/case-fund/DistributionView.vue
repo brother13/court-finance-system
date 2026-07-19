@@ -19,7 +19,7 @@
         <el-select v-model="filters.invoice_type" placeholder="开票种类" clearable class="type-select">
           <el-option label="执行、调解款" value="执行、调解款" />
         </el-select>
-        <el-input v-model="filters.keyword" placeholder="分配单号 / 案号 / 当事人 / 单据号" clearable class="case-fund-search" @keyup.enter="query" />
+        <el-input v-model="filters.keyword" placeholder="分配单号 / 案号 / 当事人 / 单据号（如有）" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
       </div>
       <div class="case-fund-actions">
@@ -68,7 +68,9 @@
         <el-table-column prop="receive_date" label="接收日期" width="112" fixed="left" />
         <el-table-column prop="distribution_no" label="分配单号" min-width="180" fixed="left" show-overflow-tooltip />
         <el-table-column prop="invoice_type" label="开票种类" width="130" show-overflow-tooltip />
-        <el-table-column prop="receipt_no" label="单据号" width="130" show-overflow-tooltip />
+        <el-table-column prop="receipt_no" label="单据号" width="130" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.receipt_no || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="distribution_amount" label="分配金额" width="130" align="right">
           <template #default="{ row }">{{ money(row.distribution_amount) }}</template>
         </el-table-column>
@@ -88,7 +90,15 @@
         </el-table-column>
         <el-table-column label="凭证" width="110" align="center" fixed="right">
           <template #default="{ row }">
-            <span v-if="row.voucher_no">{{ row.voucher_period }}-{{ row.voucher_no }}</span>
+            <router-link
+              v-if="row.voucher_no && row.voucher_id && context.hasPermission('menu:voucher')"
+              class="voucher-number-link"
+              :to="{ path: '/vouchers', query: { period: row.voucher_period, voucher_id: row.voucher_id } }"
+              title="在凭证中心查看该凭证"
+            >
+              {{ row.voucher_period }}-{{ row.voucher_no }}
+            </router-link>
+            <span v-else-if="row.voucher_no">{{ row.voucher_period }}-{{ row.voucher_no }}</span>
             <span v-else class="muted-text">-</span>
           </template>
         </el-table-column>
@@ -113,7 +123,7 @@
         type="info"
         :closable="false"
         show-icon
-        title="借方用于转出案号，贷方用于转入案号；两边会同时写入原单据号作为收据号辅助核算。"
+        title="借方用于转出案号，贷方用于转入案号。仅当所选科目关联了单据号辅助核算时，导入和制证才要求单据号。"
         class="subject-config-alert"
       />
       <el-table :data="subjectConfigRows" border v-loading="subjectConfigLoading">

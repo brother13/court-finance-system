@@ -108,7 +108,7 @@ class CaseFundImportValidator
         return $errors;
     }
 
-    public function validateDistributionRows($rows, $bizType = '', $allowedInvoiceTypes = null)
+    public function validateDistributionRows($rows, $bizType = '', $allowedInvoiceTypes = null, $receiptTraceRequired = true)
     {
         $errors = [];
         $allowedInvoiceTypes = $allowedInvoiceTypes === null
@@ -120,7 +120,7 @@ class CaseFundImportValidator
                 $errors[] = $prefix . '当前账套类型不支持案款分配：' . $bizType;
                 continue;
             }
-            if (($row['distribution_no'] ?? '') === '') {
+            if ($receiptTraceRequired && ($row['distribution_no'] ?? '') === '') {
                 $errors[] = $prefix . '分配单号不能为空';
             }
             if (($row['in_case_no'] ?? '') === '') {
@@ -134,7 +134,7 @@ class CaseFundImportValidator
             } elseif (!in_array($row['invoice_type'], $allowedInvoiceTypes, true)) {
                 $errors[] = $prefix . '当前账套不允许导入开票种类【' . $row['invoice_type'] . '】，允许类型：' . implode('、', $allowedInvoiceTypes);
             }
-            if (($row['receipt_no'] ?? '') === '') {
+            if ($receiptTraceRequired && ($row['receipt_no'] ?? '') === '') {
                 $errors[] = $prefix . '单据号不能为空';
             }
             if ($this->toCents($row['distribution_amount'] ?? '0') <= 0) {

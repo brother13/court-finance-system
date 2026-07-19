@@ -261,4 +261,33 @@ $distribution = $override->distributionDetails([
 voucherRuleAssertSame('override-out-D-001', $distribution['details'][0]['summary'], 'Extracted distribution builder should preserve subclass summary overrides');
 voucherRuleAssertSame(200, $distribution['total_cents'], 'Distribution total should remain integer cents');
 
+$override->setSubjectAuxConfigs([
+    '100201' => [['aux_type_code' => 'case_no']],
+    '224101' => [['aux_type_code' => 'receipt_no']],
+]);
+try {
+    $override->distributionDetails([
+        [
+            'distribution_no' => '',
+            'invoice_type' => '执行款',
+            'distribution_amount' => '2.00',
+            'out_case_no' => 'OUT-CASE',
+            'out_party_name' => '甲',
+            'in_case_no' => 'IN-CASE',
+            'in_party_name' => '乙',
+            'receipt_no' => '',
+        ],
+    ], [
+        '执行款' => ['debit_subject_code' => '100201', 'credit_subject_code' => '224101'],
+    ]);
+    fwrite(STDERR, 'Distribution voucher generation should reject an empty document number when either subject uses receipt_no' . PHP_EOL);
+    exit(1);
+} catch (InvalidArgumentException $e) {
+    voucherRuleAssertSame(
+        '案款分配记录的借方或贷方科目已关联单据号辅助核算，单据号不能为空',
+        $e->getMessage(),
+        'Distribution voucher generation should recheck the current subject auxiliary configuration'
+    );
+}
+
 echo 'Case fund voucher rule test passed' . PHP_EOL;

@@ -2,6 +2,9 @@
 
 namespace app\finance\model;
 
+use app\finance\service\opening\OpeningAuxiliaryRule;
+use think\Db;
+
 class Opening extends Common
 {
     const ACTION = 'opening';
@@ -147,11 +150,8 @@ class Opening extends Common
             return $this->error('期间和科目不能为空');
         }
 
-        $configs = $this->getdb('fin_subject_aux_config')->where([
-            'account_set_id' => $this->accountSetId,
-            'subject_code' => $subjectCode,
-            'del_flag' => 0,
-        ])->order('aux_type_code asc')->select();
+        $configResult = $this->loadAuxConfigsAndTypes($subjectCode);
+        $configs = $configResult['configs'];
 
         $archiveMap = [];
         foreach ($configs as $config) {
@@ -198,68 +198,173 @@ class Opening extends Common
             return $this->error('辅助期初数据格式不正确');
         }
 
-        $configs = $this->getdb('fin_subject_aux_config')->where([
+        $subject = $this->getdb('fin_subject')->where([
             'account_set_id' => $this->accountSetId,
             'subject_code' => $subjectCode,
+            'status' => 1,
             'del_flag' => 0,
-        ])->select();
-        $requiredCodes = [];
-        foreach ($configs as $config) {
-            if ((int)$config['required_flag'] === 1) {
-                $requiredCodes[] = $config['aux_type_code'];
-            }
+        ])->find();
+        if (!$subject) {
+            return $this->error('科目不存在或已停用：' . $subjectCode);
         }
 
-        $preparedRows = [];
-        foreach ($items as $item) {
-            $auxValues = isset($item['aux_values']) && is_array($item['aux_values']) ? $item['aux_values'] : [];
-            foreach ($requiredCodes as $code) {
-                if (empty($auxValues[$code])) {
-                    return $this->error('辅助期初缺少必填辅助维度：' . $code);
-                }
-            }
-            $debit = (float)($item['debit_amount'] ?? 0);
-            $credit = (float)($item['credit_amount'] ?? 0);
-            if ($debit == 0 && $credit == 0) {
-                continue;
-            }
-            if ($debit > 0 && $credit > 0) {
-                return $this->error('辅助期初同一行不能同时录入借方和贷方');
-            }
-            $preparedRows[] = [
-                'balance_id' => uuid(),
-                'account_set_id' => $this->accountSetId,
-                'period' => $period,
-                'subject_code' => $subjectCode,
-                'aux_values_json' => json_encode($auxValues, JSON_UNESCAPED_UNICODE),
-                'aux_desc' => $this->buildAuxDesc($auxValues),
-                'debit_amount' => $debit,
-                'credit_amount' => $credit,
-                'remark' => $item['remark'] ?? '',
-            ];
-        }
-
+        $configResult = $this->loadAuxConfigsAndTypes($subjectCode);
         $where = [
             'account_set_id' => $this->accountSetId,
             'period' => $period,
             'subject_code' => $subjectCode,
             'del_flag' => 0,
         ];
-        $before = $this->getdb('fin_aux_opening_balance')->where($where)->select();
-        $this->getdb('fin_aux_opening_balance')->where($where)->update([
-            'del_flag' => 1,
-            'updated_by' => $this->userid,
-            'updated_time' => $this->now(),
-        ]);
+        Db::startTrans();
+        try {
+            $archiveCache = [];
+            $rule = new OpeningAuxiliaryRule(function ($typeCode, $archiveCode) use (&$archiveCache) {
+                $key = $typeCode . '|' . $archiveCode;
+                if (!array_key_exists($key, $archiveCache)) {
+                    $archiveCache[$key] = $this->getdb('fin_aux_archive')->where([
+                        'account_set_id' => $this->accountSetId,
+                        'aux_type_code' => $typeCode,
+                        'archive_code' => $archiveCode,
+                        'status' => 1,
+                        'del_flag' => 0,
+                    ])->lock(true)->find();
+                }
+                return $archiveCache[$key];
+            });
+            $prepared = $rule->prepare($items, $configResult['configs'], $configResult['types']);
 
-        $saved = 0;
-        foreach ($preparedRows as $row) {
-            $this->fillCreate($row);
-            $this->getdb('fin_aux_opening_balance')->insert($row);
-            $saved++;
+            $subjectOpening = $this->getdb(self::TABLE)->where($where)->lock(true)->find();
+            $subjectDebitCents = $this->decimalToCents($subjectOpening['debit_amount'] ?? 0);
+            $subjectCreditCents = $this->decimalToCents($subjectOpening['credit_amount'] ?? 0);
+            if ($prepared['debit_total_cents'] !== $subjectDebitCents || $prepared['credit_total_cents'] !== $subjectCreditCents) {
+                throw new \InvalidArgumentException(
+                    '辅助期初明细合计必须等于科目期初余额；科目期初借方'
+                    . $this->centsToDecimal($subjectDebitCents)
+                    . '、贷方' . $this->centsToDecimal($subjectCreditCents)
+                );
+            }
+
+            foreach ($prepared['manual_archives'] as $typeCode => $archiveCodes) {
+                foreach ($archiveCodes as $archiveCode) {
+                    $this->ensureManualAuxArchive($typeCode, $archiveCode);
+                }
+            }
+
+            $before = $this->getdb('fin_aux_opening_balance')->where($where)->select();
+            $this->getdb('fin_aux_opening_balance')->where($where)->update([
+                'del_flag' => 1,
+                'updated_by' => $this->userid,
+                'updated_time' => $this->now(),
+            ]);
+
+            $saved = 0;
+            foreach ($prepared['rows'] as $preparedRow) {
+                $auxValues = $preparedRow['aux_values'];
+                $row = [
+                    'balance_id' => uuid(),
+                    'account_set_id' => $this->accountSetId,
+                    'period' => $period,
+                    'subject_code' => $subjectCode,
+                    'aux_values_json' => json_encode($auxValues, JSON_UNESCAPED_UNICODE),
+                    'aux_desc' => $this->buildAuxDesc($auxValues),
+                    'debit_amount' => $preparedRow['debit_amount'],
+                    'credit_amount' => $preparedRow['credit_amount'],
+                    'remark' => $preparedRow['remark'],
+                ];
+                $this->fillCreate($row);
+                if ($this->getdb('fin_aux_opening_balance')->insert($row) !== 1) {
+                    throw new \RuntimeException('辅助期初写入失败');
+                }
+                $saved++;
+            }
+            $this->logAudit('AUX_OPENING_BALANCE', $subjectCode . '@' . $period, 'SAVE', $before, $prepared['rows']);
+            Db::commit();
+        } catch (\InvalidArgumentException $e) {
+            Db::rollback();
+            return $this->error($e->getMessage());
+        } catch (\Exception $e) {
+            Db::rollback();
+            return $this->error('保存辅助期初失败：' . $e->getMessage());
         }
-        $this->logAudit('AUX_OPENING_BALANCE', $subjectCode . '@' . $period, 'SAVE', $before, $items);
         return $this->ok(['saved' => $saved], '辅助期初已保存');
+    }
+
+    protected function loadAuxConfigsAndTypes($subjectCode)
+    {
+        $configs = $this->getdb('fin_subject_aux_config')->where([
+            'account_set_id' => $this->accountSetId,
+            'subject_code' => $subjectCode,
+            'del_flag' => 0,
+        ])->order('aux_type_code asc')->select();
+        $types = $this->getdb('fin_aux_type')->where([
+            'account_set_id' => $this->accountSetId,
+            'del_flag' => 0,
+        ])->select();
+        $typeMap = [];
+        foreach ($types as $type) {
+            $typeMap[$type['aux_type_code']] = $type;
+        }
+        foreach ($configs as &$config) {
+            $type = $typeMap[$config['aux_type_code']] ?? [];
+            $config['aux_type_name'] = $type['aux_type_name'] ?? $config['aux_type_code'];
+            $config['value_source'] = strtoupper((string)($type['value_source'] ?? 'ARCHIVE'));
+            $config['aux_type_status'] = (int)($type['status'] ?? 0);
+        }
+        unset($config);
+        return ['configs' => $configs, 'types' => $types];
+    }
+
+    protected function ensureManualAuxArchive($typeCode, $archiveCode)
+    {
+        $type = $this->getdb('fin_aux_type')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $typeCode,
+            'del_flag' => 0,
+        ])->lock(true)->find();
+        if (!$type || (int)($type['status'] ?? 0) !== 1 || strtoupper((string)($type['value_source'] ?? '')) !== 'MANUAL') {
+            throw new \RuntimeException('手工辅助维度不存在、已停用或来源类型不正确：' . $typeCode);
+        }
+
+        $archive = $this->getdb('fin_aux_archive')->where([
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $typeCode,
+            'archive_code' => $archiveCode,
+        ])->order('del_flag asc,updated_time desc')->lock(true)->find();
+        if ($archive && (int)$archive['del_flag'] === 0) {
+            if ((int)$archive['status'] !== 1) {
+                throw new \RuntimeException('辅助档案已停用：' . $typeCode . '/' . $archiveCode);
+            }
+            return;
+        }
+        if ($archive) {
+            $restored = [
+                'archive_name' => $archiveCode,
+                'status' => 1,
+                'del_flag' => 0,
+                'remark' => '辅助期初重新使用并恢复档案',
+            ];
+            $this->fillUpdate($restored);
+            if ($this->getdb('fin_aux_archive')->where('archive_id', $archive['archive_id'])->update($restored) !== 1) {
+                throw new \RuntimeException('辅助档案恢复失败：' . $typeCode . '/' . $archiveCode);
+            }
+            $this->logAudit('AUX_ARCHIVE', $archive['archive_id'], 'RESTORE', $archive, $restored);
+            return;
+        }
+
+        $row = [
+            'archive_id' => uuid(),
+            'account_set_id' => $this->accountSetId,
+            'aux_type_code' => $typeCode,
+            'archive_code' => $archiveCode,
+            'archive_name' => $archiveCode,
+            'status' => 1,
+            'remark' => '辅助期初自动建档',
+        ];
+        $this->fillCreate($row);
+        if ($this->getdb('fin_aux_archive')->insert($row) !== 1) {
+            throw new \RuntimeException('辅助档案写入失败：' . $typeCode . '/' . $archiveCode);
+        }
+        $this->logAudit('AUX_ARCHIVE', $row['archive_id'], 'AUTO_CREATE', null, $row);
     }
 
     protected function buildAuxDesc($auxValues)

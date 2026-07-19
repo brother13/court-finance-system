@@ -98,12 +98,14 @@ $firstSheetBof = biffRecord(0x0809, pack('vvvv', 0x0600, 0x0010, 0, 0));
 $labelSst = biffRecord(0x00FD, pack('vvvV', 0, 0, 0, 0));
 $number = biffRecord(0x0203, pack('vvv', 1, 1, 0) . pack('e', 123.45));
 $rkInteger = biffRecord(0x027E, pack('vvvV', 2, 0, 0, (42 << 2) | 0x02));
+$mulRk = biffRecord(0x00BD, pack('vvvVvVv', 3, 0, 0, (7 << 2) | 0x02, 0, (8 << 2) | 0x02, 1));
+$mulBlank = biffRecord(0x00BE, pack('vvvvv', 4, 0, 0, 0, 1));
 $firstSheetEof = biffRecord(0x000A, '');
 $secondSheetBof = biffRecord(0x0809, pack('vvvv', 0x0600, 0x0010, 0, 0));
 $secondSheetLabel = biffRecord(0x0204, pack('vvv', 0, 0, 0) . pack('vC', 6, 0) . 'SECOND');
 $secondSheetEof = biffRecord(0x000A, '');
 $biffStream = $sstRecord . $continueRecord . $boundSheetRecord
-    . $firstSheetBof . $labelSst . $number . $rkInteger . $firstSheetEof
+    . $firstSheetBof . $labelSst . $number . $rkInteger . $mulRk . $mulBlank . $firstSheetEof
     . $secondSheetBof . $secondSheetLabel . $secondSheetEof;
 
 $cells = $reader->parseBiffCells($biffStream);
@@ -117,6 +119,14 @@ if (!isset($cells['1:1']) || abs($cells['1:1'] - 123.45) > 0.000001) {
 }
 if (($cells['2:0'] ?? null) !== 42) {
     fwrite(STDERR, 'Legacy spreadsheet reader should preserve BIFF RK integer values' . PHP_EOL);
+    exit(1);
+}
+if (($cells['3:0'] ?? null) !== 7 || ($cells['3:1'] ?? null) !== 8) {
+    fwrite(STDERR, 'Legacy spreadsheet reader should preserve BIFF MULRK integer values' . PHP_EOL);
+    exit(1);
+}
+if (array_key_exists('4:0', $cells) || array_key_exists('4:1', $cells)) {
+    fwrite(STDERR, 'Legacy spreadsheet reader should keep BIFF MULBLANK cells empty' . PHP_EOL);
     exit(1);
 }
 if (in_array('SECOND', $cells, true)) {

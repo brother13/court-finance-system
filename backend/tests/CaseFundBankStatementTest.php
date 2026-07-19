@@ -34,13 +34,17 @@ $checks = [
     [$source, 'public function bankReconcileList', 'CaseFund should expose bankReconcileList'],
     [$source, "requirePermission('case_fund:reconcile')", 'Bank reconcile run should require reconcile permission'],
     [$bankImplementationSource, "\$bizType = 'PAYMENT'", 'Income bank statement should reconcile to payment registration'],
+    [$bankImplementationSource, "'UNKNOWN_PAYMENT'", 'Income bank statement should also reconcile to unclaimed unknown payments'],
     [$bankImplementationSource, "\$bizType = 'REFUND'", 'Debit bank statement should reconcile to refund registration'],
     [$bankImplementationSource, 'paymentCandidatesByBankStatement', 'Income bank statement should narrow payment candidates by transaction date before serial number'],
+    [$bankImplementationSource, 'unknownPaymentCandidatesByBankStatement', 'Income bank statement should query unclaimed unknown-payment candidates'],
+    [$bankImplementationSource, 'unknownPaymentCandidatesInScope', 'Income reconciliation should report unmatched unclaimed unknown payments'],
     [$bankImplementationSource, 'refundCandidatesByBankStatement', 'Debit bank statement should reconcile refund rows by bank statement counterparty fields'],
     [$bankImplementationSource, "->where('payment_date', \$statement['transaction_date'])", 'Payment reconcile should first narrow by bank transaction date'],
     [$bankImplementationSource, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
     [$bankImplementationSource, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
-    [$source, "const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE']", 'Bank reconcile rerun should clean legacy and current automatic match rules'],
+    [$bankImplementationSource, 'PAYER_ACCOUNT_DATE', 'Unknown-payment reconcile should record payer account/date match rule'],
+    [$source, 'const BANK_RECONCILE_AUTO_MATCH_RULES = [', 'Bank reconcile rerun should define the complete automatic match-rule cleanup list'],
     [$bankPersistenceSource, "->where('match_rule', 'in', \$this->autoMatchRules)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
     [$bankImplementationSource, "'AMOUNT_DIFF'", 'Reconcile should detect amount differences'],
     [$bankImplementationSource, "'BIZ_ONLY'", 'Reconcile should report business rows without bank statement'],
@@ -75,6 +79,17 @@ foreach ($checks as [$haystack, $needle, $message]) {
     }
 }
 
+if (!preg_match('/const BANK_RECONCILE_AUTO_MATCH_RULES\s*=\s*\[(.*?)\];/s', $source, $autoMatchRuleMatch)) {
+    fwrite(STDERR, 'Bank reconcile automatic match rules should remain a class constant' . PHP_EOL);
+    exit(1);
+}
+foreach (['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE', 'PAYER_ACCOUNT_DATE'] as $autoMatchRule) {
+    if (strpos($autoMatchRuleMatch[1], "'" . $autoMatchRule . "'") === false) {
+        fwrite(STDERR, 'Bank reconcile cleanup should include automatic rule: ' . $autoMatchRule . PHP_EOL);
+        exit(1);
+    }
+}
+
 if (strpos($source, "refundCandidatesByOutOrderNo(\$statement['bank_serial_no'])") !== false) {
     fwrite(STDERR, 'Debit bank statement should not match bank serial number against refund out_order_no' . PHP_EOL);
     exit(1);
@@ -87,6 +102,11 @@ if (strpos($source, "paymentCandidatesByBankSerial(\$statement['bank_serial_no']
 
 if (strpos($source, "'match_rule' => 'SERIAL_NO'") !== false) {
     fwrite(STDERR, 'Bank reconcile cleanup should not be limited to the legacy SERIAL_NO rule' . PHP_EOL);
+    exit(1);
+}
+
+if (strpos($bankImplementationSource, 'PAYER_NAME_DATE') !== false) {
+    fwrite(STDERR, 'Claimed payment registrations without a bank serial should not auto-match by payer name' . PHP_EOL);
     exit(1);
 }
 

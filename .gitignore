@@ -43,6 +43,9 @@ backend/thinkphp/composer.lock
 .superdesign/
 .codegraph/
 
+# Codex-generated backend server update bundles
+server-update/
+
 # Local Composer launcher
 backend/composer.phar
 

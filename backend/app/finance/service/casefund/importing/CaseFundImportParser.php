@@ -240,7 +240,7 @@ class CaseFundImportParser
         return $rows;
     }
 
-    public function parseDistributionTableRows($tableRows)
+    public function parseDistributionTableRows($tableRows, $receiptTraceRequired = true)
     {
         if (empty($tableRows)) {
             throw new \Exception('文件中没有可识别的工作表数据');
@@ -249,13 +249,24 @@ class CaseFundImportParser
         foreach ($tableRows[0] as $col => $value) {
             $headers[$col] = $this->callHook('normalize_cell', [$value]);
         }
-        $required = [
+        // 无单据号版清单使用“承办法官”表示转入承办法官。
+        if (!in_array('转入承办法官', $headers, true)) {
+            $judgeColumn = array_search('承办法官', $headers, true);
+            if ($judgeColumn !== false) {
+                $headers[$judgeColumn] = '转入承办法官';
+            }
+        }
+        $allHeaders = [
             '序号', '分配单号', '转入案号', '转入承办法官', '转入当事人',
             '转出案号', '转出承办法官', '转出当事人', '开票种类', '单据号',
             '分配金额', '申请人', '申请日期', '接收日期', '状态', '情况说明',
             '原开票日期',
         ];
-        $index = $this->headerIndex($headers, $required);
+        $required = $receiptTraceRequired ? $allHeaders : [
+            '转入案号', '转出案号', '开票种类', '分配金额', '接收日期',
+        ];
+        $optional = $receiptTraceRequired ? [] : array_values(array_diff($allHeaders, $required));
+        $index = $this->headerIndex($headers, $required, $optional);
 
         $rows = [];
         for ($row = 1; $row < count($tableRows); $row++) {
@@ -274,22 +285,22 @@ class CaseFundImportParser
             $parsed = [
                 'fiscal_year' => $receiveDate === '' ? '' : substr($receiveDate, 0, 4),
                 'period' => $receiveDate === '' ? '' : substr($receiveDate, 0, 7),
-                'distribution_no' => $raw['分配单号'],
-                'in_case_no' => $raw['转入案号'],
-                'in_judge_name' => $raw['转入承办法官'],
-                'in_party_name' => $raw['转入当事人'],
-                'out_case_no' => $raw['转出案号'],
-                'out_judge_name' => $raw['转出承办法官'],
-                'out_party_name' => $raw['转出当事人'],
-                'invoice_type' => $raw['开票种类'],
-                'receipt_no' => $raw['单据号'],
+                'distribution_no' => $raw['分配单号'] ?? '',
+                'in_case_no' => $raw['转入案号'] ?? '',
+                'in_judge_name' => $raw['转入承办法官'] ?? '',
+                'in_party_name' => $raw['转入当事人'] ?? '',
+                'out_case_no' => $raw['转出案号'] ?? '',
+                'out_judge_name' => $raw['转出承办法官'] ?? '',
+                'out_party_name' => $raw['转出当事人'] ?? '',
+                'invoice_type' => $raw['开票种类'] ?? '',
+                'receipt_no' => $raw['单据号'] ?? '',
                 'distribution_amount' => $amount,
-                'applicant_name' => $raw['申请人'],
-                'apply_date' => $this->callHook('nullable_date', [$raw['申请日期']]),
+                'applicant_name' => $raw['申请人'] ?? '',
+                'apply_date' => $this->callHook('nullable_date', [$raw['申请日期'] ?? '']),
                 'receive_date' => $receiveDate,
-                'business_status' => $raw['状态'],
-                'description' => $raw['情况说明'],
-                'original_invoice_date' => $this->callHook('nullable_date', [$raw['原开票日期']]),
+                'business_status' => $raw['状态'] ?? '',
+                'description' => $raw['情况说明'] ?? '',
+                'original_invoice_date' => $this->callHook('nullable_date', [$raw['原开票日期'] ?? '']),
                 'source_row_no' => $row + 1,
                 'source_raw_json' => json_encode($raw, JSON_UNESCAPED_UNICODE),
             ];

@@ -68,9 +68,40 @@
         <el-table-column prop="purpose" label="用途" min-width="180" show-overflow-tooltip />
         <el-table-column prop="postscript" label="留言" min-width="180" show-overflow-tooltip />
         <el-table-column prop="bank_serial_no" label="交易流水号" min-width="150" show-overflow-tooltip />
+        <el-table-column label="关联业务" width="250" fixed="right">
+          <template #default="{ row }">
+            <div v-if="primaryBusinessItem(row)" class="reconcile-business-cell">
+              <el-link
+                type="primary"
+                :underline="false"
+                class="reconcile-business-link"
+                @click.stop="navigatePrimaryBusiness(row)"
+              >
+                {{ primaryBusinessLabel(row) }}
+              </el-link>
+              <span class="reconcile-business-amount">{{ money(primaryBusinessItem(row)?.biz_amount) }}</span>
+            </div>
+            <el-button
+              v-else-if="businessReconcileItems(row).length > 0"
+              link
+              type="warning"
+              @click.stop="openReconcileDetail(row)"
+            >
+              查看 {{ businessReconcileItems(row).length }} 条候选
+            </el-button>
+            <span v-else class="muted-text">未找到关联业务</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="reconcile_status" label="对账状态" width="110" align="center" fixed="right">
           <template #default="{ row }">
-            <el-tag effect="light" :type="reconcileStatusType(row.reconcile_status)">{{ reconcileStatusLabel(row.reconcile_status) }}</el-tag>
+            <el-tag
+              effect="light"
+              :type="reconcileStatusType(row.reconcile_status)"
+              :class="{ 'reconcile-status-clickable': reconcileItems(row).length > 0 }"
+              @click.stop="openReconcileDetail(row)"
+            >
+              {{ reconcileStatusLabel(row.reconcile_status) }}
+            </el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -89,19 +120,71 @@
       />
     </div>
 
+    <el-drawer v-model="reconcileDetailVisible" title="银行对账详情" size="760px">
+      <template v-if="selectedStatement">
+        <el-descriptions :column="2" border class="reconcile-bank-detail">
+          <el-descriptions-item label="交易时间">{{ selectedStatement.transaction_time }}</el-descriptions-item>
+          <el-descriptions-item label="收支方向">{{ selectedStatement.direction === 'CREDIT' ? '收入' : '支出' }}</el-descriptions-item>
+          <el-descriptions-item label="银行金额">{{ money(statementAmount(selectedStatement)) }}</el-descriptions-item>
+          <el-descriptions-item label="交易流水号">{{ selectedStatement.bank_serial_no || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="对方户名">{{ selectedStatement.counterparty_account_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="对方账号">{{ selectedStatement.counterparty_account_no || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="用途" :span="2">{{ selectedStatement.purpose || selectedStatement.postscript || '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div class="reconcile-detail-title">关联结果</div>
+        <el-table :data="reconcileItems(selectedStatement)" border empty-text="暂无有效对账结果">
+          <el-table-column label="业务来源" width="100">
+            <template #default="{ row }">{{ row.biz_id ? businessTypeLabel(row.biz_type) : '-' }}</template>
+          </el-table-column>
+          <el-table-column label="业务编号" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.biz_id ? businessIdentifier(row) : '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="biz_summary" label="业务摘要" min-width="190" show-overflow-tooltip />
+          <el-table-column label="业务金额" width="110" align="right">
+            <template #default="{ row }">{{ money(row.biz_amount) }}</template>
+          </el-table-column>
+          <el-table-column label="差额" width="105" align="right">
+            <template #default="{ row }">
+              <span :class="{ 'reconcile-diff': Number(row.diff_amount || 0) !== 0 }">{{ money(row.diff_amount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="结果" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="reconcileStatusType(row.match_status)">{{ reconcileStatusLabel(row.match_status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" fixed="right" align="center">
+            <template #default="{ row }">
+              <el-button v-if="row.biz_id && canNavigateBusiness(row)" link type="primary" @click="navigateToBusiness(row)">查看业务</el-button>
+              <span v-else class="muted-text">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-descriptions v-if="selectedReconcileItem" :column="2" border class="reconcile-rule-detail">
+          <el-descriptions-item label="匹配规则">{{ matchRuleLabel(selectedReconcileItem.match_rule) }}</el-descriptions-item>
+          <el-descriptions-item label="对账时间">{{ selectedReconcileItem.matched_time || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="银行摘要" :span="2">{{ selectedReconcileItem.bank_summary || '-' }}</el-descriptions-item>
+        </el-descriptions>
+      </template>
+    </el-drawer>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DocumentChecked, Search, Upload, Delete } from '@element-plus/icons-vue'
 import * as XLSX from 'xlsx'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
-import type { CaseFundBankStatement } from '../../types/api'
+import type { CaseFundBankReconcile, CaseFundBankStatement } from '../../types/api'
 
 const context = useContextStore()
+const router = useRouter()
 const bankOptions = [
   { code: 'SHENGJING', name: '盛京银行' },
   { code: 'CCB', name: '建设银行' }
@@ -118,6 +201,8 @@ const reconciling = ref(false)
 const deleting = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedStatementIds = ref<string[]>([])
+const reconcileDetailVisible = ref(false)
+const selectedStatement = ref<CaseFundBankStatement | null>(null)
 const initialRange = initialStatementDateRange(context.period)
 const filters = reactive({
   bank_code: bankCodeFromAccountSetName(context.accountSetBankName),
@@ -133,6 +218,7 @@ const statementStatusSummary = computed(() => rows.value.reduce<Record<string, n
   summary[status] = (summary[status] || 0) + 1
   return summary
 }, {}))
+const selectedReconcileItem = computed(() => reconcileItems(selectedStatement.value)[0] || null)
 
 const load = async () => {
   loading.value = true
@@ -185,6 +271,94 @@ const isStatementSelectable = (row: CaseFundBankStatement) => {
 
 const handleStatementSelectionChange = (selection: CaseFundBankStatement[]) => {
   selectedStatementIds.value = selection.map((row) => row.statement_id)
+}
+
+const reconcileItems = (row: CaseFundBankStatement | null | undefined) => row?.reconcile_items || []
+
+const businessReconcileItems = (row: CaseFundBankStatement | null | undefined) => {
+  return reconcileItems(row).filter((item) => Boolean(item.biz_id))
+}
+
+const primaryBusinessItem = (row: CaseFundBankStatement | null | undefined) => {
+  const items = businessReconcileItems(row)
+  if (items.length !== 1 || row?.reconcile_status === 'DUPLICATE') return null
+  return items[0]
+}
+
+const openReconcileDetail = (row: CaseFundBankStatement) => {
+  if (reconcileItems(row).length === 0) return
+  selectedStatement.value = row
+  reconcileDetailVisible.value = true
+}
+
+const businessTypeLabel = (bizType: string | undefined) => {
+  const labels: Record<string, string> = {
+    PAYMENT: '缴费登记',
+    UNKNOWN_PAYMENT: '不明款',
+    REFUND: '出账查询'
+  }
+  return labels[bizType || ''] || '业务记录'
+}
+
+const businessIdentifier = (item: CaseFundBankReconcile) => {
+  return String(item.biz_no || item.biz_summary || '查看记录').trim()
+}
+
+const primaryBusinessLabel = (row: CaseFundBankStatement) => {
+  const item = primaryBusinessItem(row)
+  return item ? `${businessTypeLabel(item.biz_type)} · ${businessIdentifier(item)}` : '-'
+}
+
+const businessNavigation = (item: CaseFundBankReconcile) => {
+  if (!item.biz_id) return null
+  if (item.biz_type === 'PAYMENT') {
+    return { permission: 'menu:case_fund:payment', path: '/case-fund/payments', query: { payment_id: item.biz_id } }
+  }
+  if (item.biz_type === 'UNKNOWN_PAYMENT') {
+    return { permission: 'menu:case_fund:unknown_payment', path: '/case-fund/unknown-payments', query: { unknown_payment_id: item.biz_id } }
+  }
+  if (item.biz_type === 'REFUND') {
+    return { permission: 'menu:case_fund:refund', path: '/case-fund/refunds', query: { refund_id: item.biz_id } }
+  }
+  return null
+}
+
+const canNavigateBusiness = (item: CaseFundBankReconcile) => {
+  const target = businessNavigation(item)
+  return Boolean(target && context.hasPermission(target.permission))
+}
+
+const navigateToBusiness = async (item: CaseFundBankReconcile) => {
+  const target = businessNavigation(item)
+  if (!target) {
+    ElMessage.warning('当前对账结果没有可查看的业务记录')
+    return
+  }
+  if (!context.hasPermission(target.permission)) {
+    ElMessage.warning('当前账号没有查看该业务页面的权限')
+    return
+  }
+  reconcileDetailVisible.value = false
+  await router.push({ path: target.path, query: target.query })
+}
+
+const navigatePrimaryBusiness = async (row: CaseFundBankStatement) => {
+  const item = primaryBusinessItem(row)
+  if (item) await navigateToBusiness(item)
+}
+
+const statementAmount = (row: CaseFundBankStatement) => {
+  return row.direction === 'CREDIT' ? row.credit_amount : row.debit_amount
+}
+
+const matchRuleLabel = (rule: string | undefined) => {
+  const labels: Record<string, string> = {
+    SERIAL_NO: '流水号',
+    SERIAL_NO_DATE: '交易日期 + 流水号',
+    PAYER_ACCOUNT_DATE: '交易日期 + 付款账号',
+    PAYEE_ACCOUNT_DATE: '交易日期 + 收款账号/户名'
+  }
+  return labels[rule || ''] || rule || '-'
 }
 
 const handleDeleteBankStatements = async () => {
@@ -441,5 +615,54 @@ onMounted(async () => {
 <style scoped>
 .case-fund-summary {
   grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+}
+
+.reconcile-business-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.reconcile-business-link {
+  max-width: 100%;
+}
+
+.reconcile-business-link :deep(.el-link__inner) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reconcile-business-amount {
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.reconcile-status-clickable {
+  cursor: pointer;
+}
+
+.reconcile-bank-detail,
+.reconcile-rule-detail {
+  margin-bottom: 20px;
+}
+
+.reconcile-rule-detail {
+  margin-top: 20px;
+}
+
+.reconcile-detail-title {
+  margin: 4px 0 12px;
+  color: var(--el-text-color-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.reconcile-diff {
+  color: var(--el-color-danger);
+  font-weight: 600;
 }
 </style>

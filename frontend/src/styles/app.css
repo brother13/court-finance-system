@@ -2018,6 +2018,19 @@ body {
   color: var(--text-mute);
 }
 
+.voucher-number-link {
+  color: var(--brand-blue);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.voucher-number-link:hover,
+.voucher-number-link:focus-visible {
+  color: var(--brand-blue-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 1200px) {
   .case-fund-toolbar {
     grid-template-columns: 1fr;

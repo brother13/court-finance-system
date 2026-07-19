@@ -372,15 +372,50 @@ bankingRuleAssertSame(
     'Refund reconcile summary should preserve its legacy wording'
 );
 
+$unknownPayment = [
+    'unknown_payment_id' => 'unknown-payment-001',
+    'payer_account_no' => '62220002',
+    'transaction_date' => '2026-07-17',
+    'unknown_amount' => '45.67',
+    'payer_name' => '汇款人丙',
+    'bank_summary' => '不明来款',
+    'bank_remark' => '待确认用途',
+];
+$unknownBizOnly = $probe->reconcileRow(
+    null,
+    'UNKNOWN_PAYMENT',
+    $unknownPayment,
+    'BIZ_ONLY',
+    0,
+    4567,
+    'PAYER_ACCOUNT_DATE'
+);
+bankingRuleAssertSame('UNKNOWN_PAYMENT', $unknownBizOnly['biz_type'], 'Unknown-payment reconcile rows should retain their independent business type');
+bankingRuleAssertSame('2026-07-17', $unknownBizOnly['reconcile_date'], 'Business-only unknown payments should use transaction date');
+bankingRuleAssertSame('', $unknownBizOnly['bank_serial_no'], 'Unknown-payment rows should not disguise payer account as a bank serial');
+bankingRuleAssertSame('62220002', $unknownBizOnly['biz_no'], 'Unknown-payment payer account should remain in the business-number field');
+bankingRuleAssertSame('CREDIT', $unknownBizOnly['bank_direction'], 'Unknown payments should be income bank rows');
+bankingRuleAssertSame('45.67', $unknownBizOnly['biz_amount'], 'Unknown-payment cents should convert back to yuan exactly once');
+bankingRuleAssertSame(
+    '汇款人丙 不明来款 待确认用途',
+    $unknownBizOnly['biz_summary'],
+    'Unknown-payment reconcile summary should preserve payer and bank descriptions'
+);
+
 bankingRuleAssertSame(9750, $probe->bizAmountCents('PAYMENT', $payment), 'Payment reconcile amount should use payment_amount');
 bankingRuleAssertSame(1234, $probe->bizAmountCents('REFUND', $refund), 'Refund reconcile amount should use refund_amount');
+bankingRuleAssertSame(4567, $probe->bizAmountCents('UNKNOWN_PAYMENT', $unknownPayment), 'Unknown-payment reconcile amount should use unknown_amount');
 bankingRuleAssertSame('payment-001', $probe->bizId('PAYMENT', $payment), 'Payment reconcile id should use payment_id');
 bankingRuleAssertSame('refund-001', $probe->bizId('REFUND', $refund), 'Refund reconcile id should use refund_id');
+bankingRuleAssertSame('unknown-payment-001', $probe->bizId('UNKNOWN_PAYMENT', $unknownPayment), 'Unknown-payment reconcile id should use unknown_payment_id');
 bankingRuleAssertSame('PAY-SERIAL-001', $probe->bizNo('PAYMENT', $payment), 'Payment reconcile number should use bank serial');
 bankingRuleAssertSame('OUT-001', $probe->bizNo('REFUND', $refund), 'Refund reconcile number should use out-order number');
+bankingRuleAssertSame('62220002', $probe->bizNo('UNKNOWN_PAYMENT', $unknownPayment), 'Unknown-payment reconcile number should use payer account');
 bankingRuleAssertSame('2026-07-14', $probe->bizDate('PAYMENT', $payment), 'Payment reconcile date should use payment date');
 bankingRuleAssertSame('2026-07-16', $probe->bizDate('REFUND', $refund), 'Refund reconcile date should use refund date');
+bankingRuleAssertSame('2026-07-17', $probe->bizDate('UNKNOWN_PAYMENT', $unknownPayment), 'Unknown-payment reconcile date should use transaction date');
 bankingRuleAssertSame('（2026）辽0111执1号 缴费人甲 当事人甲', $probe->bizSummary('PAYMENT', $payment), 'Payment reconcile summary should remain stable');
+bankingRuleAssertSame('汇款人丙 不明来款 待确认用途', $probe->bizSummary('UNKNOWN_PAYMENT', $unknownPayment), 'Unknown-payment reconcile summary should preserve payer and bank descriptions');
 bankingRuleAssertSame([
     'MATCHED' => 0,
     'AMOUNT_DIFF' => 0,

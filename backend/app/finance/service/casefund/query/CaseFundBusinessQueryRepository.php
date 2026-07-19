@@ -38,17 +38,22 @@ class CaseFundBusinessQueryRepository
     public function paymentList($data, $page, $pageSize, $allowedBusinessTypes)
     {
         $where = $this->baseWhere();
-        $this->applyCommonWhere($where, $data);
-        $paymentMethodFilter = trim((string)($data['payment_method'] ?? ($data['paymentMethod'] ?? '')));
-        if ($paymentMethodFilter !== '') {
-            $paymentMethod = $this->callHook('normalize_payment_method', [$paymentMethodFilter]);
-            if (isset($this->callHook('payment_method_options')[$paymentMethod])) {
-                $where['payment_method'] = $paymentMethod;
+        $paymentId = $this->normalizeExactId($data['payment_id'] ?? ($data['paymentId'] ?? ''));
+        if ($paymentId !== '') {
+            $where['payment_id'] = $paymentId;
+        } else {
+            $this->applyCommonWhere($where, $data);
+            $paymentMethodFilter = trim((string)($data['payment_method'] ?? ($data['paymentMethod'] ?? '')));
+            if ($paymentMethodFilter !== '') {
+                $paymentMethod = $this->callHook('normalize_payment_method', [$paymentMethodFilter]);
+                if (isset($this->callHook('payment_method_options')[$paymentMethod])) {
+                    $where['payment_method'] = $paymentMethod;
+                }
             }
+            $this->applyRawDateRange($where, 'payment_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
         }
-        $this->applyRawDateRange($where, 'payment_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
         $where['business_type'] = ['in', $allowedBusinessTypes];
-        $keyword = trim($data['keyword'] ?? '');
+        $keyword = $paymentId === '' ? trim($data['keyword'] ?? '') : '';
         $keywordFields = 'case_no|trial_case_no|payer_name|party_name|receipt_no|bank_serial_no|payment_order_no';
 
         $query = $this->db($this->tables['payment'])->where($where);
@@ -66,21 +71,26 @@ class CaseFundBusinessQueryRepository
     public function refundList($data, $page, $pageSize, $allowedOutTypes)
     {
         $where = $this->baseWhere();
-        $this->applyCommonWhere($where, $data);
-        $dateStart = $this->callHook('normalize_date_filter', [
-            $data['date_start'] ?? ($data['startDate'] ?? ''),
-        ]);
-        $dateEnd = $this->callHook('normalize_date_filter', [
-            $data['date_end'] ?? ($data['endDate'] ?? ''),
-        ]);
-        $this->applyRawDateRange($where, 'refund_date', $dateStart, $dateEnd);
-        if (!empty($data['out_status'])) {
-            $where['out_status'] = $data['out_status'];
+        $refundId = $this->normalizeExactId($data['refund_id'] ?? ($data['refundId'] ?? ''));
+        if ($refundId !== '') {
+            $where['refund_id'] = $refundId;
+        } else {
+            $this->applyCommonWhere($where, $data);
+            $dateStart = $this->callHook('normalize_date_filter', [
+                $data['date_start'] ?? ($data['startDate'] ?? ''),
+            ]);
+            $dateEnd = $this->callHook('normalize_date_filter', [
+                $data['date_end'] ?? ($data['endDate'] ?? ''),
+            ]);
+            $this->applyRawDateRange($where, 'refund_date', $dateStart, $dateEnd);
+            if (!empty($data['out_status'])) {
+                $where['out_status'] = $data['out_status'];
+            }
         }
         $where['out_type'] = ['in', $allowedOutTypes];
-        $caseNo = trim($data['case_no'] ?? ($data['caseNo'] ?? ''));
-        $partyName = trim($data['party_name'] ?? ($data['partyName'] ?? ''));
-        $keyword = trim($data['keyword'] ?? '');
+        $caseNo = $refundId === '' ? trim($data['case_no'] ?? ($data['caseNo'] ?? '')) : '';
+        $partyName = $refundId === '' ? trim($data['party_name'] ?? ($data['partyName'] ?? '')) : '';
+        $keyword = $refundId === '' ? trim($data['keyword'] ?? '') : '';
 
         $query = $this->refundFilteredQuery($where, $caseNo, $partyName, $keyword);
         $totalQuery = $this->refundFilteredQuery($where, $caseNo, $partyName, $keyword);
@@ -97,16 +107,23 @@ class CaseFundBusinessQueryRepository
     public function unknownPaymentList($data, $page, $pageSize)
     {
         $where = $this->baseWhere();
-        $this->applyCommonWhere($where, $data);
-        if (!empty($data['claim_status'])) {
-            $where['claim_status'] = $data['claim_status'];
+        $unknownPaymentId = $this->normalizeExactId(
+            $data['unknown_payment_id'] ?? ($data['unknownPaymentId'] ?? '')
+        );
+        if ($unknownPaymentId !== '') {
+            $where['unknown_payment_id'] = $unknownPaymentId;
+        } else {
+            $this->applyCommonWhere($where, $data);
+            if (!empty($data['claim_status'])) {
+                $where['claim_status'] = $data['claim_status'];
+            }
+            $this->applyRawDateRange($where, 'transaction_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
         }
-        $this->applyRawDateRange($where, 'transaction_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
         return $this->simpleAmountList(
             'unknown_payment',
             $where,
             'payer_name|bank_summary|bank_remark|court_bank_account_no|payer_bank_name|payer_account_no',
-            trim($data['keyword'] ?? ''),
+            $unknownPaymentId === '' ? trim($data['keyword'] ?? '') : '',
             'unknown_amount',
             'transaction_date asc, source_row_no asc',
             $page,
@@ -200,6 +217,11 @@ class CaseFundBusinessQueryRepository
         if ($keyword !== '') {
             $query->where($fields, 'like', '%' . $keyword . '%');
         }
+    }
+
+    protected function normalizeExactId($value)
+    {
+        return is_string($value) || is_numeric($value) ? trim((string)$value) : '';
     }
 
     protected function db($table)

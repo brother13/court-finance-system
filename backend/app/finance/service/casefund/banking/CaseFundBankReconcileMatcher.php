@@ -14,10 +14,13 @@ class CaseFundBankReconcileMatcher
         foreach ([
             'amount_to_cents',
             'payment_candidates_by_statement',
+            'unknown_payment_candidates_by_statement',
             'refund_candidates_by_statement',
             'payment_candidates_in_scope',
+            'unknown_payment_candidates_in_scope',
             'refund_candidates_in_scope',
             'bank_statement_exists_by_payment',
+            'bank_statement_exists_by_unknown_payment',
             'bank_statement_exists_by_refund',
             'build_reconcile_row',
             'biz_amount_cents',
@@ -35,6 +38,7 @@ class CaseFundBankReconcileMatcher
         $statementIds = [];
         $resultRows = [];
         $matchedBiz = [];
+        $candidateBiz = [];
         $statementStatuses = [];
 
         foreach ($statements as $statement) {
@@ -48,10 +52,30 @@ class CaseFundBankReconcileMatcher
                 $candidates = $this->callHook('payment_candidates_by_statement', [$statement]);
                 $bizType = 'PAYMENT';
                 $matchRule = 'SERIAL_NO_DATE';
+                // 缴费登记优先；仅在没有流水号候选时再匹配未认领不明款。
+                if (empty($candidates)) {
+                    $candidates = $this->callHook('unknown_payment_candidates_by_statement', [$statement]);
+                    if (!empty($candidates)) {
+                        $bizType = 'UNKNOWN_PAYMENT';
+                        $matchRule = 'PAYER_ACCOUNT_DATE';
+                    }
+                }
             } else {
                 $candidates = $this->callHook('refund_candidates_by_statement', [$statement]);
                 $bizType = 'REFUND';
                 $matchRule = 'PAYEE_ACCOUNT_DATE';
+            }
+
+            if (!empty($candidates)) {
+                $matchRule = trim((string)($candidates[0]['__match_rule'] ?? $matchRule));
+                foreach ($candidates as $candidate) {
+                    $candidateBiz[$this->bizKey($bizType, $candidate)] = true;
+                }
+                if ($direction === 'CREDIT') {
+                    $candidates = array_values(array_filter($candidates, function ($candidate) use ($bizType, $matchedBiz) {
+                        return !isset($matchedBiz[$this->bizKey($bizType, $candidate)]);
+                    }));
+                }
             }
 
             if (empty($candidates)) {
@@ -66,6 +90,16 @@ class CaseFundBankReconcileMatcher
                 ]);
                 $statementStatuses[$statement['statement_id']] = 'BANK_ONLY';
                 continue;
+            }
+
+            // 同一识别条件命中多条业务数据时，金额只用于消除歧义，不替代流水号/账号识别。
+            if ($direction === 'CREDIT' && count($candidates) > 1) {
+                $amountMatches = array_values(array_filter($candidates, function ($candidate) use ($bizType, $bankCents) {
+                    return $this->callHook('biz_amount_cents', [$bizType, $candidate]) === $bankCents;
+                }));
+                if (!empty($amountMatches)) {
+                    $candidates = $amountMatches;
+                }
             }
 
             if (count($candidates) > 1) {
@@ -113,8 +147,8 @@ class CaseFundBankReconcileMatcher
                 $dateStart,
                 $dateEnd,
             ]);
-            if (!$bankExists) {
-                $bizCents = $this->callHook('amount_to_cents', [$payment['payment_amount']]);
+            if (!$bankExists || isset($candidateBiz[$key])) {
+                $bizCents = $this->callHook('biz_amount_cents', ['PAYMENT', $payment]);
                 $resultRows[] = $this->callHook('build_reconcile_row', [
                     null,
                     'PAYMENT',
@@ -123,6 +157,31 @@ class CaseFundBankReconcileMatcher
                     0,
                     $bizCents,
                     'SERIAL_NO_DATE',
+                ]);
+            }
+        }
+
+        foreach ($this->callHook('unknown_payment_candidates_in_scope', [$dateStart, $dateEnd]) as $unknownPayment) {
+            $key = $this->bizKey('UNKNOWN_PAYMENT', $unknownPayment);
+            if (isset($matchedBiz[$key])) {
+                continue;
+            }
+            $bankExists = $this->callHook('bank_statement_exists_by_unknown_payment', [
+                $unknownPayment,
+                $bankCode,
+                $dateStart,
+                $dateEnd,
+            ]);
+            if (!$bankExists || isset($candidateBiz[$key])) {
+                $bizCents = $this->callHook('biz_amount_cents', ['UNKNOWN_PAYMENT', $unknownPayment]);
+                $resultRows[] = $this->callHook('build_reconcile_row', [
+                    null,
+                    'UNKNOWN_PAYMENT',
+                    $unknownPayment,
+                    'BIZ_ONLY',
+                    0,
+                    $bizCents,
+                    'PAYER_ACCOUNT_DATE',
                 ]);
             }
         }
@@ -139,7 +198,7 @@ class CaseFundBankReconcileMatcher
                 $dateEnd,
             ]);
             if (!$bankExists) {
-                $bizCents = $this->callHook('amount_to_cents', [$refund['refund_amount']]);
+                $bizCents = $this->callHook('biz_amount_cents', ['REFUND', $refund]);
                 $resultRows[] = $this->callHook('build_reconcile_row', [
                     null,
                     'REFUND',

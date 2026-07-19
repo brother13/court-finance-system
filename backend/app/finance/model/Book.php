@@ -86,8 +86,8 @@ class Book extends Common
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
             'v.del_flag' => 0,
+            'v.void_flag' => 0,
             'v.voucher_date' => ['between', [$startDate, $endDate]],
-            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
         ];
         $codeRule = $this->subjectCodeRule();
         $lengths = $this->subjectCodeRuleLengths($codeRule);
@@ -649,7 +649,7 @@ class Book extends Common
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
             'v.del_flag' => 0,
-            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
+            'v.void_flag' => 0,
         ];
 
         $query = db($detailTable)->alias('d')
@@ -1304,8 +1304,8 @@ class Book extends Common
             'd.del_flag' => 0,
             'v.fiscal_year' => $params['fiscal_year'],
             'v.del_flag' => 0,
+            'v.void_flag' => 0,
             'v.voucher_date' => ['between', [$params['start_date'], $params['end_date']]],
-            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
         ];
         $query = db('fin_voucher_detail')->alias('d')
             ->force('idx_voucher_detail_ledger_subject')
@@ -1736,8 +1736,13 @@ class Book extends Common
             'del_flag' => 0,
         ];
         try {
-            $count = (int)db('fin_aux_balance_snapshot')->where($where)->count();
-            return $count > 0;
+            $row = db('fin_aux_balance_snapshot')->where($where)
+                ->field('count(*) as row_count,max(source_updated_time) as source_updated_time')
+                ->find();
+            if ((int)($row['row_count'] ?? 0) <= 0) {
+                return false;
+            }
+            return (string)($row['source_updated_time'] ?? '') === $this->auxBalanceSourceUpdatedTime($period);
         } catch (\Exception $e) {
             return false;
         }
@@ -1822,7 +1827,7 @@ class Book extends Common
             'd.del_flag' => 0,
             'v.fiscal_year' => $fiscalYear,
             'v.del_flag' => 0,
-            'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
+            'v.void_flag' => 0,
             'case_aux.aux_type_code' => 'case_no',
             'case_aux.del_flag' => 0,
         ];
@@ -2041,7 +2046,7 @@ class Book extends Common
                 'd.del_flag' => 0,
                 'v.fiscal_year' => $fiscalYear,
                 'v.del_flag' => 0,
-                'v.status' => ['in', ['AUDITED', 'POSTED', 'PRINTED']],
+                'v.void_flag' => 0,
             ])
             ->where('d.period', 'between', [$startPeriod, $endPeriod])
             ->where('v.period', 'between', [$startPeriod, $endPeriod])

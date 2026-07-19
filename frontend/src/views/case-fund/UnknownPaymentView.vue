@@ -42,6 +42,13 @@
       </div>
     </div>
 
+    <el-alert v-if="linkedUnknownPaymentId" type="info" show-icon :closable="false" class="case-fund-link-alert">
+      <template #title>
+        <span>正在查看银行对账关联的不明款记录</span>
+        <el-button link type="primary" @click="clearLinkedUnknownPayment">返回当前期间全部数据</el-button>
+      </template>
+    </el-alert>
+
     <div class="case-fund-summary">
       <div>
         <span>不明款笔数</span>
@@ -89,7 +96,15 @@
         </el-table-column>
         <el-table-column label="凭证" width="110" align="center" fixed="right">
           <template #default="{ row }">
-            <span v-if="row.voucher_no">{{ row.voucher_period }}-{{ row.voucher_no }}</span>
+            <router-link
+              v-if="row.voucher_no && row.voucher_id && context.hasPermission('menu:voucher')"
+              class="voucher-number-link"
+              :to="{ path: '/vouchers', query: { period: row.voucher_period, voucher_id: row.voucher_id } }"
+              title="在凭证中心查看该凭证"
+            >
+              {{ row.voucher_period }}-{{ row.voucher_no }}
+            </router-link>
+            <span v-else-if="row.voucher_no">{{ row.voucher_period }}-{{ row.voucher_no }}</span>
             <span v-else class="muted-text">-</span>
           </template>
         </el-table-column>
@@ -154,7 +169,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Delete, DocumentChecked, MoreFilled, Search, Setting, Upload } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
@@ -164,6 +180,8 @@ import { buildSubjectTreeOptions } from '../../utils/subjectTree'
 import type { CaseFundSubjectConfig, CaseFundUnknownPayment, Subject } from '../../types/api'
 
 const context = useContextStore()
+const route = useRoute()
+const router = useRouter()
 const rows = ref<CaseFundUnknownPayment[]>([])
 const subjects = ref<Subject[]>([])
 const total = ref(0)
@@ -191,6 +209,7 @@ const filters = reactive({
   claim_status: '',
   keyword: ''
 })
+const linkedUnknownPaymentId = computed(() => routeQueryText(route.query.unknown_payment_id))
 
 const pageAmountText = computed(() => {
   const totalCents = rows.value.reduce((sum, row) => sum + Math.round(Number(row.unknown_amount || 0) * 100), 0)
@@ -205,6 +224,7 @@ const load = async () => {
   loading.value = true
   try {
     const result = await caseFundApi.unknownPaymentList({
+      unknown_payment_id: linkedUnknownPaymentId.value,
       date_start: filters.date_start,
       date_end: filters.date_end,
       voucher_status: filters.voucher_status,
@@ -221,8 +241,23 @@ const load = async () => {
 }
 
 const query = async () => {
+  if (linkedUnknownPaymentId.value) {
+    await clearLinkedUnknownPayment()
+    return
+  }
   page.value = 1
   await load()
+}
+
+const clearLinkedUnknownPayment = async () => {
+  const nextQuery = { ...route.query }
+  delete nextQuery.unknown_payment_id
+  await router.replace({ path: route.path, query: nextQuery })
+}
+
+const routeQueryText = (value: unknown) => {
+  const target = Array.isArray(value) ? value[0] : value
+  return typeof target === 'string' || typeof target === 'number' ? String(target).trim() : ''
 }
 
 const openSubjectConfig = async () => {
@@ -460,8 +495,23 @@ const handleDeleteUnknownPayments = async () => {
   }
 }
 
+watch(
+  () => route.query.unknown_payment_id,
+  async () => {
+    if (route.path !== '/case-fund/unknown-payments') return
+    page.value = 1
+    await load()
+  }
+)
+
 onMounted(load)
 </script>
+
+<style scoped>
+.case-fund-link-alert {
+  margin-bottom: 12px;
+}
+</style>
 
 <style scoped>
 .status-select {

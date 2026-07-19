@@ -121,7 +121,7 @@ class CaseFundBankingRule
             'biz_type' => $bizType,
             'biz_id' => $biz ? $this->callHook('bank_reconcile_biz_id', [$bizType, $biz]) : null,
             'biz_no' => $biz ? $this->callHook('bank_reconcile_biz_no', [$bizType, $biz]) : '',
-            'bank_serial_no' => $statement['bank_serial_no'] ?? ($bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($biz['out_order_no'] ?? '')),
+            'bank_serial_no' => $statement['bank_serial_no'] ?? ($bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($bizType === 'REFUND' ? ($biz['out_order_no'] ?? '') : '')),
             'bank_amount' => $this->callHook('cents_to_decimal', [$bankCents]),
             'biz_amount' => $this->callHook('cents_to_decimal', [$bizCents]),
             'diff_amount' => $this->callHook('cents_to_decimal', [$bankCents - $bizCents]),
@@ -129,7 +129,7 @@ class CaseFundBankingRule
             'match_rule' => $matchRule,
             'matched_by' => $this->callHook('current_user_id'),
             'matched_time' => $this->callHook('now'),
-            'bank_direction' => $statement['direction'] ?? ($bizType === 'PAYMENT' ? 'CREDIT' : 'DEBIT'),
+            'bank_direction' => $statement['direction'] ?? (in_array($bizType, ['PAYMENT', 'UNKNOWN_PAYMENT'], true) ? 'CREDIT' : 'DEBIT'),
             'bank_summary' => $bankSummary,
             'biz_summary' => $biz ? $this->callHook('bank_reconcile_biz_summary', [$bizType, $biz]) : '',
             'remark' => '',
@@ -141,28 +141,52 @@ class CaseFundBankingRule
         if ($bizType === 'PAYMENT') {
             return $this->callHook('amount_to_cents', [$biz['payment_amount'] ?? '0']);
         }
+        if ($bizType === 'UNKNOWN_PAYMENT') {
+            return $this->callHook('amount_to_cents', [$biz['unknown_amount'] ?? '0']);
+        }
         return $this->callHook('amount_to_cents', [$biz['refund_amount'] ?? '0']);
     }
 
     public function bankReconcileBizId($bizType, $biz)
     {
-        return $bizType === 'PAYMENT' ? ($biz['payment_id'] ?? '') : ($biz['refund_id'] ?? '');
+        if ($bizType === 'PAYMENT') {
+            return $biz['payment_id'] ?? '';
+        }
+        if ($bizType === 'UNKNOWN_PAYMENT') {
+            return $biz['unknown_payment_id'] ?? '';
+        }
+        return $biz['refund_id'] ?? '';
     }
 
     public function bankReconcileBizNo($bizType, $biz)
     {
-        return $bizType === 'PAYMENT' ? ($biz['bank_serial_no'] ?? '') : ($biz['out_order_no'] ?? '');
+        if ($bizType === 'PAYMENT') {
+            return $biz['bank_serial_no'] ?? '';
+        }
+        if ($bizType === 'UNKNOWN_PAYMENT') {
+            return $biz['payer_account_no'] ?? '';
+        }
+        return $biz['out_order_no'] ?? '';
     }
 
     public function bankReconcileBizDate($bizType, $biz)
     {
-        return $bizType === 'PAYMENT' ? ($biz['payment_date'] ?? '') : ($biz['refund_date'] ?? '');
+        if ($bizType === 'PAYMENT') {
+            return $biz['payment_date'] ?? '';
+        }
+        if ($bizType === 'UNKNOWN_PAYMENT') {
+            return $biz['transaction_date'] ?? '';
+        }
+        return $biz['refund_date'] ?? '';
     }
 
     public function bankReconcileBizSummary($bizType, $biz)
     {
         if ($bizType === 'PAYMENT') {
             return trim(($biz['case_no'] ?? '') . ' ' . ($biz['payer_name'] ?? '') . ' ' . ($biz['party_name'] ?? ''));
+        }
+        if ($bizType === 'UNKNOWN_PAYMENT') {
+            return trim(($biz['payer_name'] ?? '') . ' ' . ($biz['bank_summary'] ?? '') . ' ' . ($biz['bank_remark'] ?? ''));
         }
         return trim(($biz['case_no'] ?? '') . ' ' . ($biz['actual_payee_name'] ?? '') . ' ' . ($biz['party_name'] ?? '') . ' 出账单号:' . ($biz['out_order_no'] ?? ''));
     }

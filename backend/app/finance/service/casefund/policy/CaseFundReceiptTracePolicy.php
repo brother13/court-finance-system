@@ -5,9 +5,9 @@ namespace app\finance\service\casefund\policy;
 use app\finance\service\casefund\subject\SubjectConfigResolver;
 
 /**
- * 缴费票据查重与退付收据追溯策略。
+ * 缴费票据查重、退付与分配收据追溯策略。
  *
- * 两种判断语义不同：缴费只检查贷方科目，退付检查借贷双方科目。
+ * 判断语义不同：缴费只检查贷方科目，退付和分配检查借贷双方科目。
  * 只有明确取得有效科目配置且确认相关科目均未挂收据号辅助核算时，才放宽导入校验。
  */
 class CaseFundReceiptTracePolicy
@@ -91,6 +91,37 @@ class CaseFundReceiptTracePolicy
         }
 
         return $this->subjectsUseReceiptNo($subjectCodes);
+    }
+
+    public function distributionImportRequiresReceiptTrace($bizType)
+    {
+        if ($bizType !== 'CASE_FUND') {
+            return true;
+        }
+
+        $businessItems = $this->businessPolicy->allowedSubjectConfigItems($bizType, 'DISTRIBUTION');
+        if (empty($businessItems)) {
+            return true;
+        }
+
+        $configs = $this->subjectConfigResolver->configsByBusinessItems(
+            $bizType,
+            'DISTRIBUTION',
+            $businessItems
+        );
+        $subjectCodes = [];
+        foreach ($businessItems as $businessItem) {
+            $config = $configs[$businessItem] ?? null;
+            $debitSubjectCode = trim((string)($config['debit_subject_code'] ?? ''));
+            $creditSubjectCode = trim((string)($config['credit_subject_code'] ?? ''));
+            if ($debitSubjectCode === '' || $creditSubjectCode === '') {
+                return true;
+            }
+            $subjectCodes[] = $debitSubjectCode;
+            $subjectCodes[] = $creditSubjectCode;
+        }
+
+        return $this->subjectsUseReceiptNo(array_values(array_unique($subjectCodes)));
     }
 
     protected function refundSubjectConfigsForImport($bizType, array $rows)

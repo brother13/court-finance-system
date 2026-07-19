@@ -66,7 +66,12 @@ class CaseFund extends Common
     const TABLE_DISTRIBUTION = 'fin_case_fund_distribution';
     const TABLE_BANK_STATEMENT = 'fin_case_fund_bank_statement';
     const TABLE_BANK_RECONCILE = 'fin_case_fund_bank_reconcile';
-    const BANK_RECONCILE_AUTO_MATCH_RULES = ['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE'];
+    const BANK_RECONCILE_AUTO_MATCH_RULES = [
+        'SERIAL_NO',
+        'SERIAL_NO_DATE',
+        'PAYER_ACCOUNT_DATE',
+        'PAYEE_ACCOUNT_DATE',
+    ];
     const TABLE_SUBJECT_CONFIG = 'fin_case_fund_subject_config';
     const PAYMENT_FIELD = [
         'payment_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'confirmed_flag',
@@ -387,8 +392,11 @@ class CaseFund extends Common
             return $this->error('导入文件内容不正确');
         }
 
+        $bizType = $this->currentAccountSetBizType();
+        $receiptTraceRequired = $this->receiptTracePolicy()
+            ->distributionImportRequiresReceiptTrace($bizType);
         try {
-            $rows = $this->parseDistributionImportRowsFromXls($binary);
+            $rows = $this->parseDistributionImportRowsFromXlsForReceiptPolicy($binary, $receiptTraceRequired);
         } catch (\Exception $e) {
             return $this->error('解析案款分配失败：' . $e->getMessage());
         }
@@ -396,8 +404,7 @@ class CaseFund extends Common
             return $this->error('导入文件没有案款分配数据');
         }
 
-        $bizType = $this->currentAccountSetBizType();
-        $errors = $this->validateDistributionRows($rows, $bizType);
+        $errors = $this->validateDistributionRowsForReceiptPolicy($rows, $bizType, $receiptTraceRequired);
         if (!empty($errors)) {
             return $this->error('导入校验失败', $errors);
         }
@@ -1296,8 +1303,13 @@ class CaseFund extends Common
 
     protected function parseDistributionImportRowsFromXls($binary)
     {
+        return $this->parseDistributionImportRowsFromXlsForReceiptPolicy($binary, true);
+    }
+
+    protected function parseDistributionImportRowsFromXlsForReceiptPolicy($binary, $receiptTraceRequired)
+    {
         $tableRows = $this->parseSpreadsheetRows($binary);
-        return $this->importParser()->parseDistributionTableRows($tableRows);
+        return $this->importParser()->parseDistributionTableRows($tableRows, $receiptTraceRequired);
     }
 
     protected function validatePaymentRows($rows, $bizType = '', $receiptNoDuplicateCheckRequired = true)
@@ -1317,10 +1329,16 @@ class CaseFund extends Common
 
     protected function validateDistributionRows($rows, $bizType = '')
     {
+        return $this->validateDistributionRowsForReceiptPolicy($rows, $bizType, true);
+    }
+
+    protected function validateDistributionRowsForReceiptPolicy($rows, $bizType, $receiptTraceRequired)
+    {
         return $this->importValidator()->validateDistributionRows(
             $rows,
             $bizType,
-            $this->allowedDistributionInvoiceTypes($bizType)
+            $this->allowedDistributionInvoiceTypes($bizType),
+            $receiptTraceRequired
         );
     }
 
@@ -1475,6 +1493,11 @@ class CaseFund extends Common
         return $this->bankReconcileRepository()->refundCandidatesByBankStatement($statement, true);
     }
 
+    protected function unknownPaymentCandidatesByBankStatement($statement)
+    {
+        return $this->bankReconcileRepository()->unknownPaymentCandidatesByBankStatement($statement, true);
+    }
+
     protected function paymentCandidatesInScope($dateStart, $dateEnd)
     {
         return $this->bankReconcileRepository()->paymentCandidatesInScope($dateStart, $dateEnd, true);
@@ -1483,6 +1506,11 @@ class CaseFund extends Common
     protected function refundCandidatesInScope($dateStart, $dateEnd)
     {
         return $this->bankReconcileRepository()->refundCandidatesInScope($dateStart, $dateEnd, true);
+    }
+
+    protected function unknownPaymentCandidatesInScope($dateStart, $dateEnd)
+    {
+        return $this->bankReconcileRepository()->unknownPaymentCandidatesInScope($dateStart, $dateEnd, true);
     }
 
     protected function bankStatementExistsByPayment($payment, $bankCode = '', $dateStart = '', $dateEnd = '')
@@ -1499,6 +1527,16 @@ class CaseFund extends Common
     {
         return $this->bankReconcileRepository()->bankStatementExistsByRefundPayee(
             $refund,
+            $bankCode,
+            $dateStart,
+            $dateEnd
+        );
+    }
+
+    protected function bankStatementExistsByUnknownPayment($unknownPayment, $bankCode = '', $dateStart = '', $dateEnd = '')
+    {
+        return $this->bankReconcileRepository()->bankStatementExistsByUnknownPayment(
+            $unknownPayment,
             $bankCode,
             $dateStart,
             $dateEnd
@@ -1753,11 +1791,13 @@ class CaseFund extends Common
             ], [
                 'payment' => self::TABLE_PAYMENT,
                 'refund' => self::TABLE_REFUND,
+                'unknown_payment' => self::TABLE_UNKNOWN_PAYMENT,
                 'statement' => self::TABLE_BANK_STATEMENT,
                 'reconcile' => self::TABLE_BANK_RECONCILE,
             ], [
                 'payment' => self::PAYMENT_FIELD,
                 'refund' => self::REFUND_FIELD,
+                'unknown_payment' => self::UNKNOWN_PAYMENT_FIELD,
                 'statement' => self::BANK_STATEMENT_FIELD,
                 'reconcile' => self::BANK_RECONCILE_FIELD,
             ]);
@@ -1841,17 +1881,26 @@ class CaseFund extends Common
                 'payment_candidates_by_statement' => function ($statement) {
                     return $this->paymentCandidatesByBankStatement($statement);
                 },
+                'unknown_payment_candidates_by_statement' => function ($statement) {
+                    return $this->unknownPaymentCandidatesByBankStatement($statement);
+                },
                 'refund_candidates_by_statement' => function ($statement) {
                     return $this->refundCandidatesByBankStatement($statement);
                 },
                 'payment_candidates_in_scope' => function ($dateStart, $dateEnd) {
                     return $this->paymentCandidatesInScope($dateStart, $dateEnd);
                 },
+                'unknown_payment_candidates_in_scope' => function ($dateStart, $dateEnd) {
+                    return $this->unknownPaymentCandidatesInScope($dateStart, $dateEnd);
+                },
                 'refund_candidates_in_scope' => function ($dateStart, $dateEnd) {
                     return $this->refundCandidatesInScope($dateStart, $dateEnd);
                 },
                 'bank_statement_exists_by_payment' => function ($payment, $bankCode, $dateStart, $dateEnd) {
                     return $this->bankStatementExistsByPayment($payment, $bankCode, $dateStart, $dateEnd);
+                },
+                'bank_statement_exists_by_unknown_payment' => function ($unknownPayment, $bankCode, $dateStart, $dateEnd) {
+                    return $this->bankStatementExistsByUnknownPayment($unknownPayment, $bankCode, $dateStart, $dateEnd);
                 },
                 'bank_statement_exists_by_refund' => function ($refund, $bankCode, $dateStart, $dateEnd) {
                     return $this->bankStatementExistsByRefundPayee($refund, $bankCode, $dateStart, $dateEnd);

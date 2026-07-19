@@ -151,8 +151,12 @@ date_default_timezone_set('Asia/Shanghai');
 $caseFund = new CaseFund();
 $parseMethod = new ReflectionMethod(CaseFund::class, 'parseDistributionImportRowsFromXls');
 $parseMethod->setAccessible(true);
+$parseWithReceiptPolicyMethod = new ReflectionMethod(CaseFund::class, 'parseDistributionImportRowsFromXlsForReceiptPolicy');
+$parseWithReceiptPolicyMethod->setAccessible(true);
 $validateMethod = new ReflectionMethod(CaseFund::class, 'validateDistributionRows');
 $validateMethod->setAccessible(true);
+$validateWithReceiptPolicyMethod = new ReflectionMethod(CaseFund::class, 'validateDistributionRowsForReceiptPolicy');
+$validateWithReceiptPolicyMethod->setAccessible(true);
 $fingerprintMethod = new ReflectionMethod(CaseFund::class, 'distributionFingerprint');
 $fingerprintMethod->setAccessible(true);
 
@@ -250,6 +254,68 @@ if ($validateMethod->invoke($caseFund, $syntheticRows, 'CASE_FUND') !== []) {
     exit(1);
 }
 
+$noReceiptHeaders = [
+    '转入案号', '承办法官', '转入当事人', '转出案号', '转出当事人',
+    '开票种类', '分配金额', '申请人', '申请日期', '接收日期', '状态',
+    '分配单号', '情况说明',
+];
+$noReceiptXml = distributionImportExcelXml($noReceiptHeaders, [[
+    '转入案号' => 'NO-RECEIPT-IN-001',
+    '承办法官' => '匿名人员E',
+    '转入当事人' => '匿名主体E',
+    '转出案号' => 'NO-RECEIPT-OUT-001',
+    '转出当事人' => '匿名主体F',
+    '开票种类' => '执行、调解款',
+    '分配金额' => ['type' => 'Number', 'value' => '88.80'],
+    '申请人' => '',
+    '申请日期' => '2026-07-18',
+    '接收日期' => '2026-07-19',
+    '状态' => '正常可操作',
+    '分配单号' => '',
+    '情况说明' => '无单据号样例',
+]]);
+$noReceiptRows = $parseWithReceiptPolicyMethod->invoke($caseFund, $noReceiptXml, false);
+$noReceiptFirst = $noReceiptRows[0] ?? [];
+foreach ([
+    'distribution_no' => '',
+    'in_case_no' => 'NO-RECEIPT-IN-001',
+    'in_judge_name' => '匿名人员E',
+    'out_case_no' => 'NO-RECEIPT-OUT-001',
+    'out_judge_name' => '',
+    'receipt_no' => '',
+    'distribution_amount' => '88.80',
+    'receive_date' => '2026-07-19',
+    'original_invoice_date' => null,
+] as $field => $expected) {
+    if (($noReceiptFirst[$field] ?? null) !== $expected) {
+        fwrite(STDERR, 'No-receipt distribution row mismatch: ' . $field . PHP_EOL);
+        exit(1);
+    }
+}
+if ($validateWithReceiptPolicyMethod->invoke($caseFund, $noReceiptRows, 'CASE_FUND', false) !== []) {
+    fwrite(STDERR, 'Distribution rows without document numbers should validate when receipt trace is not configured' . PHP_EOL);
+    exit(1);
+}
+$strictNoReceiptErrors = $validateWithReceiptPolicyMethod->invoke($caseFund, $noReceiptRows, 'CASE_FUND', true);
+if ($strictNoReceiptErrors !== [
+    '第2行：分配单号不能为空',
+    '第2行：单据号不能为空',
+]) {
+    fwrite(STDERR, 'Distribution rows without document numbers must remain strict when receipt trace is configured' . PHP_EOL);
+    exit(1);
+}
+try {
+    $parseWithReceiptPolicyMethod->invoke($caseFund, $noReceiptXml, true);
+    fwrite(STDERR, 'Strict distribution parser should reject the no-receipt header profile' . PHP_EOL);
+    exit(1);
+} catch (ReflectionException $e) {
+    throw $e;
+} catch (Exception $e) {
+    if (strpos($e->getMessage(), '缺少表头') === false) {
+        throw $e;
+    }
+}
+
 $legacyProfiles = [
     'ZXFP60726051900001' => [
         'row_count' => 32,
@@ -278,6 +344,7 @@ $legacyProfiles = [
     ],
 ];
 $newSampleSha256 = 'd4b6b1d12dac0e1ddd8fa15c87f491a9009f6a707b06b617f8aee1949a734b70';
+$noReceiptSampleSha256 = 'cafe0a5cd2671679a1e8c5a0f0732d41b83bf1a11fcb79d0c6ebf0a0b4a5177b';
 $rootSamplePath = __DIR__ . '/../../分配清单(带单据号) (3).xls';
 $envSamplePath = trim((string)getenv('CASE_FUND_DISTRIBUTION_SAMPLE_XLS'));
 $realSamplePath = '';
@@ -293,8 +360,41 @@ if ($envSamplePath !== '') {
 if ($realSamplePath !== '') {
     $realSampleContents = file_get_contents($realSamplePath);
     $realSampleSha256 = hash('sha256', $realSampleContents);
-    $realRows = $parseMethod->invoke($caseFund, $realSampleContents);
-    if ($realSampleSha256 === $newSampleSha256) {
+    $realReceiptTraceRequired = $realSampleSha256 !== $noReceiptSampleSha256;
+    $realRows = $parseWithReceiptPolicyMethod->invoke(
+        $caseFund,
+        $realSampleContents,
+        $realReceiptTraceRequired
+    );
+    if ($realSampleSha256 === $noReceiptSampleSha256) {
+        $realProfileKey = 'sha256:' . $realSampleSha256;
+        $realProfile = [
+            'row_count' => 620,
+            'total_cents' => 5146971319,
+            'first' => [
+                'source_row_no' => 2,
+                'distribution_no' => '',
+                'in_case_no' => '（2023）辽0111执3220号',
+                'in_judge_name' => '安福杰',
+                'in_party_name' => '吴亚琴',
+                'out_case_no' => '（2023）辽0111执2618号',
+                'out_judge_name' => '',
+                'out_party_name' => '中国人民解放军联勤保障部队第四储备资产管理局沈阳管理站',
+                'invoice_type' => '执行、调解款',
+                'receipt_no' => '',
+                'distribution_amount' => '1026444.20',
+                'applicant_name' => '',
+                'apply_date' => '2023-11-30',
+                'receive_date' => '2023-11-30',
+                'period' => '2023-11',
+                'fiscal_year' => '2023',
+                'business_status' => '正常可操作',
+                'description' => '从【（2023）辽0111执2618号】转入',
+                'original_invoice_date' => null,
+                'source_fingerprint' => 'ef0ad6db271626fa1a229b14c83e27febb60835cc65b2247dbda8cc5e1de85d1',
+            ],
+        ];
+    } elseif ($realSampleSha256 === $newSampleSha256) {
         $realProfileKey = 'sha256:' . $realSampleSha256;
         $realProfile = [
             'row_count' => 7,
@@ -332,7 +432,12 @@ if ($realSamplePath !== '') {
         $realProfile = $legacyProfiles[$realProfileKey];
     }
     distributionImportAssertProfile($realRows, $realProfile, $realProfileKey);
-    if ($validateMethod->invoke($caseFund, $realRows, 'CASE_FUND') !== []) {
+    if ($validateWithReceiptPolicyMethod->invoke(
+        $caseFund,
+        $realRows,
+        'CASE_FUND',
+        $realReceiptTraceRequired
+    ) !== []) {
         fwrite(STDERR, 'Real CASE_FUND distribution rows should validate cleanly' . PHP_EOL);
         exit(1);
     }

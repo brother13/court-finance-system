@@ -143,7 +143,9 @@ class LegacySpreadsheetReader
                 $row = $this->u16($data, 0);
                 $col = $this->u16($data, 2);
                 $cells[$row . ':' . $col] = $this->decodeRkNumber($this->u32($data, 6));
-            } elseif ($type === 0x00BE && strlen($data) >= 6) {
+            } elseif ($type === 0x00BD && strlen($data) >= 10) {
+                // BIFF8 MULRK：同一行连续多个 RK 数值。
+                // 0x00BE 是 MULBLANK（连续空白单元格），必须保持为空，不能按数字解码。
                 $row = $this->u16($data, 0);
                 $firstCol = $this->u16($data, 2);
                 $lastCol = $this->u16($data, strlen($data) - 2);

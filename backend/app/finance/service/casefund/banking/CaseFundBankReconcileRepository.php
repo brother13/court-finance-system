@@ -18,7 +18,7 @@ class CaseFundBankReconcileRepository
                 throw new \InvalidArgumentException('案款银行对账仓储缺少回调：' . $name);
             }
         }
-        foreach (['payment', 'refund', 'statement', 'reconcile'] as $name) {
+        foreach (['payment', 'refund', 'unknown_payment', 'statement', 'reconcile'] as $name) {
             if (empty($tables[$name])) {
                 throw new \InvalidArgumentException('案款银行对账仓储缺少数据表：' . $name);
             }
@@ -33,18 +33,54 @@ class CaseFundBankReconcileRepository
 
     public function paymentCandidatesByBankStatement($statement, $forUpdate = false)
     {
-        $bankSerialNo = trim((string)($statement['bank_serial_no'] ?? ''));
-        if ($bankSerialNo === '' || empty($statement['transaction_date'])) {
+        if (empty($statement['transaction_date'])) {
             return [];
         }
         $query = $this->db($this->tables['payment'])
             ->where($this->activeYearWhere())
-            ->where('payment_date', $statement['transaction_date'])
-            ->where('bank_serial_no', $bankSerialNo);
+            ->where('payment_date', $statement['transaction_date']);
         if ($forUpdate) {
             $query->lock(true);
         }
-        return $query->field($this->fields['payment'])->select();
+        $rows = $query->field($this->fields['payment'])->select();
+        $matches = [];
+        foreach ($rows as $row) {
+            $paymentSerialNo = trim((string)($row['bank_serial_no'] ?? ''));
+            // 已认领不明款进入缴费登记后仍没有流水号，本期不参与自动对账。
+            if ($paymentSerialNo === '' || !$this->bankSerialsMatch($statement, $paymentSerialNo)) {
+                continue;
+            }
+            $row['__match_rule'] = 'SERIAL_NO_DATE';
+            $matches[] = $row;
+        }
+        return $matches;
+    }
+
+    public function unknownPaymentCandidatesByBankStatement($statement, $forUpdate = false)
+    {
+        $accountNo = $this->normalizeAccountNo($statement['counterparty_account_no'] ?? '');
+        if (empty($statement['transaction_date']) || $accountNo === '') {
+            return [];
+        }
+        $query = $this->db($this->tables['unknown_payment'])
+            ->where($this->activeYearWhere())
+            ->where('transaction_date', $statement['transaction_date']);
+        if ($forUpdate) {
+            $query->lock(true);
+        }
+        $rows = $query->field($this->fields['unknown_payment'])->select();
+        $matches = [];
+        foreach ($rows as $row) {
+            if (!$this->isUnclaimedUnknownPayment($row)) {
+                continue;
+            }
+            if ($this->normalizeAccountNo($row['payer_account_no'] ?? '') !== $accountNo) {
+                continue;
+            }
+            $row['__match_rule'] = 'PAYER_ACCOUNT_DATE';
+            $matches[] = $row;
+        }
+        return $matches;
     }
 
     public function bankStatementList($data, $page, $pageSize)
@@ -77,12 +113,46 @@ class CaseFundBankReconcileRepository
             ->order('transaction_time asc, source_row_no asc')
             ->page($page, $pageSize)
             ->select();
+        $rows = $this->attachReconcileItems($rows);
         return [
             'items' => $rows,
             'total' => $total,
             'debit_amount' => $debitTotal,
             'credit_amount' => $creditTotal,
         ];
+    }
+
+    protected function attachReconcileItems($rows)
+    {
+        $statementIds = [];
+        foreach ($rows as $row) {
+            $statementId = trim((string)($row['statement_id'] ?? ''));
+            if ($statementId !== '') {
+                $statementIds[$statementId] = true;
+            }
+        }
+        $grouped = [];
+        if (!empty($statementIds)) {
+            $reconcileRows = $this->db($this->tables['reconcile'])
+                ->where($this->activeYearWhere())
+                ->where('statement_id', 'in', array_keys($statementIds))
+                ->field($this->fields['reconcile'])
+                ->order('statement_id asc, match_status asc, biz_type asc, biz_no asc')
+                ->select();
+            foreach ($reconcileRows as $reconcileRow) {
+                $statementId = trim((string)($reconcileRow['statement_id'] ?? ''));
+                if ($statementId === '' || !isset($statementIds[$statementId])) {
+                    continue;
+                }
+                $grouped[$statementId][] = $reconcileRow;
+            }
+        }
+        foreach ($rows as &$row) {
+            $statementId = trim((string)($row['statement_id'] ?? ''));
+            $row['reconcile_items'] = $grouped[$statementId] ?? [];
+        }
+        unset($row);
+        return $rows;
     }
 
     public function existingBankStatementFingerprints($fingerprints)
@@ -196,14 +266,28 @@ class CaseFundBankReconcileRepository
 
     public function paymentCandidatesInScope($dateStart, $dateEnd, $forUpdate = false)
     {
-        $query = $this->db($this->tables['payment'])
-            ->where($this->activeYearWhere())
-            ->where('bank_serial_no', 'neq', '');
+        $query = $this->db($this->tables['payment'])->where($this->activeYearWhere());
         $this->applyDateScope($query, 'payment_date', $dateStart, $dateEnd);
         if ($forUpdate) {
             $query->lock(true);
         }
-        return $query->field($this->fields['payment'])->select();
+        $rows = $query->field($this->fields['payment'])->select();
+        return array_values(array_filter($rows, function ($row) {
+            return trim((string)($row['bank_serial_no'] ?? '')) !== '';
+        }));
+    }
+
+    public function unknownPaymentCandidatesInScope($dateStart, $dateEnd, $forUpdate = false)
+    {
+        $query = $this->db($this->tables['unknown_payment'])->where($this->activeYearWhere());
+        $this->applyDateScope($query, 'transaction_date', $dateStart, $dateEnd);
+        if ($forUpdate) {
+            $query->lock(true);
+        }
+        $rows = $query->field($this->fields['unknown_payment'])->select();
+        return array_values(array_filter($rows, function ($row) {
+            return $this->isUnclaimedUnknownPayment($row);
+        }));
     }
 
     public function refundCandidatesInScope($dateStart, $dateEnd, $forUpdate = false)
@@ -218,9 +302,8 @@ class CaseFundBankReconcileRepository
 
     public function bankStatementExistsByPayment($payment, $bankCode = '', $dateStart = '', $dateEnd = '')
     {
-        $bankSerialNo = trim((string)($payment['bank_serial_no'] ?? ''));
         $paymentDate = trim((string)($payment['payment_date'] ?? ''));
-        if ($bankSerialNo === '' || $paymentDate === '') {
+        if ($paymentDate === '') {
             return false;
         }
         $query = $this->db($this->tables['statement'])->where([
@@ -228,11 +311,43 @@ class CaseFundBankReconcileRepository
             'fiscal_year' => $this->currentYear(),
             'direction' => 'CREDIT',
             'transaction_date' => $paymentDate,
-            'bank_serial_no' => $bankSerialNo,
             'del_flag' => 0,
         ]);
         $this->applyBankAndDateScope($query, $bankCode, $dateStart, $dateEnd);
-        return $query->count() > 0;
+        $statements = $query->field($this->fields['statement'])->select();
+        $paymentSerialNo = trim((string)($payment['bank_serial_no'] ?? ''));
+        if ($paymentSerialNo === '') {
+            return false;
+        }
+        foreach ($statements as $statement) {
+            if ($this->bankSerialsMatch($statement, $paymentSerialNo)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function bankStatementExistsByUnknownPayment($unknownPayment, $bankCode = '', $dateStart = '', $dateEnd = '')
+    {
+        $transactionDate = trim((string)($unknownPayment['transaction_date'] ?? ''));
+        $payerAccountNo = $this->normalizeAccountNo($unknownPayment['payer_account_no'] ?? '');
+        if ($transactionDate === '' || $payerAccountNo === '') {
+            return false;
+        }
+        $query = $this->db($this->tables['statement'])->where([
+            'account_set_id' => $this->accountSetId(),
+            'fiscal_year' => $this->currentYear(),
+            'direction' => 'CREDIT',
+            'transaction_date' => $transactionDate,
+            'del_flag' => 0,
+        ]);
+        $this->applyBankAndDateScope($query, $bankCode, $dateStart, $dateEnd);
+        foreach ($query->field($this->fields['statement'])->select() as $statement) {
+            if ($this->normalizeAccountNo($statement['counterparty_account_no'] ?? '') === $payerAccountNo) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public function bankStatementExistsByRefundPayee($refund, $bankCode = '', $dateStart = '', $dateEnd = '')
@@ -286,6 +401,52 @@ class CaseFundBankReconcileRepository
             'fiscal_year' => $this->currentYear(),
             'del_flag' => 0,
         ];
+    }
+
+    protected function bankSerialsMatch($statement, $paymentSerialNo)
+    {
+        $statementSerialNo = $this->normalizeStatementSerialNo($statement['bank_serial_no'] ?? '');
+        $paymentSerialNo = $this->normalizeSerialNo($paymentSerialNo);
+        if ($statementSerialNo === '' || $paymentSerialNo === '') {
+            return false;
+        }
+        if ($statementSerialNo === $paymentSerialNo) {
+            return true;
+        }
+        // 建设银行对账单保存 26 位完整流水号，缴费登记保存其后 19 位业务流水号。
+        return strtoupper(trim((string)($statement['bank_code'] ?? ''))) === 'CCB'
+            && strlen($statementSerialNo) === 26
+            && strlen($paymentSerialNo) === 19
+            && substr($statementSerialNo, -19) === $paymentSerialNo;
+    }
+
+    protected function normalizeSerialNo($value)
+    {
+        return strtoupper((string)preg_replace('/[\s\-]+/u', '', trim((string)$value)));
+    }
+
+    protected function normalizeStatementSerialNo($value)
+    {
+        $value = str_replace(['－', '—', '–'], '-', trim((string)$value));
+        $separatorPosition = strrpos($value, '-');
+        if ($separatorPosition !== false) {
+            // 银行对账单保存“明细编号-交易流水号”，缴费登记保存最后一个“-”后的完整流水号。
+            $value = substr($value, $separatorPosition + 1);
+        }
+        return $this->normalizeSerialNo($value);
+    }
+
+    protected function normalizeAccountNo($value)
+    {
+        return strtoupper((string)preg_replace('/[^0-9A-Za-z]/u', '', trim((string)$value)));
+    }
+
+    protected function isUnclaimedUnknownPayment($row)
+    {
+        $status = trim((string)($row['claim_status'] ?? ''));
+        return $status === ''
+            || in_array($status, ['待认领', '未认领'], true)
+            || strtoupper($status) === 'UNCLAIMED';
     }
 
     protected function bankStatementFilteredQuery($where, $keyword)

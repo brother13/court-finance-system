@@ -134,21 +134,36 @@
           min-width="160"
         >
           <template #default="{ row }">
-            <el-select
-              v-if="archives[config.aux_type_code]?.length"
+            <div v-if="config.value_source === 'ARCHIVE'" class="aux-archive-editor">
+              <el-select
+                v-model="row.aux_values[config.aux_type_code]"
+                filterable
+                clearable
+                :disabled="!archives[config.aux_type_code]?.length"
+                :placeholder="archives[config.aux_type_code]?.length ? '选择档案' : '请先维护辅助核算项'"
+              >
+                <el-option
+                  v-for="archive in archives[config.aux_type_code] || []"
+                  :key="archive.archive_code"
+                  :label="`${archive.archive_code} ${archive.archive_name}`"
+                  :value="archive.archive_code"
+                />
+              </el-select>
+              <el-button
+                v-if="!archives[config.aux_type_code]?.length"
+                v-permission="'base:add'"
+                link
+                type="primary"
+                @click="goToAuxArchives"
+              >
+                新增档案
+              </el-button>
+            </div>
+            <el-input
+              v-else
               v-model="row.aux_values[config.aux_type_code]"
-              filterable
-              clearable
-              placeholder="选择档案"
-            >
-              <el-option
-                v-for="archive in archives[config.aux_type_code]"
-                :key="archive.archive_code"
-                :label="`${archive.archive_code} ${archive.archive_name}`"
-                :value="archive.archive_code"
-              />
-            </el-select>
-            <el-input v-else v-model="row.aux_values[config.aux_type_code]" placeholder="手工录入" />
+              placeholder="手工录入，保存后同步档案"
+            />
           </template>
         </el-table-column>
         <el-table-column label="借方" width="150">
@@ -189,10 +204,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Plus, Refresh } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import { baseApi } from '../../api/base'
 import { useContextStore } from '../../stores/context'
 
 const context = useContextStore()
+const router = useRouter()
 const period = ref(context.period)
 const periodOptions = Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
 const rows = ref<any[]>([])
@@ -324,6 +341,11 @@ const removeAuxRow = (row: any) => {
   }
 }
 
+const goToAuxArchives = () => {
+  auxDrawerVisible.value = false
+  router.push('/base/aux-items')
+}
+
 const saveAuxOpening = async () => {
   if (!currentSubject.value) return
   if (auxDebitTotal.value !== Number(currentSubject.value.debit_amount || 0) || auxCreditTotal.value !== Number(currentSubject.value.credit_amount || 0)) {
@@ -342,3 +364,16 @@ const saveAuxOpening = async () => {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.aux-archive-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aux-archive-editor .el-select {
+  flex: 1;
+  min-width: 0;
+}
+</style>

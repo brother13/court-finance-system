@@ -350,6 +350,8 @@
     width="560px"
     class="finance-dialog"
     :close-on-click-modal="false"
+    :close-on-press-escape="!importing"
+    :show-close="!importing"
     @close="closeImportDialog"
   >
     <div class="import-dialog-content">
@@ -366,7 +368,7 @@
         <div class="import-file-info">
           <el-icon :size="20"><Document /></el-icon>
           <span>{{ importFileName }}</span>
-          <el-button link type="primary" @click="chooseImportFile">重新选择</el-button>
+          <el-button link type="primary" :disabled="importing" @click="chooseImportFile">重新选择</el-button>
         </div>
 
         <div v-if="importPreview" class="import-stats">
@@ -384,8 +386,16 @@
           </div>
         </div>
 
+        <div v-if="importing && importProgress.total > 0" class="import-progress">
+          <el-progress :percentage="importProgressPercent" :stroke-width="10" />
+          <p>
+            正在导入第 {{ importProgress.batch }} / {{ importProgress.batchCount }} 批，
+            已确认处理 {{ importProgress.completed }} / {{ importProgress.total }} 张
+          </p>
+        </div>
+
         <div v-if="importErrorList.length > 0" class="import-errors">
-          <p class="error-title">解析警告（{{ importErrorList.length }} 条）</p>
+          <p class="error-title">{{ importErrorTitle }}（{{ importErrorList.length }} 条）</p>
           <el-scrollbar max-height="120px">
             <ul>
               <li v-for="(err, idx) in importErrorList" :key="idx">{{ err }}</li>
@@ -396,11 +406,11 @@
     </div>
 
     <template #footer>
-      <el-button @click="closeImportDialog">取消</el-button>
+      <el-button :disabled="importing" @click="closeImportDialog">取消</el-button>
       <el-button
         type="primary"
         :loading="importing"
-        :disabled="!importPreview || importPreview.voucherCount === 0"
+        :disabled="!importPreview || importPreview.voucherCount === 0 || importVouchers.length === 0"
         @click="confirmImport"
       >
         确认导入
@@ -411,7 +421,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Check, Delete as DeleteIcon, Document, Edit, Filter, Operation, Plus, Printer, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
 import { voucherApi } from '../../api/voucher'
@@ -445,6 +455,7 @@ type AdvancedFilter = {
 }
 
 const context = useContextStore()
+const route = useRoute()
 const router = useRouter()
 const rows = ref<any[]>([])
 const selectedRows = ref<any[]>([])
@@ -460,8 +471,15 @@ const printing = ref(false)
 const importFileName = ref('')
 const importPreview = ref<{ voucherCount: number; detailCount: number; periodRange: string } | null>(null)
 const importErrorList = ref<string[]>([])
+const importErrorTitle = ref('解析警告')
 const importInputRef = ref<HTMLInputElement | null>(null)
 const importVouchers = ref<any[]>([])
+const VOUCHER_IMPORT_BATCH_SIZE = 200
+const importProgress = reactive({ completed: 0, total: 0, batch: 0, batchCount: 0 })
+const importProgressPercent = computed(() => {
+  if (importProgress.total === 0) return 0
+  return Math.min(100, Math.round((importProgress.completed / importProgress.total) * 100))
+})
 const renumberVisible = ref(false)
 const renumberChecking = ref(false)
 const renumberSubmitting = ref(false)
@@ -473,11 +491,22 @@ const renumberForm = reactive({
   startNo: 1
 })
 
-const defaultYear = context.period.slice(0, 4)
+const routeQueryText = (value: unknown) => {
+  const target = Array.isArray(value) ? value[0] : value
+  return String(target ?? '').trim()
+}
+
+const normalizeVoucherPeriod = (value: unknown) => {
+  const period = routeQueryText(value)
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(period) ? period : ''
+}
+
+const initialPeriod = normalizeVoucherPeriod(route.query.period) || context.period
+const defaultYear = initialPeriod.slice(0, 4)
 const topFilter = reactive<TopFilter>({
   year: defaultYear,
-  period_start: context.period,
-  period_end: context.period,
+  period_start: initialPeriod,
+  period_end: initialPeriod,
   status: '',
   summary_keyword: ''
 })
@@ -565,6 +594,7 @@ watch(
 const buildQueryParams = () => {
   const [dateStart, dateEnd] = dateRange.value || []
   return cleanFilter({
+    voucher_id: routeQueryText(route.query.voucher_id),
     year: topFilter.year,
     period_start: topFilter.period_start,
     period_end: topFilter.period_end,
@@ -594,6 +624,28 @@ const query = async () => {
   page.value = 1
   await load()
 }
+
+const applyVoucherRouteFilter = () => {
+  const voucherId = routeQueryText(route.query.voucher_id)
+  if (!voucherId) return
+  const period = normalizeVoucherPeriod(route.query.period) || context.period
+  topFilter.year = period.slice(0, 4)
+  topFilter.period_start = period
+  topFilter.period_end = period
+  topFilter.status = ''
+  topFilter.summary_keyword = ''
+  dateRange.value = []
+  advancedApplied.value = emptyAdvanced()
+}
+
+watch(
+  () => [route.path, route.query.period, route.query.voucher_id],
+  async ([path]) => {
+    if (path !== '/vouchers') return
+    applyVoucherRouteFilter()
+    await query()
+  }
+)
 
 const handlePageSizeChange = async () => {
   page.value = 1
@@ -923,11 +975,14 @@ const openImportDialog = () => {
 }
 
 const closeImportDialog = () => {
+  if (importing.value) return
   importVisible.value = false
   importFileName.value = ''
   importPreview.value = null
   importErrorList.value = []
+  importErrorTitle.value = '解析警告'
   importVouchers.value = []
+  Object.assign(importProgress, { completed: 0, total: 0, batch: 0, batchCount: 0 })
 }
 
 const chooseImportFile = () => {
@@ -951,6 +1006,7 @@ const handleImportFile = async (event: Event) => {
 
   importFileName.value = file.name
   importErrorList.value = []
+  importErrorTitle.value = '解析警告'
 
   try {
     const data = await file.arrayBuffer()
@@ -1121,30 +1177,67 @@ const confirmImport = async () => {
   }
 
   importing.value = true
+  const total = importVouchers.value.length
+  const batchCount = Math.ceil(total / VOUCHER_IMPORT_BATCH_SIZE)
+  const parseWarnings = [...importErrorList.value]
+  let success = 0
+  let failed = 0
+  const errors: string[] = []
+  Object.assign(importProgress, { completed: 0, total, batch: 0, batchCount })
   try {
-    const result = await voucherApi.import({ vouchers: importVouchers.value })
-    const msg = `导入完成：成功 ${result.success} 张，失败 ${result.failed} 张`
-    if (result.failed > 0) {
+    for (let offset = 0; offset < total; offset += VOUCHER_IMPORT_BATCH_SIZE) {
+      const batch = importVouchers.value.slice(offset, offset + VOUCHER_IMPORT_BATCH_SIZE)
+      importProgress.batch = Math.floor(offset / VOUCHER_IMPORT_BATCH_SIZE) + 1
+      const result = await voucherApi.import({ vouchers: batch })
+      success += result.success
+      failed += result.failed
+      errors.push(...result.errors.map((error) => offsetImportErrorNumber(error, offset)))
+      importProgress.completed = Math.min(offset + batch.length, total)
+    }
+
+    const msg = `导入完成：成功 ${success} 张，失败 ${failed} 张`
+    if (failed > 0) {
       ElMessage.warning(msg)
-      importErrorList.value = result.errors
+      importErrorTitle.value = '导入失败明细'
+      importErrorList.value = [...parseWarnings, ...errors]
+      importVouchers.value = []
     } else {
       ElMessage.success(msg)
+      importing.value = false
       closeImportDialog()
       await load()
     }
   } catch (err: any) {
     const isRequestTimeout = err?.code === 'ECONNABORTED' || String(err?.message || '').toLowerCase().includes('timeout')
     if (isRequestTimeout) {
-      ElMessage.warning('导入请求等待超时，后台可能仍在处理，请稍后刷新凭证列表确认，避免重复导入')
+      ElMessage.warning(`第 ${importProgress.batch} 批请求等待超时，已确认导入 ${success} 张；后台可能仍在处理当前批次，请刷新列表确认，避免重复导入`)
     } else {
-      ElMessage.error('导入失败：' + (err.message || '未知错误'))
+      ElMessage.error(`第 ${importProgress.batch} 批导入失败：` + (err.message || '未知错误'))
+    }
+    importErrorTitle.value = '导入中断明细'
+    importErrorList.value = [
+      ...parseWarnings,
+      ...errors,
+      `第 ${importProgress.batch} 批未能确认完成，已确认成功 ${success} 张、失败 ${failed} 张，请刷新凭证列表核对后再处理。`,
+    ]
+    importVouchers.value = []
+    try {
+      await load()
+    } catch {
+      // 保留导入中断明细，列表可由用户稍后手动刷新。
     }
   } finally {
     importing.value = false
   }
 }
 
-onMounted(load)
+const offsetImportErrorNumber = (error: string, offset: number) =>
+  error.replace(/^第(\d+)张/, (_, batchIndex) => `第${offset + Number(batchIndex)}张`)
+
+onMounted(async () => {
+  applyVoucherRouteFilter()
+  await load()
+})
 </script>
 
 <style scoped>
@@ -1226,6 +1319,20 @@ onMounted(load)
 
 .import-stats {
   margin-bottom: 16px;
+}
+
+.import-progress {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--el-color-primary-light-9);
+  border-radius: 6px;
+}
+
+.import-progress p {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .stat-row {
