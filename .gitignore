@@ -58,3 +58,20 @@ backend/composer.phar
 .gitignore
 fpqd.json
 分配清单(带单据号) (3).xls
+
+# Agent/local tool state and generated artifacts
+.codex/
+.codex-work/
+.reasonix/
+outputs/
+
+# Local agent config
+reasonix.toml
+
+# Windows MySQL backup tool distributable bundles and unpacked dir
+scripts/windows-mysql-backup/
+scripts/windows-mysql-backup-tool-*.zip
+scripts/windows-mysql-backup-tool-*.zip.sha256
+
+# Local conversation/scratch context (kept out of VCS; tracked CONTEXT.md is intentional)
+CONTEXT.md.local
