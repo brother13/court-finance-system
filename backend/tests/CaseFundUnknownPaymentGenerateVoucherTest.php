@@ -5,7 +5,8 @@ $source = file_get_contents($modelPath);
 $serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php');
 $voucherRuleSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherRule.php');
 $persistenceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php');
-$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource . "\n" . $persistenceSource;
+$auxiliaryCaseSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/UnknownPaymentAuxiliaryCaseService.php');
+$implementationSource = $source . "\n" . $serviceSource . "\n" . $voucherRuleSource . "\n" . $persistenceSource . "\n" . $auxiliaryCaseSource;
 
 $checks = [
     ["case 'unknownPaymentGenerateVoucher'", 'CaseFund should route unknownPaymentGenerateVoucher'],
@@ -21,7 +22,10 @@ $checks = [
     ['validateUnknownPaymentVoucherPeriod', 'Unknown payment generation should validate source period and period status'],
     ['fin_fiscal_period', 'Unknown payment generation should check fiscal period status'],
     ["'status' => 'OPEN'", 'Unknown payment generation should require an open fiscal period'],
-    ['hasRequiredAuxConfigs', 'Unknown payment generation should reject required aux subjects'],
+    ['unsupportedRequiredAuxTypes', 'Unknown payment generation should reject unsupported required auxiliary types'],
+    ['UnknownPaymentAuxiliaryCaseService', 'Unknown payment generation should use the stable BMK auxiliary case service'],
+    ["'aux_type_code' => 'case_no'", 'Unknown payment generation should write the common case_no auxiliary dimension'],
+    ['ensure_aux_archives', 'Unknown payment generation should prepare common auxiliary archives'],
     ['fin_voucher', 'Unknown payment generation should write voucher table'],
     ['fin_voucher_detail', 'Unknown payment generation should write voucher detail table'],
     ['persistVoucher', 'Unknown payment generation should use common voucher persistence'],

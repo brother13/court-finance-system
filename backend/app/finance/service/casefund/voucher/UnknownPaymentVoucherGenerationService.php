@@ -12,6 +12,7 @@ class UnknownPaymentVoucherGenerationService
     protected $manager;
     protected $rule;
     protected $persistence;
+    protected $auxiliaryCaseService;
     protected $hooks;
     protected $unknownPaymentTable;
     protected $unknownPaymentField;
@@ -22,17 +23,21 @@ class UnknownPaymentVoucherGenerationService
         $manager,
         $rule,
         $persistence,
+        $auxiliaryCaseService,
         array $hooks,
         $unknownPaymentTable,
         array $unknownPaymentField,
         $subjectConfigTable,
         array $subjectConfigField
     ) {
-        if (!is_object($manager) || !is_object($rule) || !is_object($persistence)) {
+        if (!is_object($manager) || !is_object($rule) || !is_object($persistence) || !is_object($auxiliaryCaseService)) {
             throw new \InvalidArgumentException('不明款凭证生成服务缺少协作对象');
         }
         if (!method_exists($persistence, 'persistVoucher')) {
             throw new \InvalidArgumentException('不明款凭证生成服务缺少凭证持久化能力');
+        }
+        if (!method_exists($auxiliaryCaseService, 'ensurePersistedCodes')) {
+            throw new \InvalidArgumentException('不明款凭证生成服务缺少辅助案号生成能力');
         }
         $requiredHooks = [
             'get_db',
@@ -47,6 +52,7 @@ class UnknownPaymentVoucherGenerationService
             'build_summary',
             'fiscal_year',
             'generate_next_voucher_no',
+            'ensure_aux_archives',
             'new_id',
             'current_user_id',
             'now',
@@ -60,6 +66,7 @@ class UnknownPaymentVoucherGenerationService
         $this->manager = $manager;
         $this->rule = $rule;
         $this->persistence = $persistence;
+        $this->auxiliaryCaseService = $auxiliaryCaseService;
         $this->hooks = $hooks;
         $this->unknownPaymentTable = $unknownPaymentTable;
         $this->unknownPaymentField = $unknownPaymentField;
@@ -114,17 +121,24 @@ class UnknownPaymentVoucherGenerationService
         $creditConfigs = $this->callHook('get_subject_aux_configs', [
             $subjectConfig['credit_subject_code'],
         ]);
-        if (
-            $this->callHook('has_required_aux_configs', [$debitConfigs])
-            || $this->callHook('has_required_aux_configs', [$creditConfigs])
-        ) {
-            return $this->errorResult('不明款借方/贷方科目存在必填辅助核算，不允许自动生成凭证');
+        $unsupportedRequiredTypes = array_values(array_unique(array_merge(
+            $this->unsupportedRequiredAuxTypes($debitConfigs),
+            $this->unsupportedRequiredAuxTypes($creditConfigs)
+        )));
+        if (!empty($unsupportedRequiredTypes)) {
+            return $this->errorResult(
+                '不明款自动制证无法生成必填辅助核算：' . implode('、', $unsupportedRequiredTypes)
+            );
         }
 
         return [
             'error' => '',
             'unknown_payment_ids' => $unknownPaymentIds,
             'subject_config' => $subjectConfig,
+            'debit_configs' => $debitConfigs,
+            'credit_configs' => $creditConfigs,
+            'uses_case_no' => $this->containsAuxType($debitConfigs, 'case_no')
+                || $this->containsAuxType($creditConfigs, 'case_no'),
             'by_day_flag' => $this->manager->subjectConfigAccountSetFlag(),
         ];
     }
@@ -159,6 +173,9 @@ class UnknownPaymentVoucherGenerationService
         if ($generationCheck !== null) {
             throw new \Exception($generationCheck);
         }
+        if (!empty($prepared['uses_case_no'])) {
+            $rows = $this->auxiliaryCaseService->ensurePersistedCodes($rows);
+        }
         $groups = $this->rule->groupUnknownPaymentRowsForVoucher(
             $rows,
             $prepared['by_day_flag']
@@ -182,7 +199,9 @@ class UnknownPaymentVoucherGenerationService
             $voucherNo = $this->callHook('generate_next_voucher_no', [$period]);
             $detailBuildResult = $this->rule->buildUnknownPaymentVoucherDetailsData(
                 $groupRows,
-                $prepared['subject_config']
+                $prepared['subject_config'],
+                $prepared['debit_configs'] ?? [],
+                $prepared['credit_configs'] ?? []
             );
             $detailsData = $detailBuildResult['details'];
             $totalDebit = $detailBuildResult['total_cents'];
@@ -190,6 +209,7 @@ class UnknownPaymentVoucherGenerationService
                 throw new \Exception('凭证金额必须大于0');
             }
 
+            $this->callHook('ensure_aux_archives', [$detailsData]);
             $this->persistence->persistVoucher([
                 'voucher_id' => $voucherId,
                 'fiscal_year' => $fiscalYear,
@@ -238,6 +258,34 @@ class UnknownPaymentVoucherGenerationService
     protected function errorResult($message)
     {
         return ['error' => $message];
+    }
+
+    protected function unsupportedRequiredAuxTypes($configs)
+    {
+        $types = [];
+        if (!$this->callHook('has_required_aux_configs', [$configs])) {
+            return $types;
+        }
+        foreach ($configs as $config) {
+            if ((int)($config['required_flag'] ?? 0) !== 1) {
+                continue;
+            }
+            $typeCode = trim((string)($config['aux_type_code'] ?? ''));
+            if ($typeCode !== '' && $typeCode !== 'case_no') {
+                $types[] = $typeCode;
+            }
+        }
+        return $types;
+    }
+
+    protected function containsAuxType($configs, $auxTypeCode)
+    {
+        foreach ($configs as $config) {
+            if (trim((string)($config['aux_type_code'] ?? '')) === $auxTypeCode) {
+                return true;
+            }
+        }
+        return false;
     }
 
     protected function db($table)

@@ -4,6 +4,11 @@ namespace app\finance\service\casefund\support;
 
 class LegacySpreadsheetReader
 {
+    const MAX_BIFF_RECORDS = 300000;
+    const MAX_BIFF_SHARED_STRINGS = 150000;
+    const MAX_BIFF_ROWS = 10000;
+    const MAX_BIFF_CELLS = 150000;
+
     public function parseRows($binary)
     {
         if (substr($binary, 0, 8) === hex2bin('d0cf11e0a1b11ae1')) {
@@ -95,68 +100,260 @@ class LegacySpreadsheetReader
 
     public function parseBiffCells($stream)
     {
-        $records = [];
+        $streamLength = strlen($stream);
+        $firstSheetOffset = null;
+        $sstSegments = [];
+        $collectSstContinues = false;
+        $sstFound = false;
+        $recordCount = 0;
         $pos = 0;
-        while ($pos + 4 <= strlen($stream)) {
+        // 第一遍只记录 Workbook 元数据位置，不为每一条 BIFF 记录创建嵌套数组
+        // 和 data 子串副本。稠密工作簿可能有数十万条小记录，这是低内存环境
+        // 最主要的解析峰值来源。
+        while ($pos + 4 <= $streamLength) {
             $recordOffset = $pos;
             $type = $this->u16($stream, $pos);
             $length = $this->u16($stream, $pos + 2);
-            $pos += 4;
-            $records[] = [$recordOffset, $type, substr($stream, $pos, $length)];
-            $pos += $length;
+            $dataOffset = $pos + 4;
+            if ($dataOffset + $length > $streamLength) {
+                throw new \Exception('Excel BIFF 记录长度超出文件范围');
+            }
+            $recordCount++;
+            if ($recordCount > self::MAX_BIFF_RECORDS) {
+                throw new \Exception('Excel 文件记录数过多，请拆分后导入');
+            }
+            if ($firstSheetOffset === null && $type === 0x0085 && $length >= 8) {
+                $firstSheetOffset = $this->u32($stream, $dataOffset);
+            }
+            if (!$sstFound && $type === 0x00FC) {
+                $sstFound = true;
+                $collectSstContinues = true;
+                $sstSegments[] = [$dataOffset, $length];
+            } elseif ($collectSstContinues && $type === 0x003C) {
+                $sstSegments[] = [$dataOffset, $length];
+            } else {
+                $collectSstContinues = false;
+            }
+            $pos = $dataOffset + $length;
         }
-        $sst = $this->parseBiffSharedStrings($records);
-        $firstSheetOffset = $this->firstBiffWorksheetOffset($records);
+
+        $sst = $this->parseBiffSharedStringsFromSegments($stream, $sstSegments);
+        unset($sstSegments);
 
         $cells = [];
+        $cellCount = 0;
+        $pos = $firstSheetOffset === null ? 0 : (int)$firstSheetOffset;
         $inFirstSheet = $firstSheetOffset === null;
-        foreach ($records as $record) {
-            list($offset, $type, $data) = $record;
-            if ($firstSheetOffset !== null) {
-                if ($offset === $firstSheetOffset && $type === 0x0809) {
-                    $inFirstSheet = true;
-                    continue;
-                }
-                if (!$inFirstSheet) {
-                    continue;
-                }
-                if ($type === 0x000A) {
-                    break;
-                }
+        while ($pos + 4 <= $streamLength) {
+            $recordOffset = $pos;
+            $type = $this->u16($stream, $pos);
+            $length = $this->u16($stream, $pos + 2);
+            $dataOffset = $pos + 4;
+            if ($dataOffset + $length > $streamLength) {
+                throw new \Exception('Excel BIFF 工作表记录长度超出文件范围');
             }
-            if ($type === 0x00FD && strlen($data) >= 10) {
-                $row = $this->u16($data, 0);
-                $col = $this->u16($data, 2);
-                $sstIndex = $this->u32($data, 6);
-                $cells[$row . ':' . $col] = $sst[$sstIndex] ?? '';
-            } elseif ($type === 0x0204 && strlen($data) >= 8) {
-                $row = $this->u16($data, 0);
-                $col = $this->u16($data, 2);
-                list($text,) = $this->readBiffString($data, 6);
-                $cells[$row . ':' . $col] = $text;
-            } elseif ($type === 0x0203 && strlen($data) >= 14) {
-                $row = $this->u16($data, 0);
-                $col = $this->u16($data, 2);
-                $value = unpack('e', substr($data, 6, 8))[1];
-                $cells[$row . ':' . $col] = $value;
-            } elseif ($type === 0x027E && strlen($data) >= 10) {
-                $row = $this->u16($data, 0);
-                $col = $this->u16($data, 2);
-                $cells[$row . ':' . $col] = $this->decodeRkNumber($this->u32($data, 6));
-            } elseif ($type === 0x00BD && strlen($data) >= 10) {
+            $pos = $dataOffset + $length;
+
+            if ($firstSheetOffset !== null && !$inFirstSheet) {
+                if ($recordOffset === $firstSheetOffset && $type === 0x0809) {
+                    $inFirstSheet = true;
+                }
+                continue;
+            }
+            if ($type === 0x000A) {
+                break;
+            }
+            if ($type === 0x00FD && $length >= 10) {
+                $row = $this->u16($stream, $dataOffset);
+                $col = $this->u16($stream, $dataOffset + 2);
+                $sstIndex = $this->u32($stream, $dataOffset + 6);
+                $this->putBiffCell($cells, $row, $col, $sst[$sstIndex] ?? '', $cellCount);
+            } elseif ($type === 0x0204 && $length >= 8) {
+                $row = $this->u16($stream, $dataOffset);
+                $col = $this->u16($stream, $dataOffset + 2);
+                $data = substr($stream, $dataOffset, $length);
+                list($value,) = $this->readBiffString($data, 6);
+                $this->putBiffCell($cells, $row, $col, $value, $cellCount);
+            } elseif ($type === 0x0203 && $length >= 14) {
+                $row = $this->u16($stream, $dataOffset);
+                $col = $this->u16($stream, $dataOffset + 2);
+                $value = unpack('e', substr($stream, $dataOffset + 6, 8))[1];
+                $this->putBiffCell($cells, $row, $col, $value, $cellCount);
+            } elseif ($type === 0x027E && $length >= 10) {
+                $row = $this->u16($stream, $dataOffset);
+                $col = $this->u16($stream, $dataOffset + 2);
+                $value = $this->decodeRkNumber($this->u32($stream, $dataOffset + 6));
+                $this->putBiffCell($cells, $row, $col, $value, $cellCount);
+            } elseif ($type === 0x00BD && $length >= 10) {
                 // BIFF8 MULRK：同一行连续多个 RK 数值。
                 // 0x00BE 是 MULBLANK（连续空白单元格），必须保持为空，不能按数字解码。
-                $row = $this->u16($data, 0);
-                $firstCol = $this->u16($data, 2);
-                $lastCol = $this->u16($data, strlen($data) - 2);
+                $row = $this->u16($stream, $dataOffset);
+                $firstCol = $this->u16($stream, $dataOffset + 2);
+                $lastCol = $this->u16($stream, $dataOffset + $length - 2);
                 $offset = 4;
-                for ($col = $firstCol; $col <= $lastCol && $offset + 6 <= strlen($data); $col++) {
-                    $cells[$row . ':' . $col] = $this->decodeRkNumber($this->u32($data, $offset + 2));
+                for ($col = $firstCol; $col <= $lastCol && $offset + 6 <= $length; $col++) {
+                    $value = $this->decodeRkNumber($this->u32($stream, $dataOffset + $offset + 2));
+                    $this->putBiffCell($cells, $row, $col, $value, $cellCount);
                     $offset += 6;
                 }
             }
         }
+        unset($sst);
         return $cells;
+    }
+
+    protected function putBiffCell(array &$cells, $row, $col, $value, &$cellCount)
+    {
+        $row = (int)$row;
+        $col = (int)$col;
+        if ($row < 0 || $row >= self::MAX_BIFF_ROWS) {
+            throw new \Exception('Excel 文件行数超过' . self::MAX_BIFF_ROWS . '行，请拆分后导入');
+        }
+        $key = $row . ':' . $col;
+        if (!array_key_exists($key, $cells)) {
+            $cellCount++;
+            if ($cellCount > self::MAX_BIFF_CELLS) {
+                throw new \Exception('Excel 文件单元格数量过多，请拆分后导入');
+            }
+        }
+        $cells[$key] = $value;
+    }
+
+    protected function parseBiffSharedStringsFromSegments($stream, array $segments)
+    {
+        if (empty($segments) || ($segments[0][1] ?? 0) < 8) {
+            return [];
+        }
+        $unique = $this->u32($stream, $segments[0][0] + 4);
+        if ($unique > self::MAX_BIFF_SHARED_STRINGS) {
+            throw new \Exception('Excel 共享字符串数量过多，请拆分后导入');
+        }
+        $segmentIndex = 0;
+        $offset = 8;
+        $sst = [];
+        for ($index = 0; $index < $unique; $index++) {
+            $sst[] = $this->readBiffSstStringFromSegments(
+                $stream,
+                $segments,
+                $segmentIndex,
+                $offset
+            );
+        }
+        return $sst;
+    }
+
+    protected function readBiffSstStringFromSegments(
+        $stream,
+        array $segments,
+        &$segmentIndex,
+        &$offset
+    ) {
+        $charCount = $this->u16(
+            $this->readBiffSegmentBytes($stream, $segments, $segmentIndex, $offset, 2),
+            0
+        );
+        $flagsRaw = $this->readBiffSegmentBytes($stream, $segments, $segmentIndex, $offset, 1);
+        $flags = ord($flagsRaw);
+        $hasRichText = ($flags & 0x08) !== 0;
+        $hasExt = ($flags & 0x04) !== 0;
+        $isUtf16 = ($flags & 0x01) !== 0;
+        $richCount = $hasRichText
+            ? $this->u16($this->readBiffSegmentBytes($stream, $segments, $segmentIndex, $offset, 2), 0)
+            : 0;
+        $extLength = $hasExt
+            ? $this->u32($this->readBiffSegmentBytes($stream, $segments, $segmentIndex, $offset, 4), 0)
+            : 0;
+
+        $text = '';
+        $readChars = 0;
+        while ($readChars < $charCount && $segmentIndex < count($segments)) {
+            $segmentLength = (int)$segments[$segmentIndex][1];
+            if ($offset >= $segmentLength) {
+                $segmentIndex++;
+                $offset = 0;
+                if ($segmentIndex >= count($segments)) {
+                    break;
+                }
+                $continuationFlag = $this->readBiffSegmentBytes(
+                    $stream,
+                    $segments,
+                    $segmentIndex,
+                    $offset,
+                    1
+                );
+                $isUtf16 = (ord($continuationFlag) & 0x01) !== 0;
+                $segmentLength = (int)$segments[$segmentIndex][1];
+            }
+            $bytesPerChar = $isUtf16 ? 2 : 1;
+            $availableChars = intdiv($segmentLength - $offset, $bytesPerChar);
+            if ($availableChars <= 0) {
+                $segmentIndex++;
+                $offset = 0;
+                continue;
+            }
+            $takeChars = min($charCount - $readChars, $availableChars);
+            $segmentStart = (int)$segments[$segmentIndex][0];
+            $raw = substr($stream, $segmentStart + $offset, $takeChars * $bytesPerChar);
+            $offset += $takeChars * $bytesPerChar;
+            $readChars += $takeChars;
+            $text .= $isUtf16 ? iconv('UTF-16LE', 'UTF-8//IGNORE', $raw) : $raw;
+        }
+        if ($readChars !== $charCount) {
+            throw new \Exception('Excel 共享字符串数据不完整');
+        }
+        $this->skipBiffSegmentBytes(
+            $segments,
+            $segmentIndex,
+            $offset,
+            $richCount * 4 + $extLength
+        );
+        return $text;
+    }
+
+    protected function readBiffSegmentBytes(
+        $stream,
+        array $segments,
+        &$segmentIndex,
+        &$offset,
+        $length
+    ) {
+        $required = (int)$length;
+        $result = '';
+        while ($length > 0 && $segmentIndex < count($segments)) {
+            $segmentStart = (int)$segments[$segmentIndex][0];
+            $segmentLength = (int)$segments[$segmentIndex][1];
+            if ($offset >= $segmentLength) {
+                $segmentIndex++;
+                $offset = 0;
+                continue;
+            }
+            $take = min($length, $segmentLength - $offset);
+            $result .= substr($stream, $segmentStart + $offset, $take);
+            $offset += $take;
+            $length -= $take;
+        }
+        if (strlen($result) !== $required) {
+            throw new \Exception('Excel 共享字符串记录不完整');
+        }
+        return $result;
+    }
+
+    protected function skipBiffSegmentBytes(array $segments, &$segmentIndex, &$offset, $length)
+    {
+        while ($length > 0 && $segmentIndex < count($segments)) {
+            $segmentLength = (int)$segments[$segmentIndex][1];
+            if ($offset >= $segmentLength) {
+                $segmentIndex++;
+                $offset = 0;
+                continue;
+            }
+            $take = min($length, $segmentLength - $offset);
+            $offset += $take;
+            $length -= $take;
+        }
+        if ($length > 0) {
+            throw new \Exception('Excel 共享字符串附加数据不完整');
+        }
     }
 
     protected function firstBiffWorksheetOffset($records)

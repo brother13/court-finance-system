@@ -1,6 +1,6 @@
 insert into fin_account_set (
     account_set_id, set_code, set_name, biz_type, enabled_year, generate_voucher_by_day_flag,
-    generate_refund_voucher_by_out_order_no_flag, subject_code_rule, status,
+    generate_refund_voucher_by_out_order_no_flag, skip_confirmed_return_voucher_flag, subject_code_rule, status,
     created_by, created_time, updated_by, updated_time, del_flag, version, remark
 ) values (
     '00000000-0000-0000-0000-000000000101',
@@ -9,6 +9,7 @@ insert into fin_account_set (
     'CASE_FUND',
     2026,
     1,
+    0,
     0,
     '4-2-2-2',
     1,

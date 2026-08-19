@@ -136,6 +136,8 @@ import type { AuxBalanceRow } from '../../types/api'
 const context = useContextStore()
 const balances = ref<any[]>([])
 const auxBalanceRows = ref<AuxBalanceRow[]>([])
+const auxMonitorTotal = ref<number | null>(null)
+const auxMonitorAmount = ref<number | null>(null)
 
 const bizTypeName = computed(() => {
   const map: Record<string, string> = {
@@ -167,9 +169,9 @@ const isBalanced = computed(() => balanceDifference.value < 0.01)
 const isYearBalanced = computed(() => yearBalanceDifference.value < 0.01)
 
 const auxDetailRows = computed(() => auxBalanceRows.value.flatMap((row) => (row.children || []).length > 0 ? row.children || [] : [row]))
-const unsettledDetailCount = computed(() => auxDetailRows.value.filter((row) => row.monitor_flag).length)
+const unsettledDetailCount = computed(() => auxMonitorTotal.value ?? auxDetailRows.value.filter((row) => row.monitor_flag).length)
 const unsettledAmount = computed(() =>
-  auxDetailRows.value
+  auxMonitorAmount.value ?? auxDetailRows.value
     .filter((row) => row.monitor_flag)
     .reduce((sum, row) => sum + Math.abs(Number(row.ending_balance_amount) || 0), 0)
 )
@@ -255,8 +257,12 @@ const load = async () => {
   if (context.bizType === 'CASE_FUND') {
     const result = await booksApi.auxBalance({ period: context.period })
     auxBalanceRows.value = result.items || []
+    auxMonitorTotal.value = Number(result.monitor_total || 0)
+    auxMonitorAmount.value = Number(result.ending_total || 0)
   } else {
     auxBalanceRows.value = []
+    auxMonitorTotal.value = null
+    auxMonitorAmount.value = null
   }
 }
 

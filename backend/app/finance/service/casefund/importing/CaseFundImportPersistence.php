@@ -7,6 +7,8 @@ namespace app\finance\service\casefund\importing;
  */
 class CaseFundImportPersistence
 {
+    const INSERT_BATCH_SIZE = 200;
+
     protected $hooks;
     protected $tables;
     protected $paymentFields;
@@ -48,12 +50,13 @@ class CaseFundImportPersistence
             if ($fingerprint !== '') {
                 $fingerprints[] = $fingerprint;
             }
-            $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-            if ($useReceiptNoAsDuplicateKey && $receiptNo !== '') {
-                $receiptNos[] = $receiptNo;
+            // 无单据号辅助核算时仅按来源指纹保持技术幂等，不加载票据号或账号金额候选。
+            if (!$useReceiptNoAsDuplicateKey) {
                 continue;
             }
-            if (!$useReceiptNoAsDuplicateKey && $receiptNo !== '' && $fingerprint !== '') {
+            $receiptNo = trim((string)($row['receipt_no'] ?? ''));
+            if ($receiptNo !== '') {
+                $receiptNos[] = $receiptNo;
                 continue;
             }
             $accountNo = trim((string)($row['bank_account_no'] ?? ''));
@@ -65,35 +68,41 @@ class CaseFundImportPersistence
         $existing = [];
         if (!empty($fingerprints)) {
             // 支付来源指纹有唯一索引，必须包含软删除行，以便重新导入时恢复原记录。
-            $fingerprintRows = $this->db($this->tables['payment'])->where([
-                'account_set_id' => $this->accountSetId(),
-            ])->where('source_fingerprint', 'in', array_values(array_unique($fingerprints)))
-                ->field($this->paymentFields)
-                ->select();
-            foreach ($fingerprintRows as $row) {
-                $this->rememberPaymentExisting($existing, $row, $useReceiptNoAsDuplicateKey);
+            foreach (array_chunk(array_values(array_unique($fingerprints)), 500) as $batch) {
+                $fingerprintRows = $this->db($this->tables['payment'])->where([
+                    'account_set_id' => $this->accountSetId(),
+                ])->where('source_fingerprint', 'in', $batch)
+                    ->field($this->paymentFields)
+                    ->select();
+                foreach ($fingerprintRows as $row) {
+                    $this->rememberPaymentExisting($existing, $row, $useReceiptNoAsDuplicateKey);
+                }
             }
         }
         if (!empty($receiptNos)) {
-            $receiptRows = $this->db($this->tables['payment'])->where([
-                'account_set_id' => $this->accountSetId(),
-                'del_flag' => 0,
-            ])->where('receipt_no', 'in', array_values(array_unique($receiptNos)))
-                ->field($this->paymentFields)
-                ->select();
-            foreach ($receiptRows as $row) {
-                $this->rememberPaymentExisting($existing, $row, $useReceiptNoAsDuplicateKey);
+            foreach (array_chunk(array_values(array_unique($receiptNos)), 500) as $batch) {
+                $receiptRows = $this->db($this->tables['payment'])->where([
+                    'account_set_id' => $this->accountSetId(),
+                    'del_flag' => 0,
+                ])->where('receipt_no', 'in', $batch)
+                    ->field($this->paymentFields)
+                    ->select();
+                foreach ($receiptRows as $row) {
+                    $this->rememberPaymentExisting($existing, $row, $useReceiptNoAsDuplicateKey);
+                }
             }
         }
         if (!empty($accountNos)) {
-            $accountRows = $this->db($this->tables['payment'])->where([
-                'account_set_id' => $this->accountSetId(),
-                'del_flag' => 0,
-            ])->where('bank_account_no', 'in', array_values(array_unique($accountNos)))
-                ->field($this->paymentFields)
-                ->select();
-            foreach ($accountRows as $row) {
-                $this->rememberPaymentExisting($existing, $row, $useReceiptNoAsDuplicateKey);
+            foreach (array_chunk(array_values(array_unique($accountNos)), 500) as $batch) {
+                $accountRows = $this->db($this->tables['payment'])->where([
+                    'account_set_id' => $this->accountSetId(),
+                    'del_flag' => 0,
+                ])->where('bank_account_no', 'in', $batch)
+                    ->field($this->paymentFields)
+                    ->select();
+                foreach ($accountRows as $row) {
+                    $this->rememberPaymentExisting($existing, $row, $useReceiptNoAsDuplicateKey);
+                }
             }
         }
         return $existing;
@@ -107,12 +116,16 @@ class CaseFundImportPersistence
         if (empty($receiptNos)) {
             return [];
         }
-        return $this->db($this->tables['payment'])->where([
-            'account_set_id' => $this->accountSetId(),
-            'del_flag' => 0,
-        ])->where('receipt_no', 'in', $receiptNos)
-            ->field('payment_id,account_set_id,fiscal_year,period,receipt_no,case_no,payer_name,party_name,payment_amount,payment_date,payment_time,source_file_name,source_row_no,source_fingerprint,voucher_status,voucher_id,voucher_no,voucher_period,del_flag')
-            ->select();
+        $rows = [];
+        foreach (array_chunk($receiptNos, 500) as $batch) {
+            $rows = array_merge($rows, $this->db($this->tables['payment'])->where([
+                'account_set_id' => $this->accountSetId(),
+                'del_flag' => 0,
+            ])->where('receipt_no', 'in', $batch)
+                ->field('payment_id,account_set_id,fiscal_year,period,receipt_no,case_no,payer_name,party_name,payment_amount,payment_date,payment_time,source_file_name,source_row_no,source_fingerprint,voucher_status,voucher_id,voucher_no,voucher_period,del_flag')
+                ->select());
+        }
+        return $rows;
     }
 
     public function paymentReceiptNoDuplicateErrors($rows)
@@ -229,6 +242,7 @@ class CaseFundImportPersistence
         $updated = 0;
         $skipped = 0;
         $seen = [];
+        $inserts = [];
         $useReceiptNoAsDuplicateKey = (bool)($data['use_receipt_no_as_duplicate_key'] ?? true);
         foreach ($rows as $row) {
             $duplicateKey = $this->callHook('payment_duplicate_key', [$row, $useReceiptNoAsDuplicateKey]);
@@ -250,9 +264,14 @@ class CaseFundImportPersistence
                 continue;
             }
             $insert = $this->buildImportInsert($row, 'payment_id', $data);
-            $this->db($this->tables['payment'])->insert($insert);
+            $inserts[] = $insert;
             $created++;
+            if (count($inserts) >= self::INSERT_BATCH_SIZE) {
+                $this->insertRowsInBatches($this->tables['payment'], $inserts);
+                $inserts = [];
+            }
         }
+        $this->insertRowsInBatches($this->tables['payment'], $inserts);
         return ['created' => $created, 'updated' => $updated, 'skipped' => $skipped];
     }
 
@@ -262,6 +281,7 @@ class CaseFundImportPersistence
         $updated = 0;
         $skipped = 0;
         $seen = [];
+        $inserts = [];
         foreach ($rows as $row) {
             $fingerprint = $row['source_fingerprint'];
             if (isset($seen[$fingerprint])) {
@@ -280,9 +300,14 @@ class CaseFundImportPersistence
                 continue;
             }
             $insert = $this->buildImportInsert($row, 'refund_id', $data);
-            $this->db($this->tables['refund'])->insert($insert);
+            $inserts[] = $insert;
             $created++;
+            if (count($inserts) >= self::INSERT_BATCH_SIZE) {
+                $this->insertRowsInBatches($this->tables['refund'], $inserts);
+                $inserts = [];
+            }
         }
+        $this->insertRowsInBatches($this->tables['refund'], $inserts);
         return ['created' => $created, 'updated' => $updated, 'skipped' => $skipped];
     }
 
@@ -294,6 +319,7 @@ class CaseFundImportPersistence
         $created = 0;
         $skipped = 0;
         $seen = [];
+        $inserts = [];
         foreach ($rows as $row) {
             $fingerprint = $row['source_fingerprint'];
             if (isset($existing[$fingerprint]) || isset($seen[$fingerprint])) {
@@ -303,10 +329,38 @@ class CaseFundImportPersistence
             }
             $seen[$fingerprint] = true;
             $insert = $this->buildImportInsert($row, $idField, $data);
-            $this->db($this->tables[$tableKey])->insert($insert);
+            $inserts[] = $insert;
             $created++;
+            if (count($inserts) >= self::INSERT_BATCH_SIZE) {
+                $this->insertRowsInBatches($this->tables[$tableKey], $inserts);
+                $inserts = [];
+            }
         }
+        $this->insertRowsInBatches($this->tables[$tableKey], $inserts);
         return ['created' => $created, 'skipped' => $skipped];
+    }
+
+    protected function insertRowsInBatches($table, array $rows)
+    {
+        if (empty($rows)) {
+            return;
+        }
+        foreach (array_chunk($rows, self::INSERT_BATCH_SIZE) as $batch) {
+            $db = $this->db($table);
+            if (method_exists($db, 'insertAll')) {
+                $affectedRows = $db->insertAll($batch);
+                if ((int)$affectedRows !== count($batch)) {
+                    throw new \RuntimeException('案款导入批量写入失败：' . $table);
+                }
+                continue;
+            }
+            // 保留测试替身及极旧查询驱动的兼容路径；生产 ThinkPHP 查询使用 insertAll。
+            foreach ($batch as $row) {
+                if ((int)$this->db($table)->insert($row) !== 1) {
+                    throw new \RuntimeException('案款导入写入失败：' . $table);
+                }
+            }
+        }
     }
 
     public function updateExistingPaymentFromImport($existingRow, $row, $data)

@@ -17,14 +17,28 @@
           <el-option label="已生成凭证" value="GENERATED" />
         </el-select>
         <el-select v-model="filters.claim_status" placeholder="认领状态" clearable class="status-select">
-          <el-option label="未认领" value="未认领" />
-          <el-option label="已认领" value="已认领" />
+          <el-option label="待认领" value="待认领" />
+          <el-option label="已确认" value="已确认" />
         </el-select>
+        <el-select v-model="filters.return_match_status" placeholder="退汇状态" clearable class="status-select">
+          <el-option label="不参与匹配" value="INELIGIBLE" />
+          <el-option label="未匹配" value="UNMATCHED" />
+          <el-option label="疑似退汇" value="AUTO_CANDIDATE" />
+          <el-option label="匹配歧义" value="AMBIGUOUS" />
+          <el-option label="已确认退汇" value="CONFIRMED" />
+          <el-option label="已排除" value="REJECTED" />
+        </el-select>
+        <div class="amount-range-filter" role="group" aria-label="金额区间">
+          <el-input-number v-model="filters.amount_min" :min="0" :precision="2" :controls="false" placeholder="最低金额" class="amount-range-input" />
+          <span class="date-separator">至</span>
+          <el-input-number v-model="filters.amount_max" :min="0" :precision="2" :controls="false" placeholder="最高金额" class="amount-range-input" />
+        </div>
         <el-input v-model="filters.keyword" placeholder="缴款人 / 摘要 / 账号 / 备注" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handleImportFile" />
+        <el-button v-permission="'case_fund:return_match'" type="warning" plain :icon="Connection" :loading="matchingReturns" @click="handleReturnMatchScan">识别退汇</el-button>
         <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
         <el-dropdown v-if="canUseMoreActions" trigger="click" @command="handleMoreAction">
           <el-button :icon="MoreFilled">
@@ -86,7 +100,25 @@
         <el-table-column prop="payer_account_no" label="付款账号" min-width="190" show-overflow-tooltip />
         <el-table-column prop="claim_status" label="认领状态" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="claimStatusType(row.claim_status)" effect="light">{{ row.claim_status || '未认领' }}</el-tag>
+            <el-tag :type="claimStatusType(row.claim_status)" effect="light">{{ row.claim_status || '待认领' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="claim_user_name" label="认领人姓名" width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.claim_user_name || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="claim_date" label="认领日期" width="112" align="center">
+          <template #default="{ row }">{{ row.claim_date || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="退汇状态" width="132" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="Number(row.return_match_count || 0) > 0" link @click="openReturnMatchDetail(row)">
+              <el-tag :type="returnMatchStatusType(row.return_match_status)" effect="light">
+                {{ returnMatchStatusLabel(row.return_match_status) }}
+              </el-tag>
+            </el-button>
+            <el-tag v-else :type="returnMatchStatusType(row.return_match_status)" effect="light">
+              {{ returnMatchStatusLabel(row.return_match_status) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="制证状态" width="120" align="center" fixed="right">
@@ -165,6 +197,12 @@
         <el-button type="primary" :loading="subjectConfigSaving" @click="saveSubjectConfig">保存</el-button>
       </template>
     </el-dialog>
+
+    <CaseFundReturnMatchDialog
+      v-model="returnMatchDialogVisible"
+      :unknown-payment-id="returnMatchUnknownPaymentId"
+      @changed="load"
+    />
   </div>
 </template>
 
@@ -172,12 +210,13 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Delete, DocumentChecked, MoreFilled, Search, Setting, Upload } from '@element-plus/icons-vue'
+import { ArrowDown, Connection, Delete, DocumentChecked, MoreFilled, Search, Setting, Upload } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
+import CaseFundReturnMatchDialog from '../../components/case-fund/CaseFundReturnMatchDialog.vue'
 import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
-import type { CaseFundSubjectConfig, CaseFundUnknownPayment, Subject } from '../../types/api'
+import type { CaseFundReturnMatchStatus, CaseFundSubjectConfig, CaseFundUnknownPayment, Subject } from '../../types/api'
 
 const context = useContextStore()
 const route = useRoute()
@@ -191,6 +230,9 @@ const loading = ref(false)
 const importing = ref(false)
 const generating = ref(false)
 const deleting = ref(false)
+const matchingReturns = ref(false)
+const returnMatchDialogVisible = ref(false)
+const returnMatchUnknownPaymentId = ref('')
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedUnknownPaymentIds = ref<string[]>([])
 const selectedUnknownPaymentRows = ref<CaseFundUnknownPayment[]>([])
@@ -207,6 +249,9 @@ const filters = reactive({
   date_end: initialRange.end,
   voucher_status: '',
   claim_status: '',
+  return_match_status: '',
+  amount_min: null as number | null,
+  amount_max: null as number | null,
   keyword: ''
 })
 const linkedUnknownPaymentId = computed(() => routeQueryText(route.query.unknown_payment_id))
@@ -229,6 +274,9 @@ const load = async () => {
       date_end: filters.date_end,
       voucher_status: filters.voucher_status,
       claim_status: filters.claim_status,
+      return_match_status: filters.return_match_status,
+      amount_min: filters.amount_min,
+      amount_max: filters.amount_max,
       keyword: filters.keyword,
       page: page.value,
       pagesize: pageSize.value
@@ -241,12 +289,21 @@ const load = async () => {
 }
 
 const query = async () => {
+  if (!validateAmountRange()) return
   if (linkedUnknownPaymentId.value) {
     await clearLinkedUnknownPayment()
     return
   }
   page.value = 1
   await load()
+}
+
+const validateAmountRange = () => {
+  if (filters.amount_min !== null && filters.amount_max !== null && filters.amount_min > filters.amount_max) {
+    ElMessage.warning('最低金额不能大于最高金额')
+    return false
+  }
+  return true
 }
 
 const clearLinkedUnknownPayment = async () => {
@@ -425,7 +482,84 @@ const voucherStatusType = (status: string) => {
 }
 
 const claimStatusType = (status: string) => {
-  return status === '已认领' || status === 'CLAIMED' ? 'success' : 'info'
+  return status === '已确认' || status === '已认领' || status === 'CLAIMED' ? 'success' : 'info'
+}
+
+const returnMatchStatusLabel = (status: CaseFundReturnMatchStatus | string | undefined) => {
+  const map: Record<string, string> = {
+    INELIGIBLE: '不参与匹配',
+    UNMATCHED: '未匹配',
+    AUTO_CANDIDATE: '疑似退汇',
+    AMBIGUOUS: '匹配歧义',
+    CONFIRMED: '已确认退汇',
+    REJECTED: '已排除'
+  }
+  return map[status || ''] || status || '未匹配'
+}
+
+const returnMatchStatusType = (status: CaseFundReturnMatchStatus | string | undefined) => {
+  const map: Record<string, 'success' | 'warning' | 'danger' | 'info'> = {
+    CONFIRMED: 'success',
+    AUTO_CANDIDATE: 'warning',
+    AMBIGUOUS: 'danger',
+    REJECTED: 'info',
+    INELIGIBLE: 'info',
+    UNMATCHED: 'info'
+  }
+  return map[status || ''] || 'info'
+}
+
+const openReturnMatchDetail = (row: CaseFundUnknownPayment) => {
+  returnMatchUnknownPaymentId.value = row.unknown_payment_id
+  returnMatchDialogVisible.value = true
+}
+
+const selectedReturnMatchPeriod = () => {
+  const dateStart = String(filters.date_start || '').trim()
+  const dateEnd = String(filters.date_end || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStart) || !/^\d{4}-\d{2}-\d{2}$/.test(dateEnd)) {
+    ElMessage.warning('请先选择完整的到账日期范围')
+    return ''
+  }
+
+  const startPeriod = dateStart.slice(0, 7)
+  const endPeriod = dateEnd.slice(0, 7)
+  if (startPeriod !== endPeriod) {
+    ElMessage.warning('退汇识别按自然月执行，请将到账日期选择在同一个月份内')
+    return ''
+  }
+  return startPeriod
+}
+
+const handleReturnMatchScan = async () => {
+  const selectedPeriod = selectedReturnMatchPeriod()
+  if (!selectedPeriod) return
+
+  matchingReturns.value = true
+  try {
+    const preview = await caseFundApi.previewUnknownRefundMatches(selectedPeriod)
+    const stats = preview.stats
+    try {
+      await ElMessageBox.confirm(
+        `${selectedPeriod} 共检查 ${stats.total_unknown} 条不明款：` +
+          `${stats.ineligible} 条缺少缴款人或付款账号，将跳过；` +
+          `${stats.auto_candidate} 条唯一候选；${stats.ambiguous} 条存在歧义；` +
+          `${stats.unmatched} 条未匹配。是否保存本次识别结果？`,
+        '识别退汇',
+        { type: 'warning', confirmButtonText: '保存识别结果', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    const result = await caseFundApi.scanUnknownRefundMatches(selectedPeriod)
+    ElMessage.success(
+      `退汇识别完成：疑似退汇${result.stats.auto_candidate}条，匹配歧义${result.stats.ambiguous}条，跳过${result.stats.ineligible}条`
+    )
+    page.value = 1
+    await load()
+  } finally {
+    matchingReturns.value = false
+  }
 }
 
 const isRowSelectable = (row: CaseFundUnknownPayment) => {

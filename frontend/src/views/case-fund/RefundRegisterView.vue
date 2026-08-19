@@ -16,11 +16,24 @@
           <el-option label="未生成凭证" value="UNGENERATED" />
           <el-option label="已生成凭证" value="GENERATED" />
         </el-select>
+        <el-select v-model="filters.return_match_status" placeholder="退汇状态" clearable class="status-select">
+          <el-option label="未发现退汇" value="UNMATCHED" />
+          <el-option label="疑似退汇" value="AUTO_CANDIDATE" />
+          <el-option label="匹配歧义" value="AMBIGUOUS" />
+          <el-option label="已确认退汇" value="CONFIRMED" />
+          <el-option label="已排除" value="REJECTED" />
+        </el-select>
+        <div class="amount-range-filter" role="group" aria-label="金额区间">
+          <el-input-number v-model="filters.amount_min" :min="0" :precision="2" :controls="false" placeholder="最低金额" class="amount-range-input" />
+          <span class="date-separator">至</span>
+          <el-input-number v-model="filters.amount_max" :min="0" :precision="2" :controls="false" placeholder="最高金额" class="amount-range-input" />
+        </div>
         <el-input v-model="filters.keyword" placeholder="案号 / 当事人 / 收款人 / 票据" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handleRefundImportFile" />
+        <el-button v-if="refundJob" type="primary" plain @click="openRefundJobDialog">后台任务</el-button>
         <el-dropdown v-if="canUseMoreActions" trigger="click" @command="handleMoreAction">
           <el-button :icon="MoreFilled">
             更多功能
@@ -28,9 +41,9 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item v-permission="'case_fund:delete'" command="delete" :icon="Delete" :disabled="deleting" class="danger-dropdown-item" style="color: var(--el-color-danger)">删除</el-dropdown-item>
-              <el-dropdown-item v-permission="'case_fund:subject_config'" command="subjectConfig" :icon="Setting">科目配置</el-dropdown-item>
-              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="importing">数据导入</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:delete'" command="delete" :icon="Delete" :disabled="deleting || refundJobBusy" class="danger-dropdown-item" style="color: var(--el-color-danger)">删除</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:subject_config'" command="subjectConfig" :icon="Setting" :disabled="refundJobBusy">科目配置</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="importing || refundJobBusy">数据导入</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -41,6 +54,13 @@
       <template #title>
         <span>正在查看银行对账关联的出账记录</span>
         <el-button link type="primary" @click="clearLinkedRefund">返回当前期间全部数据</el-button>
+      </template>
+    </el-alert>
+
+    <el-alert v-if="refundRecoveryUnconfirmed" type="warning" show-icon :closable="false" class="case-fund-link-alert">
+      <template #title>
+        <span>上次退付凭证任务的提交或运行结果尚未确认，为避免重复制证，相关操作已暂时锁定。</span>
+        <el-button link type="warning" :loading="refundRecoveryLoading" @click="retryRefundJobRecovery">重新确认</el-button>
       </template>
     </el-alert>
 
@@ -58,8 +78,8 @@
         <strong>{{ ungeneratedCount }}</strong>
       </div>
       <div class="case-fund-summary-actions">
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" :disabled="refundJobBusy || importing" @click="handleGenerateVoucher">生成凭证</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" :disabled="refundJobBusy || importing" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
       </div>
     </div>
 
@@ -93,6 +113,18 @@
         <el-table-column prop="payee_bank_name" label="开户银行" min-width="220" show-overflow-tooltip />
         <el-table-column prop="unionpay_no" label="银联号" min-width="130" show-overflow-tooltip />
         <el-table-column prop="handler_name" label="经办人" width="100" show-overflow-tooltip />
+        <el-table-column label="退汇状态" width="132" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="Number(row.return_match_count || 0) > 0" link @click="openReturnMatchDetail(row)">
+              <el-tag :type="returnMatchStatusType(row.return_match_status)" effect="light">
+                {{ returnMatchStatusLabel(row.return_match_status) }}
+              </el-tag>
+            </el-button>
+            <el-tag v-else :type="returnMatchStatusType(row.return_match_status)" effect="light">
+              {{ returnMatchStatusLabel(row.return_match_status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="制证状态" width="120" align="center" fixed="right">
           <template #default="{ row }">
             <el-tag :type="voucherStatusType(row.voucher_status)" effect="light">{{ voucherStatusLabel(row.voucher_status) }}</el-tag>
@@ -134,6 +166,8 @@
         <el-switch v-model="generateVoucherByDay" />
         <span>是否按出账的单号汇总生成</span>
         <el-switch v-model="generateRefundVoucherByOutOrderNo" />
+        <span>已确认退汇的不生成凭证</span>
+        <el-switch v-model="skipConfirmedReturnVoucher" />
       </div>
       <el-table :data="subjectConfigRows" border v-loading="subjectConfigLoading">
         <el-table-column prop="business_item_type" label="出账种类" min-width="160" />
@@ -171,6 +205,22 @@
         <el-button type="primary" :loading="subjectConfigSaving" @click="saveSubjectConfig">保存</el-button>
       </template>
     </el-dialog>
+
+    <CaseFundJobProgressDialog
+      v-model="refundJobDialogVisible"
+      :job="refundJob"
+      title="退付凭证后台任务"
+      job-type-label="退付凭证生成"
+      :poll-error="refundJobPollError"
+      :status-loading="refundJobStatusLoading"
+      @refresh="refreshRefundJob"
+      @view-errors="showRefundJobErrors"
+    />
+    <CaseFundReturnMatchDialog
+      v-model="returnMatchDialogVisible"
+      :refund-id="returnMatchRefundId"
+      @changed="load"
+    />
   </div>
 </template>
 
@@ -181,9 +231,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Search, Setting, Upload, DocumentChecked, Delete, MoreFilled } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
+import CaseFundJobProgressDialog from '../../components/case-fund/CaseFundJobProgressDialog.vue'
+import CaseFundReturnMatchDialog from '../../components/case-fund/CaseFundReturnMatchDialog.vue'
+import { createCaseFundClientRequestId, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
 import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
-import type { CaseFundRefund, CaseFundSubjectConfig, Subject } from '../../types/api'
+import type { CaseFundJob, CaseFundRefund, CaseFundReturnMatchStatus, CaseFundSubjectConfig, Subject } from '../../types/api'
 
 const context = useContextStore()
 const route = useRoute()
@@ -195,8 +248,9 @@ const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 const importing = ref(false)
-const generating = ref(false)
 const deleting = ref(false)
+const returnMatchDialogVisible = ref(false)
+const returnMatchRefundId = ref('')
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedRefundIds = ref<string[]>([])
 const selectedRefundRows = ref<CaseFundRefund[]>([])
@@ -206,6 +260,7 @@ const subjectConfigSaving = ref(false)
 const subjectConfigRows = ref<CaseFundSubjectConfig[]>([])
 const generateVoucherByDay = ref(true)
 const generateRefundVoucherByOutOrderNo = ref(false)
+const skipConfirmedReturnVoucher = ref(false)
 const voucherBizType: 'REFUND' = 'REFUND'
 const initialRange = initialRefundDateRange(context.period)
 const filters = reactive({
@@ -213,6 +268,9 @@ const filters = reactive({
   date_start: initialRange.start,
   date_end: initialRange.end,
   voucher_status: '',
+  return_match_status: '',
+  amount_min: null as number | null,
+  amount_max: null as number | null,
   keyword: ''
 })
 const linkedRefundId = computed(() => routeQueryText(route.query.refund_id))
@@ -234,6 +292,9 @@ const load = async () => {
       date_start: normalizeDateFilter(filters.date_start),
       date_end: normalizeDateFilter(filters.date_end),
       voucher_status: filters.voucher_status,
+      return_match_status: filters.return_match_status,
+      amount_min: filters.amount_min,
+      amount_max: filters.amount_max,
       keyword: filters.keyword,
       page: page.value,
       pagesize: pageSize.value
@@ -245,13 +306,222 @@ const load = async () => {
   }
 }
 
+const REFUND_VOUCHER_JOB_TYPE = 'CASE_FUND_REFUND_VOUCHER'
+type PendingRefundJobSubmission = {
+  client_request_id: string
+  job_type: string
+}
+
+const refundJobStorageKey = () => `court-finance-case-fund-job:${context.accountSetId}:${context.userId}:${context.year}:refunds`
+const refundPendingStorageKey = () => `${refundJobStorageKey()}:pending`
+
+const readStoredRefundJobId = () => {
+  try {
+    return String(localStorage.getItem(refundJobStorageKey()) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+const readPendingRefundSubmission = (): PendingRefundJobSubmission | null => {
+  try {
+    const raw = localStorage.getItem(refundPendingStorageKey())
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<PendingRefundJobSubmission>
+    const clientRequestId = String(parsed.client_request_id || '').trim()
+    const jobType = String(parsed.job_type || '').trim()
+    return clientRequestId && jobType ? { client_request_id: clientRequestId, job_type: jobType } : null
+  } catch {
+    return null
+  }
+}
+
+const storedRefundJobId = ref(readStoredRefundJobId())
+const pendingRefundSubmission = ref<PendingRefundJobSubmission | null>(readPendingRefundSubmission())
+const refundRecoveryUnconfirmed = ref(false)
+const refundRecoveryLoading = ref(false)
+
+const persistPendingRefundSubmission = (pending: PendingRefundJobSubmission) => {
+  pendingRefundSubmission.value = pending
+  refundRecoveryUnconfirmed.value = false
+  try {
+    localStorage.setItem(refundPendingStorageKey(), JSON.stringify(pending))
+  } catch {
+    // 内存状态仍会阻止当前页面重复提交。
+  }
+}
+
+const clearPendingRefundSubmission = () => {
+  pendingRefundSubmission.value = null
+  refundRecoveryUnconfirmed.value = false
+  try {
+    localStorage.removeItem(refundPendingStorageKey())
+  } catch {
+    // 本地存储清理失败不影响已经取得的任务状态。
+  }
+}
+
+const persistRefundJob = (job: CaseFundJob) => {
+  storedRefundJobId.value = job.job_id
+  try {
+    localStorage.setItem(refundJobStorageKey(), job.job_id)
+    clearPendingRefundSubmission()
+  } catch {
+    // 保留 pending，刷新后仍可按幂等号查回任务。
+  }
+}
+
+const removeStoredRefundJob = (jobId?: string) => {
+  if (!jobId || storedRefundJobId.value === jobId) {
+    storedRefundJobId.value = ''
+  }
+  try {
+    const storageKey = refundJobStorageKey()
+    if (!jobId || localStorage.getItem(storageKey) === jobId) {
+      localStorage.removeItem(storageKey)
+    }
+  } catch {
+    // 本地存储清理失败不影响后台任务结果。
+  }
+}
+
+const handleRefundJobFinished = async (finishedJob: CaseFundJob) => {
+  removeStoredRefundJob(finishedJob.job_id)
+  clearPendingRefundSubmission()
+  selectedRefundIds.value = []
+  selectedRefundRows.value = []
+  const result = finishedJob.result || {}
+  if (finishedJob.status === 'SUCCEEDED') {
+    ElMessage.success(`退付凭证生成完成：成功生成 ${Number(result.generated_count || 0)} 张凭证，处理 ${Number(result.refund_count || finishedJob.success_count || 0)} 条出账记录`)
+  } else if (finishedJob.status === 'PARTIAL_FAILED') {
+    ElMessage.warning(`退付凭证任务已完成，但有 ${Number(finishedJob.failure_count || 0)} 条数据失败，请查看错误明细`)
+  } else {
+    ElMessage.error(finishedJob.error_message || '退付凭证后台任务执行失败')
+  }
+  await load().catch(() => {})
+}
+
+const {
+  job: refundJob,
+  dialogVisible: refundJobDialogVisible,
+  creating: refundJobCreating,
+  statusLoading: refundJobStatusLoading,
+  createError: refundJobCreateError,
+  pollError: refundJobPollError,
+  isActive: refundJobActive,
+  createJob: createRefundJob,
+  trackJob: trackRefundJob,
+  resumeJob: resumeRefundJob,
+  refreshJob: refreshRefundJob,
+  openDialog: openRefundJobDialog
+} = useCaseFundJob({
+  onUpdated: persistRefundJob,
+  onFinished: (job) => { void handleRefundJobFinished(job) }
+})
+
+const refundJobUnresolved = computed(() => (
+  Boolean(pendingRefundSubmission.value)
+  || Boolean(storedRefundJobId.value && !refundJob.value)
+))
+const refundJobBusy = computed(() => (
+  refundJobCreating.value
+  || refundJobActive.value
+  || refundJobUnresolved.value
+  || refundRecoveryLoading.value
+))
+const generating = computed(() => refundJobBusy.value)
+
+const recoverPendingRefundJob = async (showMessage = true) => {
+  const pending = pendingRefundSubmission.value
+  if (!pending) return null
+  refundRecoveryLoading.value = true
+  try {
+    const result = await caseFundApi.jobList({
+      client_request_id: pending.client_request_id,
+      job_type: pending.job_type,
+      page: 1,
+      pagesize: 10
+    })
+    const recoveredJob = result.items.find((item) => (
+      item.client_request_id === pending.client_request_id
+      && item.job_type === pending.job_type
+    ))
+    if (!recoveredJob) {
+      // 只有精确任务查询成功且确认不存在时才解除锁定；查询失败仍保留 pending，
+      // 避免把“暂时查不到”误判成“任务未创建”而造成重复制证。
+      clearPendingRefundSubmission()
+      if (showMessage) {
+        ElMessage.info('已确认后台不存在上次待提交的退付凭证任务，操作锁定已解除，请重新发起操作')
+      }
+      return null
+    }
+    refundRecoveryUnconfirmed.value = false
+    trackRefundJob(recoveredJob, true)
+    if (showMessage && !isCaseFundJobTerminal(recoveredJob.status)) {
+      ElMessage.info('已恢复上次待确认的退付凭证后台任务')
+    }
+    return recoveredJob
+  } catch (error: any) {
+    refundRecoveryUnconfirmed.value = true
+    if (showMessage) {
+      ElMessage.warning(error?.message || '暂时无法确认上次退付任务状态，原任务可能仍在运行，请勿重复提交')
+    }
+    return null
+  } finally {
+    refundRecoveryLoading.value = false
+  }
+}
+
+const restoreRefundJob = async (showMessage = true) => {
+  const jobId = storedRefundJobId.value
+  if (!jobId) return recoverPendingRefundJob(showMessage)
+  refundRecoveryLoading.value = true
+  try {
+    const restoredJob = await resumeRefundJob(jobId, true)
+    refundRecoveryUnconfirmed.value = false
+    if (showMessage && !isCaseFundJobTerminal(restoredJob.status)) {
+      ElMessage.info('已恢复上次未完成的退付凭证后台任务')
+    }
+    return restoredJob
+  } catch (error: any) {
+    refundRecoveryUnconfirmed.value = true
+    if (showMessage) {
+      ElMessage.warning(error?.message || '暂时无法恢复后台任务状态，原任务可能仍在运行，请勿重复提交')
+    }
+    return null
+  } finally {
+    refundRecoveryLoading.value = false
+  }
+}
+
+const retryRefundJobRecovery = () => { void restoreRefundJob(true) }
+
+const keepOrClearPendingRefundSubmission = (error: any) => {
+  if (error?.result) {
+    clearPendingRefundSubmission()
+    return
+  }
+  if (pendingRefundSubmission.value) {
+    refundRecoveryUnconfirmed.value = true
+  }
+}
+
 const query = async () => {
+  if (!validateAmountRange()) return
   if (linkedRefundId.value) {
     await clearLinkedRefund()
     return
   }
   page.value = 1
   await load()
+}
+
+const validateAmountRange = () => {
+  if (filters.amount_min !== null && filters.amount_max !== null && filters.amount_min > filters.amount_max) {
+    ElMessage.warning('最低金额不能大于最高金额')
+    return false
+  }
+  return true
 }
 
 const clearLinkedRefund = async () => {
@@ -275,6 +545,7 @@ const openSubjectConfig = async () => {
     ])
     generateVoucherByDay.value = Number(configResult.generate_voucher_by_day_flag ?? 1) === 1
     generateRefundVoucherByOutOrderNo.value = Number(configResult.generate_refund_voucher_by_out_order_no_flag ?? 0) === 1
+    skipConfirmedReturnVoucher.value = Number(configResult.skip_confirmed_return_voucher_flag ?? 0) === 1
     subjectConfigRows.value = (configResult.items || []).map((item) => ({ ...item }))
   } finally {
     subjectConfigLoading.value = false
@@ -293,7 +564,10 @@ const saveSubjectConfig = async () => {
       voucherBizType,
       subjectConfigRows.value,
       generateVoucherByDay.value ? 1 : 0,
-      generateRefundVoucherByOutOrderNo.value ? 1 : 0
+      generateRefundVoucherByOutOrderNo.value ? 1 : 0,
+      undefined,
+      undefined,
+      skipConfirmedReturnVoucher.value ? 1 : 0
     )
     ElMessage.success('科目配置已保存')
     subjectConfigVisible.value = false
@@ -393,6 +667,10 @@ const handleRefundImportFile = async (event: Event) => {
     ElMessage.warning('请选择 .xls 格式的退付登记文件')
     return
   }
+  if (refundJobBusy.value) {
+    ElMessage.warning('已有后台任务或待确认提交，请先确认任务状态')
+    return
+  }
   importing.value = true
   try {
     const contentBase64 = await readFileBase64(file)
@@ -460,6 +738,33 @@ const voucherStatusType = (status: string) => {
   return map[status] || 'info'
 }
 
+const returnMatchStatusLabel = (status: CaseFundReturnMatchStatus | string | undefined) => {
+  const map: Record<string, string> = {
+    UNMATCHED: '未发现退汇',
+    AUTO_CANDIDATE: '疑似退汇',
+    AMBIGUOUS: '匹配歧义',
+    CONFIRMED: '已确认退汇',
+    REJECTED: '已排除'
+  }
+  return map[status || ''] || status || '未发现退汇'
+}
+
+const returnMatchStatusType = (status: CaseFundReturnMatchStatus | string | undefined) => {
+  const map: Record<string, 'success' | 'warning' | 'danger' | 'info'> = {
+    CONFIRMED: 'success',
+    AUTO_CANDIDATE: 'warning',
+    AMBIGUOUS: 'danger',
+    REJECTED: 'info',
+    UNMATCHED: 'info'
+  }
+  return map[status || ''] || 'info'
+}
+
+const openReturnMatchDetail = (row: CaseFundRefund) => {
+  returnMatchRefundId.value = row.refund_id
+  returnMatchDialogVisible.value = true
+}
+
 const isRowSelectable = (row: CaseFundRefund) => {
   return row.voucher_status === 'UNGENERATED' || row.voucher_status === 'GENERATED'
 }
@@ -473,6 +778,8 @@ const buildGenerateVoucherQueryPayload = () => ({
   date_start: normalizeDateFilter(filters.date_start),
   date_end: normalizeDateFilter(filters.date_end),
   voucher_status: 'UNGENERATED',
+  amount_min: filters.amount_min,
+  amount_max: filters.amount_max,
   keyword: filters.keyword
 })
 
@@ -490,20 +797,35 @@ const handleGenerateVoucher = async () => {
   } catch {
     return
   }
-  generating.value = true
+  if (refundJobBusy.value) {
+    ElMessage.warning('已有后台任务或待确认提交，请先确认任务状态')
+    return
+  }
+  const clientRequestId = createCaseFundClientRequestId('refund-voucher-selected')
+  persistPendingRefundSubmission({
+    client_request_id: clientRequestId,
+    job_type: REFUND_VOUCHER_JOB_TYPE
+  })
   try {
-    const result = await caseFundApi.refundGenerateVoucher(selectedRefundIds.value)
-    ElMessage.success(`成功生成 ${result.generated_count} 张凭证`)
-    selectedRefundIds.value = []
-    await load()
+    await createRefundJob({
+      job_type: REFUND_VOUCHER_JOB_TYPE,
+      client_request_id: clientRequestId,
+      payload: {
+        period: context.period,
+        generate_scope: 'SELECTED',
+        refund_ids: [...selectedRefundIds.value]
+      }
+    })
+    ElMessage.success('退付凭证生成任务已提交，后台正在处理')
   } catch (e: any) {
-    ElMessage.error(e?.message || '生成凭证失败')
-  } finally {
-    generating.value = false
+    keepOrClearPendingRefundSubmission(e)
+    const message = refundJobCreateError.value || e?.message || '凭证生成任务提交失败'
+    e?.result ? ElMessage.error(message) : ElMessage.warning(message)
   }
 }
 
 const handleGenerateVoucherByQuery = async () => {
+  if (!validateAmountRange()) return
   try {
     await ElMessageBox.confirm(
       '确定按当前查询条件生成全部未制证出账记录的凭证吗？该操作不受当前分页限制。',
@@ -513,17 +835,30 @@ const handleGenerateVoucherByQuery = async () => {
   } catch {
     return
   }
-  generating.value = true
+  if (refundJobBusy.value) {
+    ElMessage.warning('已有后台任务或待确认提交，请先确认任务状态')
+    return
+  }
+  const clientRequestId = createCaseFundClientRequestId('refund-voucher-query')
+  persistPendingRefundSubmission({
+    client_request_id: clientRequestId,
+    job_type: REFUND_VOUCHER_JOB_TYPE
+  })
   try {
-    const result = await caseFundApi.refundGenerateVoucherByQuery(buildGenerateVoucherQueryPayload())
-    ElMessage.success(`成功生成 ${result.generated_count} 张凭证，处理 ${result.refund_count} 条出账记录`)
-    selectedRefundIds.value = []
-    selectedRefundRows.value = []
-    await load()
+    await createRefundJob({
+      job_type: REFUND_VOUCHER_JOB_TYPE,
+      client_request_id: clientRequestId,
+      payload: {
+        period: context.period,
+        generate_scope: 'QUERY',
+        ...buildGenerateVoucherQueryPayload()
+      }
+    })
+    ElMessage.success('按查询条件生成退付凭证的任务已提交，后台正在处理')
   } catch (e: any) {
-    ElMessage.error(e?.message || '生成凭证失败')
-  } finally {
-    generating.value = false
+    keepOrClearPendingRefundSubmission(e)
+    const message = refundJobCreateError.value || e?.message || '凭证生成任务提交失败'
+    e?.result ? ElMessage.error(message) : ElMessage.warning(message)
   }
 }
 
@@ -554,6 +889,35 @@ const handleDeleteRefunds = async () => {
   }
 }
 
+const showRefundJobErrors = async () => {
+  if (!refundJob.value) return
+  let result
+  try {
+    result = await caseFundApi.jobErrorList(refundJob.value.job_id, { page: 1, pagesize: 80 })
+  } catch (error: any) {
+    ElMessage.error(error?.message || '任务错误明细查询失败')
+    return
+  }
+  if (!result.items.length) {
+    ElMessage.info(refundJob.value.error_message || '当前任务没有可展示的逐条错误明细')
+    return
+  }
+  const details = result.items.map((item) => {
+    const itemLabel = item.source_row_no ? `源数据第${item.source_row_no}行` : `第${item.item_no || '-'}项`
+    return `${itemLabel}：${item.error_message || item.error_code || '处理失败'}`
+  })
+  const moreText = result.total > details.length ? `\n还有 ${result.total - details.length} 条错误未显示。` : ''
+  await ElMessageBox.alert(
+    `${details.join('\n')}${moreText}`,
+    '任务错误明细',
+    {
+      type: 'error',
+      confirmButtonText: '知道了',
+      customClass: 'import-validation-dialog'
+    }
+  ).catch(() => {})
+}
+
 watch(
   () => route.query.refund_id,
   async () => {
@@ -563,7 +927,10 @@ watch(
   }
 )
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void restoreRefundJob()
+})
 </script>
 
 <style scoped>

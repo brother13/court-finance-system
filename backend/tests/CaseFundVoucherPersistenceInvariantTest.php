@@ -214,8 +214,8 @@ foreach ($invalidCases as $case) {
 
 $insertFailures = [
     ['fin_voucher', '凭证头写入失败', 1, 0, 0],
-    ['fin_voucher_detail', '凭证明细写入失败：detail-1', 1, 1, 0],
-    ['fin_voucher_aux_value', '凭证辅助核算值写入失败：detail-1/case_no', 1, 1, 1],
+    ['fin_voucher_detail', '凭证明细批量写入失败：voucher-1', 1, 1, 0],
+    ['fin_voucher_aux_value', '凭证辅助核算值批量写入失败：voucher-1', 1, 2, 1],
 ];
 foreach ($insertFailures as $case) {
     list($service, $dbs) = voucherInvariantFixture([$case[0] => 0]);

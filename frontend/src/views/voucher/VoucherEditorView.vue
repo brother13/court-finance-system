@@ -60,7 +60,57 @@
       </label>
     </div>
 
-    <div class="voucher-entry-wrap">
+    <div v-if="!isNewMode" class="voucher-line-locator">
+      <div class="voucher-line-locator-fields">
+        <strong class="voucher-line-locator-title">
+          <el-icon><Search /></el-icon>
+          分录定位
+        </strong>
+        <el-input
+          v-model="locatorAuxName"
+          clearable
+          class="voucher-line-locator-input"
+          placeholder="输入辅助核算名称"
+          @keyup.enter="locateFirstLine"
+        >
+          <template #prepend>辅助核算</template>
+        </el-input>
+        <el-input
+          v-model="locatorAmount"
+          clearable
+          class="voucher-line-locator-amount"
+          :class="{ 'is-error': locatorAmountInvalid }"
+          inputmode="decimal"
+          placeholder="如 1,000.00"
+          @keyup.enter="locateFirstLine"
+        >
+          <template #prepend>精确金额</template>
+        </el-input>
+      </div>
+      <div class="voucher-line-locator-actions">
+        <span v-if="locatorAmountInvalid" class="voucher-line-locator-error">金额须大于 0，最多两位小数</span>
+        <span v-else-if="locatorHasCriteria" class="voucher-line-locator-result">
+          匹配 {{ locatedLineIndices.length }} 条
+          <template v-if="activeLocatedOrdinal">· 当前第 {{ activeLocatedOrdinal }} 条</template>
+        </span>
+        <el-button
+          type="primary"
+          plain
+          :icon="Search"
+          :disabled="!locatorHasCriteria || locatorAmountInvalid"
+          @click="locateFirstLine"
+        >
+          定位
+        </el-button>
+        <el-button-group>
+          <el-button :disabled="locatedLineIndices.length === 0" @click="locateRelativeLine(-1)">上一条</el-button>
+          <el-button :disabled="locatedLineIndices.length === 0" @click="locateRelativeLine(1)">下一条</el-button>
+        </el-button-group>
+        <el-button link :disabled="!locatorHasCriteria" @click="clearVoucherLineLocator">清空</el-button>
+      </div>
+    </div>
+
+    <div ref="voucherEntryWrapRef" class="voucher-entry-wrap">
       <table class="voucher-entry-table">
         <thead>
           <tr>
@@ -74,7 +124,12 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="({ row, index }) in renderedVoucherLines" :key="row.uid">
+          <tr
+            v-for="({ row, index }) in renderedVoucherLines"
+            :key="row.uid"
+            :data-line-index="visibleLineStart + index"
+            :class="{ 'is-locator-active': activeLocatedLineIndex === visibleLineStart + index }"
+          >
             <td class="entry-index">{{ visibleLineStart + index + 1 }}</td>
             <td>
               <span v-if="isReadonly" class="readonly-cell-text" :title="row.summary || ''">{{ row.summary || '—' }}</span>
@@ -213,12 +268,19 @@
           :required="Number(config.required_flag) === 1"
         >
           <el-select
-            v-if="auxArchives[config.aux_type_code]?.length"
+            v-if="hasAuxArchiveSource(config.aux_type_code)"
             v-model="currentLine.auxValues[config.aux_type_code]"
             filterable
+            remote
+            reserve-keyword
             clearable
             :disabled="isReadonly"
-            placeholder="请选择辅助档案"
+            :loading="auxArchiveLoading[config.aux_type_code]"
+            :remote-method="(keyword: string) => searchAuxArchives(config.aux_type_code, keyword)"
+            no-match-text="没有匹配的辅助档案"
+            no-data-text="没有可用的辅助档案"
+            placeholder="输入档案编码、名称或年份+序号"
+            @change="handleAuxArchiveChange(config.aux_type_code)"
           >
             <el-option
               v-for="archive in auxArchives[config.aux_type_code]"
@@ -228,6 +290,12 @@
             />
           </el-select>
           <el-input v-else v-model.trim="currentLine.auxValues[config.aux_type_code]" :disabled="isReadonly" placeholder="请输入辅助信息" />
+          <small
+            v-if="hasAuxArchiveSource(config.aux_type_code) && auxArchiveTotals[config.aux_type_code] > AUX_ARCHIVE_PAGE_SIZE"
+            class="aux-archive-search-hint"
+          >
+            共 {{ auxArchiveTotals[config.aux_type_code] }} 条档案；完整案号会忽略括号、空格差异，也可输入“2025968”快捷检索
+          </small>
         </el-form-item>
       </el-form>
     </template>
@@ -239,10 +307,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, CircleCheck, DocumentChecked, Plus, Refresh, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, CircleCheck, DocumentChecked, Plus, Refresh, Search, WarningFilled } from '@element-plus/icons-vue'
 import { authApi } from '../../api/auth'
 import { baseApi } from '../../api/base'
 import { voucherApi } from '../../api/voucher'
@@ -266,16 +334,27 @@ const context = useContextStore()
 const subjects = ref<Subject[]>([])
 const auxConfigMap = reactive<Record<string, SubjectAuxConfig[]>>({})
 const auxArchives = reactive<Record<string, any[]>>({})
+const auxArchiveTotals = reactive<Record<string, number>>({})
+const auxArchiveLoading = reactive<Record<string, boolean>>({})
+const auxArchiveKeywords = reactive<Record<string, string>>({})
+const auxArchiveRequestIds: Record<string, number> = {}
+const auxArchiveSearchTimers: Record<string, number> = {}
 const auxDialogVisible = ref(false)
 const currentLine = ref<VoucherLine | null>(null)
 const saving = ref(false)
 const voucherWords = ['记', '收', '付', '转']
 const DEFAULT_VOUCHER_LINE_COUNT = 6
 const LARGE_VOUCHER_LINE_PAGE_SIZE = 50
+const AUX_ARCHIVE_PAGE_SIZE = 50
+const AUX_ARCHIVE_SEARCH_DELAY = 250
 const VOUCHER_DRAFT_STORAGE_PREFIX = 'court-finance-voucher-new-draft'
 const draftReady = ref(false)
 const suppressDraftPersist = ref(false)
 const detailPage = ref(1)
+const voucherEntryWrapRef = ref<HTMLElement | null>(null)
+const locatorAuxName = ref('')
+const locatorAmount = ref('')
+const activeLocatedLineIndex = ref<number | null>(null)
 
 const todayInPeriod = () => {
   const today = new Date()
@@ -414,6 +493,48 @@ const handleDetailPageChange = () => {
   clampDetailPage()
 }
 
+const locateLine = async (lineIndex: number) => {
+  if (lineIndex < 0 || lineIndex >= form.details.length) return
+  activeLocatedLineIndex.value = lineIndex
+  detailPage.value = Math.floor(lineIndex / LARGE_VOUCHER_LINE_PAGE_SIZE) + 1
+  await nextTick()
+  const row = voucherEntryWrapRef.value?.querySelector<HTMLElement>(`[data-line-index="${lineIndex}"]`)
+  row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+const locateFirstLine = () => {
+  if (locatorAmountInvalid.value) {
+    ElMessage.warning('查询金额须大于 0，且最多保留两位小数')
+    return
+  }
+  if (!locatorHasCriteria.value) {
+    ElMessage.warning('请输入辅助核算名称或金额')
+    return
+  }
+  if (locatedLineIndices.value.length === 0) {
+    activeLocatedLineIndex.value = null
+    ElMessage.info('当前凭证没有匹配的分录')
+    return
+  }
+  void locateLine(locatedLineIndices.value[0])
+}
+
+const locateRelativeLine = (step: number) => {
+  const matches = locatedLineIndices.value
+  if (matches.length === 0) return
+  const currentPosition = activeLocatedLineIndex.value === null ? -1 : matches.indexOf(activeLocatedLineIndex.value)
+  const nextPosition = currentPosition < 0
+    ? (step > 0 ? 0 : matches.length - 1)
+    : (currentPosition + step + matches.length) % matches.length
+  void locateLine(matches[nextPosition])
+}
+
+const clearVoucherLineLocator = () => {
+  locatorAuxName.value = ''
+  locatorAmount.value = ''
+  activeLocatedLineIndex.value = null
+}
+
 const loadNextNo = async () => {
   const result = await voucherApi.nextNo(form.period)
   form.voucherNo = result.voucher_no
@@ -462,10 +583,61 @@ const loadSubjectConfigsForLines = async (lines: VoucherLine[]) => {
   await Promise.all(subjectCodes.map((subjectCode) => loadSubjectConfig(subjectCode)))
 }
 
+const selectedAuxArchiveOption = (code: string) => {
+  const value = currentLine.value?.auxValues[code] || ''
+  if (!value) return null
+  const existing = (auxArchives[code] || []).find((item) => item.archive_code === value)
+  return existing || {
+    archive_code: value,
+    archive_name: currentLine.value?.auxLabels[code] || value
+  }
+}
+
+const mergeAuxArchiveOptions = (code: string, items: any[]) => {
+  const merged = [...(items || [])]
+  const selected = selectedAuxArchiveOption(code)
+  if (selected && !merged.some((item) => item.archive_code === selected.archive_code)) {
+    merged.unshift(selected)
+  }
+  return merged
+}
+
+const fetchAuxArchives = async (code: string, keyword = '') => {
+  const normalizedKeyword = keyword.trim()
+  const requestId = (auxArchiveRequestIds[code] || 0) + 1
+  auxArchiveRequestIds[code] = requestId
+  auxArchiveLoading[code] = true
+  try {
+    const result = await baseApi.auxArchives(code, normalizedKeyword, 1, AUX_ARCHIVE_PAGE_SIZE)
+    if (requestId !== auxArchiveRequestIds[code]) return
+    auxArchives[code] = mergeAuxArchiveOptions(code, result.items || [])
+    auxArchiveKeywords[code] = normalizedKeyword
+    if (normalizedKeyword === '') {
+      auxArchiveTotals[code] = Number(result.total || 0)
+    }
+  } finally {
+    if (requestId === auxArchiveRequestIds[code]) {
+      auxArchiveLoading[code] = false
+    }
+  }
+}
+
 const loadAuxArchives = async (code: string) => {
-  if (auxArchives[code]) return
-  const result = await baseApi.auxArchives(code)
-  auxArchives[code] = result.items || []
+  if (Object.prototype.hasOwnProperty.call(auxArchiveTotals, code)) return
+  await fetchAuxArchives(code)
+}
+
+const hasAuxArchiveSource = (code: string) => {
+  return Number(auxArchiveTotals[code] || 0) > 0
+}
+
+const searchAuxArchives = (code: string, keyword: string) => {
+  if (auxArchiveSearchTimers[code]) {
+    window.clearTimeout(auxArchiveSearchTimers[code])
+  }
+  auxArchiveSearchTimers[code] = window.setTimeout(() => {
+    void fetchAuxArchives(code, keyword).catch(() => undefined)
+  }, AUX_ARCHIVE_SEARCH_DELAY)
 }
 
 const ensureSelectedAuxArchive = (code: string, value: string, label: string) => {
@@ -508,7 +680,25 @@ const handleSubjectChange = async (line: VoucherLine) => {
 const openAuxDialog = (line: VoucherLine) => {
   blurActiveElement()
   currentLine.value = line
+  lineAuxConfigs(line).forEach((config) => {
+    const code = config.aux_type_code
+    if (auxArchiveKeywords[code]) {
+      void fetchAuxArchives(code).catch(() => undefined)
+    }
+  })
   auxDialogVisible.value = true
+}
+
+const handleAuxArchiveChange = (code: string) => {
+  const line = currentLine.value
+  if (!line) return
+  const value = line.auxValues[code] || ''
+  if (!value) {
+    delete line.auxLabels[code]
+    return
+  }
+  const archive = (auxArchives[code] || []).find((item) => item.archive_code === value)
+  line.auxLabels[code] = archive?.archive_name || value
 }
 
 const confirmAuxDialog = () => {
@@ -550,6 +740,44 @@ const auxDisplayValue = (code: string, value: string, line?: VoucherLine) => {
   const archive = (auxArchives[code] || []).find((item) => item.archive_code === value)
   return archive?.archive_name || line?.auxLabels[code] || value
 }
+
+const normalizeLocatorText = (value: string) => String(value || '').toLocaleLowerCase().replace(/\s+/g, '')
+
+const lineAuxiliaryDisplayNames = (line: VoucherLine) => {
+  return configuredAuxEntries(line)
+    .map(([code, value]) => auxDisplayValue(code, value, line))
+    .filter(Boolean)
+}
+
+const parseLocatorAmountCents = (value: string) => {
+  const normalized = String(value || '').replace(/,/g, '').trim()
+  if (!normalized) return null
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return Number.NaN
+  const cents = Math.round(Number(normalized) * 100)
+  return cents > 0 ? cents : Number.NaN
+}
+
+const locatorAmountCents = computed(() => parseLocatorAmountCents(locatorAmount.value))
+const locatorAmountInvalid = computed(() => locatorAmount.value.trim() !== '' && !Number.isFinite(locatorAmountCents.value))
+const locatorHasCriteria = computed(() => locatorAuxName.value.trim() !== '' || locatorAmount.value.trim() !== '')
+const locatedLineIndices = computed(() => {
+  if (!locatorHasCriteria.value || locatorAmountInvalid.value) return []
+  const auxNameKeyword = normalizeLocatorText(locatorAuxName.value)
+  const amountCents = locatorAmountCents.value
+  return form.details.reduce<number[]>((indices, line, index) => {
+    const matchesAuxName = !auxNameKeyword || lineAuxiliaryDisplayNames(line)
+      .some((name) => normalizeLocatorText(name).includes(auxNameKeyword))
+    const matchesAmount = amountCents === null || [line.debitText, line.creditText]
+      .some((amount) => Math.round(parseAmount(amount) * 100) === amountCents)
+    if (matchesAuxName && matchesAmount) indices.push(index)
+    return indices
+  }, [])
+})
+const activeLocatedOrdinal = computed(() => {
+  if (activeLocatedLineIndex.value === null) return 0
+  const position = locatedLineIndices.value.indexOf(activeLocatedLineIndex.value)
+  return position >= 0 ? position + 1 : 0
+})
 
 const auxTypeName = (code: string) => {
   const labels: Record<string, string> = {
@@ -639,6 +867,7 @@ const fillBalanceForLastLine = () => {
 const resetVoucher = async () => {
   suppressDraftPersist.value = true
   detailPage.value = 1
+  clearVoucherLineLocator()
   form.voucherWord = '记'
   form.period = context.period
   form.voucherDate = todayInPeriod()
@@ -780,6 +1009,10 @@ onMounted(async () => {
   }
 })
 
+onBeforeUnmount(() => {
+  Object.values(auxArchiveSearchTimers).forEach((timer) => window.clearTimeout(timer))
+})
+
 const hasNewVoucherDraftContent = () => {
   if (form.voucherWord !== '记') return true
   if (form.voucherDate !== todayInPeriod()) return true
@@ -867,7 +1100,18 @@ watch(
   () => clampDetailPage()
 )
 
+watch([locatorAuxName, locatorAmount], () => {
+  activeLocatedLineIndex.value = null
+})
+
+watch(locatedLineIndices, (indices) => {
+  if (activeLocatedLineIndex.value !== null && !indices.includes(activeLocatedLineIndex.value)) {
+    activeLocatedLineIndex.value = null
+  }
+})
+
 async function loadVoucherDetail(period: string, voucherId: string) {
+  clearVoucherLineLocator()
   const data = (await voucherApi.detail(period, voucherId)) as any
   form.voucherWord = data.voucher_word || data.voucherWord || '记'
   form.voucherNo = Number(data.voucher_no || data.voucherNo || 0)

@@ -51,6 +51,7 @@ class SubjectApplicationManagerFake
     public $dailyFlag = 1;
     public $paymentMethodFlag = 0;
     public $refundOutOrderFlag = 0;
+    public $skipConfirmedReturnFlag = 0;
 
     public function subjectNameMap($codes)
     {
@@ -72,15 +73,20 @@ class SubjectApplicationManagerFake
         return $this->refundOutOrderFlag;
     }
 
+    public function skipConfirmedReturnVoucherFlag()
+    {
+        return $this->skipConfirmedReturnFlag;
+    }
+
     public function paymentMethodSubjectConfigItems($bizType, $items)
     {
         $this->methodItemCalls[] = [$bizType, $items];
         return $this->methodItems;
     }
 
-    public function saveSubjectConfigAccountSetFlag($dailyFlag, $refundFlag, $paymentMethodFlag)
+    public function saveSubjectConfigAccountSetFlag($dailyFlag, $refundFlag, $paymentMethodFlag, $skipConfirmedReturnFlag)
     {
-        $this->savedFlags[] = [$dailyFlag, $refundFlag, $paymentMethodFlag];
+        $this->savedFlags[] = [$dailyFlag, $refundFlag, $paymentMethodFlag, $skipConfirmedReturnFlag];
         return [
             ['account_set_id' => 'account-subject-app', 'generate_voucher_by_day_flag' => 1],
             ['account_set_id' => 'account-subject-app', 'generate_voucher_by_day_flag' => $dailyFlag],
@@ -140,6 +146,7 @@ $manager->subjectNames = ['100201' => '银行存款', '224101' => '执行案款'
 $manager->methodItems = [['business_item_type' => 'POS', 'debit_subject_code' => '100201']];
 $manager->paymentMethodFlag = 1;
 $manager->refundOutOrderFlag = 1;
+$manager->skipConfirmedReturnFlag = 1;
 $service = new SubjectConfigApplicationService($policy, $resolver, $manager, [
     'account_set_id' => function () {
         return 'account-subject-app';
@@ -167,6 +174,7 @@ subjectApplicationAssertSame([
 subjectApplicationAssertSame(1, $list['data']['generate_voucher_by_day_flag'], 'List should include daily voucher flag');
 subjectApplicationAssertSame(1, $list['data']['generate_payment_voucher_by_method_flag'], 'List should include payment-method flag');
 subjectApplicationAssertSame(1, $list['data']['generate_refund_voucher_by_out_order_no_flag'], 'List should include refund grouping flag');
+subjectApplicationAssertSame(1, $list['data']['skip_confirmed_return_voucher_flag'], 'List should include confirmed-return skip flag');
 subjectApplicationAssertSame($manager->methodItems, $list['data']['payment_method_items'], 'Payment list should include payment-method subject items');
 subjectApplicationAssertSame(1, count($manager->methodItemCalls), 'Payment-method items should be built once for payment config');
 
@@ -193,15 +201,17 @@ $prepared = $service->prepareSave([
     'generateVoucherByDayFlag' => 0,
     'generateRefundVoucherByOutOrderNoFlag' => 2,
     'generatePaymentVoucherByMethodFlag' => '0',
+    'skipConfirmedReturnVoucherFlag' => '0',
 ], 'CASE_FUND', 'PAYMENT');
 subjectApplicationAssertSame('', $prepared['error'], 'Valid save input should be prepared');
 subjectApplicationAssertSame(['缴费登记'], $prepared['allowed_items'], 'Prepared save should keep canonical allowed items');
 subjectApplicationAssertSame(0, $prepared['generate_voucher_by_day_flag'], 'Daily flag should normalize zero');
 subjectApplicationAssertSame(1, $prepared['generate_refund_voucher_by_out_order_no_flag'], 'Refund flag should normalize non-zero to one');
 subjectApplicationAssertSame(0, $prepared['generate_payment_voucher_by_method_flag'], 'Payment-method flag should normalize string zero');
+subjectApplicationAssertSame(0, $prepared['skip_confirmed_return_voucher_flag'], 'Confirmed-return skip flag should normalize string zero');
 
 $saved = $service->savePrepared($prepared);
-subjectApplicationAssertSame([[0, 1, 0]], $manager->savedFlags, 'Prepared flags should be saved in the legacy argument order');
+subjectApplicationAssertSame([[0, 1, 0, 0]], $manager->savedFlags, 'Prepared flags should be saved in the legacy argument order');
 subjectApplicationAssertSame([
     ['CASE_FUND', 'PAYMENT', $paymentItems, ['缴费登记']],
 ], $manager->businessSaveCalls, 'Business config save should preserve canonical allowed-item validation');

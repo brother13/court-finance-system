@@ -7,6 +7,28 @@ namespace app\finance\service\casefund\banking;
  */
 class CaseFundBankReconcileRepository
 {
+    // 自动对账只读取匹配、结果摘要和稳定排序所需字段。导入原文可能是 longtext，
+    // 不能在范围重算时随每条流水/业务记录反复载入内存。
+    const RECONCILE_STATEMENT_FIELDS = [
+        'statement_id', 'bank_code', 'transaction_date', 'transaction_time', 'direction',
+        'debit_amount', 'credit_amount', 'counterparty_account_no', 'counterparty_account_name',
+        'purpose', 'postscript', 'bank_serial_no', 'reconcile_status', 'source_row_no',
+    ];
+    const RECONCILE_PAYMENT_FIELDS = [
+        'payment_id', 'payment_date', 'payment_amount', 'bank_serial_no', 'case_no',
+        'payer_name', 'party_name', 'source_row_no',
+    ];
+    const RECONCILE_UNKNOWN_PAYMENT_FIELDS = [
+        'unknown_payment_id', 'transaction_date', 'transaction_time', 'unknown_amount',
+        'claim_status', 'payer_account_no', 'payer_name', 'bank_summary', 'bank_remark',
+        'source_row_no',
+    ];
+    const RECONCILE_REFUND_FIELDS = [
+        'refund_id', 'refund_date', 'refund_amount', 'payee_bank_account_no',
+        'payee_bank_account_name', 'actual_payee_name', 'case_no', 'party_name',
+        'out_order_no', 'source_row_no',
+    ];
+
     protected $hooks;
     protected $tables;
     protected $fields;
@@ -95,6 +117,10 @@ class CaseFundBankReconcileRepository
         if (!empty($data['direction'])) {
             $where['direction'] = $data['direction'];
         }
+        $reconcileStatus = strtoupper(trim((string)($data['reconcile_status'] ?? '')));
+        if (in_array($reconcileStatus, ['UNMATCHED', 'MATCHED', 'AMOUNT_DIFF', 'BANK_ONLY', 'DUPLICATE', 'IGNORED'], true)) {
+            $where['reconcile_status'] = $reconcileStatus;
+        }
         $this->applyDateScopeToWhere(
             $where,
             'transaction_date',
@@ -103,12 +129,12 @@ class CaseFundBankReconcileRepository
         );
         $keyword = trim($data['keyword'] ?? '');
         $query = $this->bankStatementFilteredQuery($where, $keyword);
-        $totalQuery = $this->bankStatementFilteredQuery($where, $keyword);
-        $debitQuery = $this->bankStatementFilteredQuery($where, $keyword);
-        $creditQuery = $this->bankStatementFilteredQuery($where, $keyword);
-        $total = $totalQuery->count();
-        $debitTotal = $debitQuery->sum('debit_amount');
-        $creditTotal = $creditQuery->sum('credit_amount');
+        $aggregate = $this->bankStatementFilteredQuery($where, $keyword)
+            ->field('count(*) as total,sum(debit_amount) as debit_amount,sum(credit_amount) as credit_amount')
+            ->find();
+        $total = (int)($aggregate['total'] ?? 0);
+        $debitTotal = $aggregate['debit_amount'] ?? 0;
+        $creditTotal = $aggregate['credit_amount'] ?? 0;
         $rows = $query->field($this->fields['statement'])
             ->order('transaction_time asc, source_row_no asc')
             ->page($page, $pageSize)
@@ -208,6 +234,54 @@ class CaseFundBankReconcileRepository
             $query->lock(true);
         }
         return $query->select();
+    }
+
+    /**
+     * 一次性锁定并预取自动对账所需的完整范围。调用方应先锁账套且持有外层事务，
+     * 然后把返回值交给 CaseFundBankReconcileMatcher::matchPrefetched()。这样查询数
+     * 固定为四条，不再随银行流水或业务记录数量线性增长。
+     */
+    public function prefetchReconcileScope($bankCode, $dateStart, $dateEnd, $forUpdate = false)
+    {
+        return [
+            'statements' => $this->prefetchScopeRows(
+                'statement',
+                'transaction_date',
+                $dateStart,
+                $dateEnd,
+                self::RECONCILE_STATEMENT_FIELDS,
+                'transaction_time asc, source_row_no asc, statement_id asc',
+                $forUpdate,
+                $bankCode
+            ),
+            'payments' => $this->prefetchScopeRows(
+                'payment',
+                'payment_date',
+                $dateStart,
+                $dateEnd,
+                self::RECONCILE_PAYMENT_FIELDS,
+                'payment_date asc, source_row_no asc, payment_id asc',
+                $forUpdate
+            ),
+            'unknown_payments' => $this->prefetchScopeRows(
+                'unknown_payment',
+                'transaction_date',
+                $dateStart,
+                $dateEnd,
+                self::RECONCILE_UNKNOWN_PAYMENT_FIELDS,
+                'transaction_time asc, source_row_no asc, unknown_payment_id asc',
+                $forUpdate
+            ),
+            'refunds' => $this->prefetchScopeRows(
+                'refund',
+                'refund_date',
+                $dateStart,
+                $dateEnd,
+                self::RECONCILE_REFUND_FIELDS,
+                'refund_date asc, source_row_no asc, refund_id asc',
+                $forUpdate
+            ),
+        ];
     }
 
     public function bankReconcileList($data, $page, $pageSize, $emptyCounts)
@@ -369,6 +443,7 @@ class CaseFundBankReconcileRepository
             'fiscal_year' => $this->currentYear(),
             'direction' => 'DEBIT',
             'transaction_date' => $refundDate,
+            'debit_amount' => $refund['refund_amount'] ?? '0',
             'del_flag' => 0,
         ]);
         $this->applyBankAndDateScope($query, $bankCode, $dateStart, $dateEnd);
@@ -497,6 +572,29 @@ class CaseFundBankReconcileRepository
         if (!empty($dateEnd)) {
             $where[$field][] = ['<=', $dateEnd];
         }
+    }
+
+    protected function prefetchScopeRows(
+        $tableKey,
+        $dateField,
+        $dateStart,
+        $dateEnd,
+        array $fields,
+        $order,
+        $forUpdate,
+        $bankCode = ''
+    ) {
+        $query = $this->db($this->tables[$tableKey])->where($this->activeYearWhere());
+        if ($tableKey === 'statement' && trim((string)$bankCode) !== '') {
+            $query->where('bank_code', trim((string)$bankCode));
+        }
+        $this->applyDateScope($query, $dateField, $dateStart, $dateEnd);
+        $query->field($fields)->order($order);
+        if ($forUpdate) {
+            $query->lock(true);
+        }
+        $rows = $query->select();
+        return is_array($rows) ? $rows : [];
     }
 
     protected function db($table)

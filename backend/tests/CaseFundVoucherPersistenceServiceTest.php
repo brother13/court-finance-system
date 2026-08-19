@@ -9,6 +9,7 @@ class CaseFundVoucherPersistenceDbStub
     public static $events = [];
     protected $table;
     public $inserts = [];
+    public $insertAllSizes = [];
     public $throwMessage = '';
 
     public function __construct($table)
@@ -24,6 +25,19 @@ class CaseFundVoucherPersistenceDbStub
         }
         $this->inserts[] = $row;
         return 1;
+    }
+
+    public function insertAll($rows)
+    {
+        self::$events[] = $this->table;
+        $this->insertAllSizes[] = count($rows);
+        if ($this->throwMessage !== '') {
+            throw new \RuntimeException($this->throwMessage);
+        }
+        foreach ($rows as $row) {
+            $this->inserts[] = $row;
+        }
+        return count($rows);
     }
 }
 
@@ -141,9 +155,39 @@ voucherPersistenceAssertSame('2026-07', $aux['period'], 'Auxiliary value should 
 voucherPersistenceAssertSame('set-1', $aux['account_set_id'], 'Auxiliary value should keep voucher account scope');
 voucherPersistenceAssertSame(4, $prepareCount, 'Create metadata should be applied to header, details and aux values');
 voucherPersistenceAssertSame(
-    ['fin_voucher', 'fin_voucher_detail', 'fin_voucher_aux_value', 'fin_voucher_detail'],
+    ['fin_voucher', 'fin_voucher_detail', 'fin_voucher_aux_value'],
     CaseFundVoucherPersistenceDbStub::$events,
-    'Persistence should write header before ordered details and their auxiliary values'
+    'Persistence should write header before batched details and auxiliary values'
+);
+
+$largeDetails = [];
+for ($index = 1; $index <= 1002; $index++) {
+    $isDebit = $index <= 501;
+    $largeDetails[] = [
+        'detail_id' => 'large-detail-' . $index,
+        'line_no' => $index,
+        'subject_code' => $isDebit ? '100201' : '224101',
+        'summary' => '大凭证分批测试',
+        'debit_amount' => $isDebit ? '1.00' : '0.00',
+        'credit_amount' => $isDebit ? '0.00' : '1.00',
+        'verification_status' => 'NOT_REQUIRED',
+        'aux_desc' => '',
+    ];
+}
+$detailBatchOffset = count($dbs['fin_voucher_detail']->insertAllSizes);
+$service->persistVoucher([
+    'voucher_id' => 'voucher-large',
+    'fiscal_year' => 2026,
+    'period' => '2026-07',
+    'voucher_date' => '2026-07-16',
+    'voucher_no' => 9,
+    'summary' => '大凭证分批测试',
+    'total_cents' => 50100,
+], $largeDetails);
+voucherPersistenceAssertSame(
+    [500, 500, 2],
+    array_slice($dbs['fin_voucher_detail']->insertAllSizes, $detailBatchOffset),
+    'Large voucher details should flush in bounded SQL and memory batches'
 );
 
 $insertCountBeforeMissingContext = count($dbs['fin_voucher']->inserts);

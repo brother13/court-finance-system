@@ -44,6 +44,11 @@ if (strpos($ddl, 'generate_voucher_by_day_flag tinyint not null default 1') === 
     exit(1);
 }
 
+if (strpos($ddl, 'skip_confirmed_return_voucher_flag tinyint not null default 0') === false) {
+    fwrite(STDERR, 'Account set DDL should default confirmed-return voucher skipping off' . PHP_EOL);
+    exit(1);
+}
+
 if (strpos($policySource, 'allowedSubjectConfigItems') === false || strpos($managerSource, 'validateVoucherSubjectCode') === false) {
     fwrite(STDERR, 'Subject config services should validate allowed config items and voucher subjects' . PHP_EOL);
     exit(1);
@@ -119,6 +124,11 @@ if (strpos($patch, 'create table if not exists fin_case_fund_subject_config') ==
 
 if (strpos($patch, "add column generate_voucher_by_day_flag tinyint not null default 1") === false) {
     fwrite(STDERR, 'Finance standard patch should add daily voucher flag idempotently' . PHP_EOL);
+    exit(1);
+}
+
+if (strpos($patch, "add column skip_confirmed_return_voucher_flag tinyint not null default 0") === false) {
+    fwrite(STDERR, 'Finance standard patch should add confirmed-return voucher skip flag idempotently' . PHP_EOL);
     exit(1);
 }
 

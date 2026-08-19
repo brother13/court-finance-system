@@ -11,6 +11,7 @@ class CaseFundBankQueryStore
     public $sums = [];
     public $rows = [];
     public $groupRows = [];
+    public $aggregateRows = [];
 
     public function db($table)
     {
@@ -89,6 +90,13 @@ class CaseFundBankQueryFake
         return $this->store->counts[$table] ?? 0;
     }
 
+    public function find()
+    {
+        $this->store->queries[$this->index]['operation'] = 'find';
+        $table = $this->store->queries[$this->index]['table'];
+        return $this->store->aggregateRows[$table] ?? null;
+    }
+
     public function sum($field)
     {
         $this->store->queries[$this->index]['operation'] = 'sum:' . $field;
@@ -155,6 +163,9 @@ try {
 $store = new CaseFundBankQueryStore();
 $store->counts = ['statement' => 6, 'reconcile' => 4];
 $store->sums = ['statement' => ['debit_amount' => '12.00', 'credit_amount' => '34.00']];
+$store->aggregateRows = [
+    'statement' => ['total' => '6', 'debit_amount' => '12.00', 'credit_amount' => '34.00'],
+];
 $store->rows = [
     'statement' => [['statement_id' => 'S-1']],
     'reconcile' => [[
@@ -189,6 +200,7 @@ $statementList = $repository->bankStatementList([
     'period' => '2026-07',
     'bank_code' => 'CCB',
     'direction' => 'CREDIT',
+    'reconcile_status' => 'MATCHED',
     'date_start' => '2026-07-01',
     'date_end' => '2026-07-31',
     'keyword' => '流水-001',
@@ -207,11 +219,12 @@ bankQueryAssertSame([
     'debit_amount' => '12.00',
     'credit_amount' => '34.00',
 ], $statementList, 'Bank statement list should preserve totals and attach active reconcile associations');
-bankQueryAssertSame(5, count($store->queries), 'Bank statement list should use four statement queries and one page association query');
-foreach (array_slice($store->queries, 0, 4) as $query) {
+bankQueryAssertSame(3, count($store->queries), 'Bank statement list should use one page query, one aggregate query and one association query');
+foreach (array_slice($store->queries, 0, 2) as $query) {
     $where = $query['where'][0][1];
     bankQueryAssertSame('account-bank-query', $where['account_set_id'], 'Bank statement list should scope current account set');
     bankQueryAssertSame(2026, $where['fiscal_year'], 'Bank statement list should scope current fiscal year');
+    bankQueryAssertSame('MATCHED', $where['reconcile_status'], 'Bank statement list should filter the selected reconcile status');
     bankQueryAssertSame([['>=', '2026-07-01'], ['<=', '2026-07-31']], $where['transaction_date'], 'Bank statement list should preserve date range');
     bankQueryAssertSame(
         ['counterparty_account_no|counterparty_account_name|counterparty_bank_name|purpose|postscript|bank_serial_no', 'like', '%流水-001%'],
@@ -221,20 +234,26 @@ foreach (array_slice($store->queries, 0, 4) as $query) {
 }
 bankQueryAssertSame('transaction_time asc, source_row_no asc', $store->queries[0]['order'], 'Bank statement list order should remain stable');
 bankQueryAssertSame([2, 25], $store->queries[0]['page'], 'Bank statement list pagination should remain stable');
-bankQueryAssertSame('reconcile', $store->queries[4]['table'], 'Bank statement list should batch-load reconcile rows from the reconcile table');
+bankQueryAssertSame(
+    'count(*) as total,sum(debit_amount) as debit_amount,sum(credit_amount) as credit_amount',
+    $store->queries[1]['field'],
+    'Bank statement totals should use one aggregate query'
+);
+bankQueryAssertSame('find', $store->queries[1]['operation'], 'Bank statement totals should read one aggregate row');
+bankQueryAssertSame('reconcile', $store->queries[2]['table'], 'Bank statement list should batch-load reconcile rows from the reconcile table');
 bankQueryAssertSame([
     'account_set_id' => 'account-bank-query',
     'fiscal_year' => 2026,
     'del_flag' => 0,
-], $store->queries[4]['where'][0][1], 'Association query should keep account, year and active-row scope');
+], $store->queries[2]['where'][0][1], 'Association query should keep account, year and active-row scope');
 bankQueryAssertSame(
     ['statement_id', 'in', ['S-1']],
-    $store->queries[4]['where'][1],
+    $store->queries[2]['where'][1],
     'Association query should only load reconcile rows for the current statement page'
 );
 bankQueryAssertSame(
     'statement_id asc, match_status asc, biz_type asc, biz_no asc',
-    $store->queries[4]['order'],
+    $store->queries[2]['order'],
     'Association query should keep duplicate candidates deterministic'
 );
 
@@ -245,6 +264,47 @@ bankQueryAssertSame(['bank_code', '=', 'CCB'], $store->queries[0]['where'][1], '
 bankQueryAssertSame(['transaction_date', '>=', '2026-07-01'], $store->queries[0]['where'][2], 'Bank statement scope should apply start date');
 bankQueryAssertSame(['transaction_date', '<=', '2026-07-31'], $store->queries[0]['where'][3], 'Bank statement scope should apply end date');
 bankQueryAssertSame('transaction_time asc, source_row_no asc', $store->queries[0]['order'], 'Bank statement scope order should remain stable');
+
+$store->queries = [];
+$store->rows = [
+    'statement' => [['statement_id' => 'S-PREFETCH']],
+    'payment' => [['payment_id' => 'P-PREFETCH']],
+    'unknown_payment' => [['unknown_payment_id' => 'U-PREFETCH']],
+    'refund' => [['refund_id' => 'R-PREFETCH']],
+    'reconcile' => [[
+        'reconcile_id' => 'RC-1',
+        'statement_id' => 'S-1',
+        'biz_type' => 'PAYMENT',
+        'biz_id' => 'P-1',
+    ]],
+];
+$prefetched = $repository->prefetchReconcileScope('CCB', '2026-07-01', '2026-07-31', true);
+bankQueryAssertSame([
+    'statements' => [['statement_id' => 'S-PREFETCH']],
+    'payments' => [['payment_id' => 'P-PREFETCH']],
+    'unknown_payments' => [['unknown_payment_id' => 'U-PREFETCH']],
+    'refunds' => [['refund_id' => 'R-PREFETCH']],
+], $prefetched, 'Bank reconcile prefetch should return all four range datasets');
+bankQueryAssertSame(4, count($store->queries), 'Bank reconcile prefetch query count must stay constant regardless of row count');
+$expectedTables = ['statement', 'payment', 'unknown_payment', 'refund'];
+$expectedFields = [
+    CaseFundBankReconcileRepository::RECONCILE_STATEMENT_FIELDS,
+    CaseFundBankReconcileRepository::RECONCILE_PAYMENT_FIELDS,
+    CaseFundBankReconcileRepository::RECONCILE_UNKNOWN_PAYMENT_FIELDS,
+    CaseFundBankReconcileRepository::RECONCILE_REFUND_FIELDS,
+];
+foreach ($store->queries as $index => $prefetchQuery) {
+    bankQueryAssertSame($expectedTables[$index], $prefetchQuery['table'], 'Prefetch should query each banking source exactly once');
+    bankQueryAssertSame($expectedFields[$index], $prefetchQuery['field'], 'Prefetch should select the narrow reconcile field set');
+    bankQueryAssertSame(true, $prefetchQuery['lock'], 'Prefetch should lock every source range inside the outer reconcile transaction');
+    if (in_array('source_raw_json', $prefetchQuery['field'], true)) {
+        fwrite(STDERR, 'Bank reconcile prefetch must not load source_raw_json' . PHP_EOL);
+        exit(1);
+    }
+}
+bankQueryAssertSame(['bank_code', '=', 'CCB'], $store->queries[0]['where'][1], 'Only statement prefetch should apply bank code');
+bankQueryAssertSame(['transaction_date', '>=', '2026-07-01'], $store->queries[0]['where'][2], 'Statement prefetch should apply start date');
+bankQueryAssertSame(['payment_date', '>=', '2026-07-01'], $store->queries[1]['where'][1], 'Payment prefetch should apply business date');
 
 $store->queries = [];
 $store->rows['statement'] = [

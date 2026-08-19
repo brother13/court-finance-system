@@ -14,12 +14,14 @@ class CaseFundImportIdentity
     public function paymentImportDuplicateKey($row, $useReceiptNoAsDuplicateKey = true)
     {
         $receiptNo = trim((string)($row['receipt_no'] ?? ''));
-        if ($useReceiptNoAsDuplicateKey && $receiptNo !== '') {
-            return 'receipt:' . $receiptNo;
-        }
         $fingerprint = trim((string)($row['source_fingerprint'] ?? ''));
-        if (!$useReceiptNoAsDuplicateKey && $receiptNo !== '' && $fingerprint !== '') {
-            return 'fingerprint:' . $fingerprint;
+        // 科目未挂单据号辅助核算时，不以票据号、收款账号或金额判断业务重复。
+        // 来源指纹只用于同一源行的技术幂等，不能合并日期或银行流水不同的真实缴费。
+        if (!$useReceiptNoAsDuplicateKey) {
+            return $fingerprint === '' ? '' : 'fingerprint:' . $fingerprint;
+        }
+        if ($receiptNo !== '') {
+            return 'receipt:' . $receiptNo;
         }
         $bankAccountNo = trim((string)($row['bank_account_no'] ?? ''));
         if ($bankAccountNo !== '') {

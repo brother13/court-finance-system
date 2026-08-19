@@ -7,6 +7,7 @@ class Book extends Common
     const ACTION = 'book';
     const DETAIL_LEDGER_PDF_PAGE_SIZE = 30;
     const DETAIL_LEDGER_PDF_QUERY_PAGE_SIZE = 800;
+    const CASE_MOVEMENT_SNAPSHOT_FRESH_SECONDS = 60;
 
     public function index($action = '', $data = [])
     {
@@ -33,6 +34,8 @@ class Book extends Common
                 return $this->auxBalanceSubjects($data);
             case 'auxBalance':
                 return $this->auxBalance($data);
+            case 'caseMovementDetail':
+                return $this->caseMovementDetail($data);
             default:
                 return $this->error('操作【/' . self::ACTION . '/' . $action . '】并不存在！');
         }
@@ -483,7 +486,8 @@ class Book extends Common
             );
         }
 
-        foreach ($this->loadSubjectBalanceVoucherRows($startPeriod, $endPeriod) as $row) {
+        $currentRows = $this->loadSubjectBalanceVoucherRows($startPeriod, $endPeriod);
+        foreach ($currentRows as $row) {
             $debitCents = $this->decimalToCents($row['debit_amount'] ?? 0);
             $creditCents = $this->decimalToCents($row['credit_amount'] ?? 0);
             $this->addSubjectBalanceAmount(
@@ -495,6 +499,15 @@ class Book extends Common
                 $debitCents,
                 $creditCents
             );
+        }
+
+        $yearStartPeriod = $this->reportYearStartPeriod($endPeriod);
+        $yearRows = $yearStartPeriod === $startPeriod
+            ? $currentRows
+            : $this->loadSubjectBalanceVoucherRows($yearStartPeriod, $endPeriod);
+        foreach ($yearRows as $row) {
+            $debitCents = $this->decimalToCents($row['debit_amount'] ?? 0);
+            $creditCents = $this->decimalToCents($row['credit_amount'] ?? 0);
             $this->addSubjectBalanceAmount(
                 $balances,
                 $row['subject_code'],
@@ -1703,19 +1716,323 @@ class Book extends Common
         $subjectCode = trim((string)($data['subject_code'] ?? ''));
         $caseNoFilter = trim((string)($data['case_no'] ?? ''));
         $receiptNoFilter = trim((string)($data['receipt_no'] ?? ''));
+        $onlyMonitor = !empty($data['only_monitor']);
+        $page = max(1, (int)($data['page'] ?? 1));
+        $pageSize = max(1, min(200, (int)($data['pagesize'] ?? 50)));
+        $exportAll = !empty($data['export_all']);
         $refreshSnapshot = !empty($data['refresh_snapshot']);
         $snapshotError = $this->ensureAuxBalanceSnapshot($period, $refreshSnapshot);
         if ($snapshotError) {
             return $snapshotError;
         }
 
-        $rows = $this->loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter);
+        if ($exportAll) {
+            $rows = $this->loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor);
+            return $this->ok([
+                'items' => $rows,
+                'total' => count($rows),
+                'period' => $period,
+                'snapshot_time' => $this->auxBalanceSnapshotTime($period),
+            ], 'OK', count($rows));
+        }
+
+        $result = $this->loadAuxBalanceSnapshotPage(
+            $period,
+            $subjectCode,
+            $caseNoFilter,
+            $receiptNoFilter,
+            $onlyMonitor,
+            $page,
+            $pageSize
+        );
+        return $this->ok([
+            'items' => $result['items'],
+            'total' => $result['total'],
+            'monitor_total' => $result['monitor_total'],
+            'ending_total' => $result['ending_total'],
+            'period' => $period,
+            'page' => $page,
+            'pagesize' => $pageSize,
+            'only_monitor' => $onlyMonitor,
+            'snapshot_time' => $this->auxBalanceSnapshotTime($period),
+        ], 'OK', $result['total']);
+    }
+
+    public function caseMovementDetail($data = [])
+    {
+        $auth = $this->requirePermission('book:view');
+        if ($auth) {
+            return $auth;
+        }
+        $period = trim((string)($data['period'] ?? ''));
+        if (!$this->validPeriod($period)) {
+            return $this->error('会计期间格式不正确');
+        }
+        $startPeriod = $this->accountSetEnabledPeriod();
+        if (!$this->validPeriod($startPeriod)) {
+            $startPeriod = substr($period, 0, 4) . '-01';
+        }
+        if ($startPeriod > $period) {
+            return $this->error('查询期间不能早于账套启用期间');
+        }
+
+        $subjectCode = trim((string)($data['subject_code'] ?? ''));
+        $caseNo = trim((string)($data['case_no'] ?? ''));
+        $receiptNo = trim((string)($data['receipt_no'] ?? ''));
+        $page = max(1, (int)($data['page'] ?? 1));
+        $pageSize = max(1, min(200, (int)($data['pagesize'] ?? 100)));
+        $refreshSnapshot = !empty($data['refresh_snapshot']);
+
+        $snapshotError = $this->ensureCaseMovementSnapshot($refreshSnapshot);
+        if ($snapshotError) {
+            return $snapshotError;
+        }
+
+        $buildQuery = function () use ($startPeriod, $period, $subjectCode, $caseNo, $receiptNo) {
+            return $this->caseMovementSnapshotQuery($startPeriod, $period, $subjectCode, $caseNo, $receiptNo);
+        };
+        $total = (int)$buildQuery()->count();
+        $debitTotal = $buildQuery()->sum('debit_amount');
+        $creditTotal = $buildQuery()->sum('credit_amount');
+        $rows = $buildQuery()
+            ->field('snapshot_id,voucher_id,fiscal_year,period,voucher_date,voucher_word,voucher_no,voucher_status,detail_id,line_no,subject_code,subject_name,direction,case_no,receipt_no,summary,debit_amount,credit_amount')
+            ->order('case_no asc,voucher_date asc,voucher_no asc,line_no asc')
+            ->page($page, $pageSize)
+            ->select();
+
+        foreach ($rows as &$row) {
+            $row['voucher_no'] = (int)($row['voucher_no'] ?? 0);
+            $row['line_no'] = (int)($row['line_no'] ?? 0);
+            $row['voucher_label'] = ($row['voucher_word'] ?? '记') . '-' . $row['voucher_no'];
+            $row['debit_amount'] = $this->centsToDecimal($this->decimalToCents($row['debit_amount'] ?? 0));
+            $row['credit_amount'] = $this->centsToDecimal($this->decimalToCents($row['credit_amount'] ?? 0));
+        }
+        unset($row);
+
         return $this->ok([
             'items' => $rows,
-            'total' => count($rows),
-            'period' => $period,
-            'snapshot_time' => $this->auxBalanceSnapshotTime($period),
-        ], 'OK', count($rows));
+            'total' => $total,
+            'debit_total' => $this->centsToDecimal($this->decimalToCents($debitTotal ?: 0)),
+            'credit_total' => $this->centsToDecimal($this->decimalToCents($creditTotal ?: 0)),
+            'start_period' => $startPeriod,
+            'end_period' => $period,
+            'snapshot_time' => $this->caseMovementSnapshotTime(),
+            'page' => $page,
+            'pagesize' => $pageSize,
+        ], 'OK', $total);
+    }
+
+    protected function ensureCaseMovementSnapshot($forceRefresh = false)
+    {
+        if (!$forceRefresh && $this->caseMovementSnapshotFresh()) {
+            return null;
+        }
+        return $this->rebuildCaseMovementSnapshot();
+    }
+
+    protected function caseMovementSnapshotFresh()
+    {
+        try {
+            $row = db('fin_case_movement_snapshot')
+                ->where([
+                    'account_set_id' => $this->accountSetId,
+                    'del_flag' => 0,
+                ])
+                ->field('count(*) as row_count,max(source_updated_time) as source_updated_time,max(snapshot_time) as snapshot_time')
+                ->find();
+            if ((int)($row['row_count'] ?? 0) <= 0) {
+                return !$this->caseMovementSourceExists();
+            }
+            $snapshotTimestamp = strtotime((string)($row['snapshot_time'] ?? ''));
+            if ($snapshotTimestamp !== false && $snapshotTimestamp >= time() - self::CASE_MOVEMENT_SNAPSHOT_FRESH_SECONDS) {
+                return true;
+            }
+            return (string)($row['source_updated_time'] ?? '') === $this->caseMovementSourceUpdatedTime();
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    protected function caseMovementSourceExists()
+    {
+        $startPeriod = $this->accountSetEnabledPeriod();
+        if (!$this->validPeriod($startPeriod)) {
+            return false;
+        }
+        return db('fin_voucher_detail')->alias('d')
+            ->join('fin_voucher v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
+            ->join('fin_voucher_aux_value case_aux', 'case_aux.detail_id=d.detail_id and case_aux.account_set_id=d.account_set_id and case_aux.fiscal_year=d.fiscal_year and case_aux.period=d.period')
+            ->where([
+                'd.account_set_id' => $this->accountSetId,
+                'd.del_flag' => 0,
+                'v.del_flag' => 0,
+                'v.void_flag' => 0,
+                'case_aux.aux_type_code' => 'case_no',
+                'case_aux.del_flag' => 0,
+            ])
+            ->where('d.fiscal_year', '>=', (int)substr($startPeriod, 0, 4))
+            ->where('v.fiscal_year', '>=', (int)substr($startPeriod, 0, 4))
+            ->where('d.period', '>=', $startPeriod)
+            ->where('v.period', '>=', $startPeriod)
+            ->count() > 0;
+    }
+
+    protected function rebuildCaseMovementSnapshot()
+    {
+        $startPeriod = $this->accountSetEnabledPeriod();
+        if (!$this->validPeriod($startPeriod)) {
+            return $this->error('账套启用期间未配置，无法建立案号收支明细缓存');
+        }
+        $startFiscalYear = (int)substr($startPeriod, 0, 4);
+        $sourceTime = $this->caseMovementSourceUpdatedTime();
+        $snapshotTime = $this->now();
+        try {
+            $sourceRows = db('fin_voucher_detail')->alias('d')
+                ->join('fin_voucher v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
+                ->join('fin_voucher_aux_value case_aux', 'case_aux.detail_id=d.detail_id and case_aux.account_set_id=d.account_set_id and case_aux.fiscal_year=d.fiscal_year and case_aux.period=d.period')
+                ->join('fin_voucher_aux_value receipt_aux', "receipt_aux.detail_id=d.detail_id and receipt_aux.account_set_id=d.account_set_id and receipt_aux.fiscal_year=d.fiscal_year and receipt_aux.period=d.period and receipt_aux.aux_type_code='receipt_no' and receipt_aux.del_flag=0", 'LEFT')
+                ->join('fin_subject s', 's.subject_code=d.subject_code and s.account_set_id=d.account_set_id and s.del_flag=0', 'LEFT')
+                ->where([
+                    'd.account_set_id' => $this->accountSetId,
+                    'd.del_flag' => 0,
+                    'v.del_flag' => 0,
+                    'v.void_flag' => 0,
+                    'case_aux.aux_type_code' => 'case_no',
+                    'case_aux.del_flag' => 0,
+                ])
+                ->where('d.fiscal_year', '>=', $startFiscalYear)
+                ->where('v.fiscal_year', '>=', $startFiscalYear)
+                ->where('d.period', '>=', $startPeriod)
+                ->where('v.period', '>=', $startPeriod)
+                ->field("d.fiscal_year,d.period,d.detail_id,d.line_no,d.subject_code,d.summary,d.debit_amount,d.credit_amount,v.voucher_id,v.voucher_date,v.voucher_word,v.voucher_no,v.status as voucher_status,s.subject_name,s.direction,trim(coalesce(nullif(case_aux.aux_label,''),case_aux.aux_value,'')) as case_no,trim(coalesce(nullif(receipt_aux.aux_label,''),receipt_aux.aux_value,'')) as receipt_no")
+                ->order('d.fiscal_year asc,d.period asc,v.voucher_date asc,v.voucher_no asc,d.line_no asc')
+                ->select();
+        } catch (\Exception $e) {
+            return $this->error('读取案号收支明细来源失败：' . $e->getMessage());
+        }
+
+        \think\Db::startTrans();
+        try {
+            db('fin_case_movement_snapshot')->where(['account_set_id' => $this->accountSetId])->delete();
+            $batch = [];
+            foreach ($sourceRows as $sourceRow) {
+                if (trim((string)($sourceRow['case_no'] ?? '')) === '') {
+                    continue;
+                }
+                $batch[] = $this->buildCaseMovementSnapshotInsertRow($sourceRow, $snapshotTime, $sourceTime);
+                if (count($batch) >= 500) {
+                    db('fin_case_movement_snapshot')->insertAll($batch);
+                    $batch = [];
+                }
+            }
+            if (!empty($batch)) {
+                db('fin_case_movement_snapshot')->insertAll($batch);
+            }
+            \think\Db::commit();
+        } catch (\Exception $e) {
+            \think\Db::rollback();
+            return $this->error('刷新案号收支明细缓存失败：' . $e->getMessage());
+        }
+        return null;
+    }
+
+    protected function buildCaseMovementSnapshotInsertRow($sourceRow, $snapshotTime, $sourceTime)
+    {
+        return [
+            'snapshot_id' => uuid(),
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => (int)($sourceRow['fiscal_year'] ?? 0),
+            'period' => $sourceRow['period'] ?? '',
+            'voucher_id' => $sourceRow['voucher_id'] ?? '',
+            'voucher_date' => $sourceRow['voucher_date'] ?? null,
+            'voucher_word' => $sourceRow['voucher_word'] ?? '记',
+            'voucher_no' => (int)($sourceRow['voucher_no'] ?? 0),
+            'voucher_status' => $sourceRow['voucher_status'] ?? '',
+            'detail_id' => $sourceRow['detail_id'] ?? '',
+            'line_no' => (int)($sourceRow['line_no'] ?? 0),
+            'subject_code' => $sourceRow['subject_code'] ?? '',
+            'subject_name' => $sourceRow['subject_name'] ?? '',
+            'direction' => $sourceRow['direction'] ?? 'DEBIT',
+            'case_no' => trim((string)($sourceRow['case_no'] ?? '')),
+            'receipt_no' => trim((string)($sourceRow['receipt_no'] ?? '')),
+            'summary' => $sourceRow['summary'] ?? '',
+            'debit_amount' => $this->centsToDecimal($this->decimalToCents($sourceRow['debit_amount'] ?? 0)),
+            'credit_amount' => $this->centsToDecimal($this->decimalToCents($sourceRow['credit_amount'] ?? 0)),
+            'source_updated_time' => $sourceTime !== '' ? $sourceTime : null,
+            'snapshot_time' => $snapshotTime,
+            'created_by' => $this->userid,
+            'created_time' => $snapshotTime,
+            'updated_by' => $this->userid,
+            'updated_time' => $snapshotTime,
+            'del_flag' => 0,
+            'version' => 0,
+        ];
+    }
+
+    protected function caseMovementSnapshotQuery($startPeriod, $endPeriod, $subjectCode, $caseNo, $receiptNo)
+    {
+        $query = db('fin_case_movement_snapshot')->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => ['between', [(int)substr($startPeriod, 0, 4), (int)substr($endPeriod, 0, 4)]],
+            'period' => ['between', [$startPeriod, $endPeriod]],
+            'del_flag' => 0,
+        ]);
+        if ($subjectCode !== '') {
+            $query->where('subject_code', $subjectCode);
+        }
+        if ($caseNo !== '') {
+            $query->where('case_no', 'like', '%' . $caseNo . '%');
+        }
+        if ($receiptNo !== '') {
+            $query->where('receipt_no', 'like', '%' . $receiptNo . '%');
+        }
+        return $query;
+    }
+
+    protected function caseMovementSnapshotTime()
+    {
+        try {
+            $row = db('fin_case_movement_snapshot')
+                ->where(['account_set_id' => $this->accountSetId, 'del_flag' => 0])
+                ->field('max(snapshot_time) as snapshot_time')
+                ->find();
+            return (string)($row['snapshot_time'] ?? '');
+        } catch (\Exception $e) {
+            return '';
+        }
+    }
+
+    protected function caseMovementSourceUpdatedTime()
+    {
+        $startPeriod = $this->accountSetEnabledPeriod();
+        if (!$this->validPeriod($startPeriod)) {
+            return '';
+        }
+        $startFiscalYear = (int)substr($startPeriod, 0, 4);
+        $times = [
+            $this->maxCaseMovementUpdatedTime('fin_voucher', $startFiscalYear, $startPeriod),
+            $this->maxCaseMovementUpdatedTime('fin_voucher_detail', $startFiscalYear, $startPeriod),
+            $this->maxCaseMovementUpdatedTime('fin_voucher_aux_value', $startFiscalYear, $startPeriod),
+            $this->maxUpdatedTime('fin_subject', ['account_set_id' => $this->accountSetId]),
+            $this->maxUpdatedTime('fin_subject_aux_config', ['account_set_id' => $this->accountSetId]),
+        ];
+        $times = array_values(array_filter($times, 'strlen'));
+        if (empty($times)) {
+            return '';
+        }
+        sort($times);
+        return end($times);
+    }
+
+    protected function maxCaseMovementUpdatedTime($table, $startFiscalYear, $startPeriod)
+    {
+        $row = db($table)
+            ->where(['account_set_id' => $this->accountSetId])
+            ->where('fiscal_year', '>=', $startFiscalYear)
+            ->where('period', '>=', $startPeriod)
+            ->field('max(updated_time) as max_time')
+            ->find();
+        return (string)($row['max_time'] ?? '');
     }
 
     protected function ensureAuxBalanceSnapshot($period, $forceRefresh = false)
@@ -1788,6 +2105,7 @@ class Book extends Common
         $fiscalYear = $this->fiscalYear($period);
         $groups = [];
         $subjectMap = $this->subjectInfoMap();
+        $caseSubjectMap = $this->subjectAuxConfigSubjectMap('case_no');
         $receiptSubjectMap = $this->subjectAuxConfigSubjectMap('receipt_no');
 
         $openingRows = db('fin_aux_opening_balance')
@@ -1800,6 +2118,9 @@ class Book extends Common
             ->select();
         foreach ($openingRows as $row) {
             $rowSubjectCode = $row['subject_code'] ?? '';
+            if (empty($caseSubjectMap[$rowSubjectCode])) {
+                continue;
+            }
             $auxValues = json_decode($row['aux_values_json'] ?? '{}', true);
             if (!is_array($auxValues)) {
                 $auxValues = [];
@@ -1835,6 +2156,7 @@ class Book extends Common
             ->join('fin_voucher v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
             ->join('fin_voucher_aux_value case_aux', 'case_aux.detail_id=d.detail_id and case_aux.account_set_id=d.account_set_id and case_aux.fiscal_year=d.fiscal_year and case_aux.period=d.period')
             ->join('fin_voucher_aux_value receipt_aux', "receipt_aux.detail_id=d.detail_id and receipt_aux.account_set_id=d.account_set_id and receipt_aux.fiscal_year=d.fiscal_year and receipt_aux.period=d.period and receipt_aux.aux_type_code='receipt_no' and receipt_aux.del_flag=0", 'LEFT')
+            ->join('fin_subject_aux_config case_cfg', "case_cfg.subject_code=d.subject_code and case_cfg.account_set_id=d.account_set_id and case_cfg.aux_type_code='case_no' and case_cfg.del_flag=0")
             ->join('fin_subject s', 's.subject_code=d.subject_code and s.account_set_id=d.account_set_id and s.del_flag=0', 'LEFT')
             ->where($voucherWhere)
             ->where('d.period', 'between', [$this->reportYearStartPeriod($period), $period])
@@ -1902,16 +2224,14 @@ class Book extends Common
         ];
     }
 
-    protected function loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter)
+    protected function auxBalanceSnapshotQuery($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor)
     {
-        $receiptSubjectMap = $this->subjectAuxConfigSubjectMap('receipt_no');
-        $query = db('fin_aux_balance_snapshot')
-            ->where([
-                'account_set_id' => $this->accountSetId,
-                'fiscal_year' => $this->fiscalYear($period),
-                'period' => $period,
-                'del_flag' => 0,
-            ]);
+        $query = db('fin_aux_balance_snapshot')->where([
+            'account_set_id' => $this->accountSetId,
+            'fiscal_year' => $this->fiscalYear($period),
+            'period' => $period,
+            'del_flag' => 0,
+        ]);
         if ($subjectCode !== '') {
             $query->where('subject_code', $subjectCode);
         }
@@ -1921,6 +2241,94 @@ class Book extends Common
         if ($receiptNoFilter !== '') {
             $query->where('receipt_no', 'like', '%' . $receiptNoFilter . '%');
         }
+        if ($onlyMonitor) {
+            $query->where('monitor_flag', 1);
+        }
+        return $query;
+    }
+
+    protected function loadAuxBalanceSnapshotPage($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor, $page, $pageSize)
+    {
+        $caseStats = $this->auxBalanceSnapshotQuery($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor)
+            ->field('count(distinct case_no) as case_total')
+            ->find();
+        $total = (int)($caseStats['case_total'] ?? 0);
+
+        $stats = $this->auxBalanceSnapshotQuery($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor)
+            ->field('sum(monitor_flag) as monitor_total,sum(ending_balance_amount) as ending_total')
+            ->find();
+
+        $pageCaseRows = $this->auxBalanceSnapshotQuery($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor)
+            ->field('case_no')
+            ->group('case_no')
+            ->order('case_no asc')
+            ->page($page, $pageSize)
+            ->select();
+        $pageCaseNos = [];
+        foreach ($pageCaseRows as $caseRow) {
+            $caseNo = trim((string)($caseRow['case_no'] ?? ''));
+            if ($caseNo !== '') {
+                $pageCaseNos[] = $caseNo;
+            }
+        }
+
+        $snapshotRows = [];
+        if (!empty($pageCaseNos)) {
+            $snapshotRows = $this->auxBalanceSnapshotQuery($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor)
+                ->where('case_no', 'in', $pageCaseNos)
+                ->field('subject_code,max(subject_name) as subject_name,max(direction) as direction,case_no,sum(opening_debit_amount) as opening_debit_amount,sum(opening_credit_amount) as opening_credit_amount,sum(debit_amount) as debit_amount,sum(credit_amount) as credit_amount,sum(entry_count) as entry_count,sum(monitor_flag) as monitor_count,count(*) as receipt_count')
+                ->group('subject_code,case_no')
+                ->order('case_no asc,subject_code asc')
+                ->select();
+        }
+        $items = [];
+        foreach ($snapshotRows as $row) {
+            $items[] = $this->formatAuxBalanceCaseRow($row);
+        }
+        return [
+            'items' => $items,
+            'total' => $total,
+            'monitor_total' => (int)($stats['monitor_total'] ?? 0),
+            'ending_total' => $this->centsToDecimal($this->decimalToCents($stats['ending_total'] ?? 0)),
+        ];
+    }
+
+    protected function formatAuxBalanceCaseRow($row)
+    {
+        $direction = $row['direction'] ?? 'DEBIT';
+        $openingDebitCents = $this->decimalToCents($row['opening_debit_amount'] ?? 0);
+        $openingCreditCents = $this->decimalToCents($row['opening_credit_amount'] ?? 0);
+        $debitCents = $this->decimalToCents($row['debit_amount'] ?? 0);
+        $creditCents = $this->decimalToCents($row['credit_amount'] ?? 0);
+        $monitorCount = (int)($row['monitor_count'] ?? 0);
+        return [
+            'row_key' => 'case|' . $this->auxBalanceKey($row['subject_code'], $row['case_no'], ''),
+            'row_type' => 'CASE',
+            'subject_code' => $row['subject_code'],
+            'subject_name' => $row['subject_name'] ?? '',
+            'direction' => $direction,
+            'case_no' => $row['case_no'],
+            'receipt_no' => '',
+            'opening_balance_amount' => $this->centsToDecimal($this->normalBalanceCents($direction, $openingDebitCents, $openingCreditCents)),
+            'debit_amount' => $this->centsToDecimal($debitCents),
+            'credit_amount' => $this->centsToDecimal($creditCents),
+            'ending_balance_amount' => $this->centsToDecimal($this->normalBalanceCents(
+                $direction,
+                $openingDebitCents + $debitCents,
+                $openingCreditCents + $creditCents
+            )),
+            'entry_count' => (int)($row['entry_count'] ?? 0),
+            'monitor_flag' => $monitorCount > 0,
+            'monitor_count' => $monitorCount,
+            'receipt_count' => (int)($row['receipt_count'] ?? 0),
+            'children' => [],
+        ];
+    }
+
+    protected function loadAuxBalanceSnapshotRows($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor = false)
+    {
+        $receiptSubjectMap = $this->subjectAuxConfigSubjectMap('receipt_no');
+        $query = $this->auxBalanceSnapshotQuery($period, $subjectCode, $caseNoFilter, $receiptNoFilter, $onlyMonitor);
 
         $snapshotRows = $query
             ->field('subject_code,subject_name,direction,case_no,receipt_no,opening_debit_amount,opening_credit_amount,debit_amount,credit_amount,entry_count')
@@ -2050,6 +2458,7 @@ class Book extends Common
             ])
             ->where('d.period', 'between', [$startPeriod, $endPeriod])
             ->where('v.period', 'between', [$startPeriod, $endPeriod])
+            ->where('v.status', 'in', ['SUBMITTED', 'AUDITED', 'POSTED', 'PRINTED'])
             ->field('d.subject_code,coalesce(sum(d.debit_amount),0) as debit_amount,coalesce(sum(d.credit_amount),0) as credit_amount')
             ->group('d.subject_code')
             ->order('d.subject_code asc')
@@ -2092,8 +2501,8 @@ class Book extends Common
         $openingCreditCents = (int)$row['opening_credit_cents'];
         $currentDebitCents = (int)$row['current_debit_cents'];
         $currentCreditCents = (int)$row['current_credit_cents'];
-        $yearDebitCents = $currentDebitCents;
-        $yearCreditCents = $currentCreditCents;
+        $yearDebitCents = (int)$row['year_debit_cents'];
+        $yearCreditCents = (int)$row['year_credit_cents'];
         $endingNetCents = $openingDebitCents - $openingCreditCents + $currentDebitCents - $currentCreditCents;
         $endingDebitCents = $endingNetCents > 0 ? $endingNetCents : 0;
         $endingCreditCents = $endingNetCents < 0 ? abs($endingNetCents) : 0;

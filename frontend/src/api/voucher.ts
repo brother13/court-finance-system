@@ -36,6 +36,9 @@ export const voucherApi = {
   unaudit(period: string, voucherId: string) {
     return apiAction('/voucher/unaudit', { period, voucher_id: voucherId }) as Promise<void>
   },
+  batchUnaudit(period: string, voucherIds: string[]) {
+    return apiAction('/voucher/batchUnaudit', { period, voucher_ids: voucherIds }) as Promise<{ unaudited_count: number }>
+  },
   post(period: string, voucherId: string) {
     return apiAction('/voucher/post', { period, voucher_id: voucherId }) as Promise<{ posted_count: number }>
   },
@@ -75,11 +78,12 @@ export const voucherApi = {
       start_no: number
       voucher_count: number
       change_count: number
+      locked_count: number
       has_gap: boolean
       items: any[]
     }>
   },
   renumber(payload: { period: string; start_no?: number }) {
-    return apiAction('/voucher/renumber', payload) as Promise<{ period: string; renumbered_count: number; items: any[] }>
+    return apiAction('/voucher/renumber', payload, {}, { timeout: 60000 }) as Promise<{ period: string; renumbered_count: number; items: any[] }>
   }
 }

@@ -70,6 +70,7 @@ class SubjectConfigApplicationService
                 'generate_voucher_by_day_flag' => $this->manager->subjectConfigAccountSetFlag(),
                 'generate_payment_voucher_by_method_flag' => $this->manager->generatePaymentVoucherByMethodFlag(),
                 'generate_refund_voucher_by_out_order_no_flag' => $this->manager->generateRefundVoucherByOutOrderNoFlag(),
+                'skip_confirmed_return_voucher_flag' => $this->manager->skipConfirmedReturnVoucherFlag(),
                 'payment_method_items' => $voucherBizType === 'PAYMENT'
                     ? $this->manager->paymentMethodSubjectConfigItems($bizType, $items)
                     : [],
@@ -106,6 +107,10 @@ class SubjectConfigApplicationService
                 $data['generate_payment_voucher_by_method_flag']
                 ?? ($data['generatePaymentVoucherByMethodFlag'] ?? $this->manager->generatePaymentVoucherByMethodFlag())
             ),
+            'skip_confirmed_return_voucher_flag' => $this->normalizeFlag(
+                $data['skip_confirmed_return_voucher_flag']
+                ?? ($data['skipConfirmedReturnVoucherFlag'] ?? $this->manager->skipConfirmedReturnVoucherFlag())
+            ),
         ];
     }
 
@@ -114,7 +119,8 @@ class SubjectConfigApplicationService
         list($accountSetBefore, $accountSetAfter) = $this->manager->saveSubjectConfigAccountSetFlag(
             $prepared['generate_voucher_by_day_flag'],
             $prepared['generate_refund_voucher_by_out_order_no_flag'],
-            $prepared['generate_payment_voucher_by_method_flag']
+            $prepared['generate_payment_voucher_by_method_flag'],
+            $prepared['skip_confirmed_return_voucher_flag']
         );
         $saveResult = $this->manager->saveBusinessSubjectConfigs(
             $prepared['biz_type'],

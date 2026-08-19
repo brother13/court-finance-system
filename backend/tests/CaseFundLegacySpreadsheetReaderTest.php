@@ -134,6 +134,21 @@ if (in_array('SECOND', $cells, true)) {
     exit(1);
 }
 
+// OLE Workbook streams may retain sector padding or stale bytes after the last
+// worksheet substream. Global metadata parsing must stop at the first worksheet
+// offset instead of interpreting those trailing bytes as another BIFF record.
+$trailingJunk = pack('vv', 0x1234, 100) . 'x';
+try {
+    $cellsWithTrailingJunk = $reader->parseBiffCells($biffStream . $trailingJunk);
+} catch (Exception $e) {
+    fwrite(STDERR, 'Legacy spreadsheet reader should ignore bytes after the first worksheet: ' . $e->getMessage() . PHP_EOL);
+    exit(1);
+}
+if ($cellsWithTrailingJunk !== $cells) {
+    fwrite(STDERR, 'Trailing workbook bytes must not change first-sheet cell values' . PHP_EOL);
+    exit(1);
+}
+
 $probe = new CaseFundLegacySpreadsheetReaderProbe();
 if ($probe->parseRowsForTest($xml) !== $expectedRows) {
     fwrite(STDERR, 'CaseFund compatibility wrapper should delegate row parsing to LegacySpreadsheetReader' . PHP_EOL);

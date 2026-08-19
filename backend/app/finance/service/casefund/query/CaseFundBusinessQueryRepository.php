@@ -51,6 +51,7 @@ class CaseFundBusinessQueryRepository
                 }
             }
             $this->applyRawDateRange($where, 'payment_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
+            $this->applyAmountRange($where, 'payment_amount', $data);
         }
         $where['business_type'] = ['in', $allowedBusinessTypes];
         $keyword = $paymentId === '' ? trim($data['keyword'] ?? '') : '';
@@ -76,6 +77,9 @@ class CaseFundBusinessQueryRepository
             $where['refund_id'] = $refundId;
         } else {
             $this->applyCommonWhere($where, $data);
+            if (isset($data['return_match_ids']) && is_array($data['return_match_ids'])) {
+                $where['refund_id'] = ['in', $data['return_match_ids']];
+            }
             $dateStart = $this->callHook('normalize_date_filter', [
                 $data['date_start'] ?? ($data['startDate'] ?? ''),
             ]);
@@ -86,6 +90,7 @@ class CaseFundBusinessQueryRepository
             if (!empty($data['out_status'])) {
                 $where['out_status'] = $data['out_status'];
             }
+            $this->applyAmountRange($where, 'refund_amount', $data);
         }
         $where['out_type'] = ['in', $allowedOutTypes];
         $caseNo = $refundId === '' ? trim($data['case_no'] ?? ($data['caseNo'] ?? '')) : '';
@@ -114,10 +119,14 @@ class CaseFundBusinessQueryRepository
             $where['unknown_payment_id'] = $unknownPaymentId;
         } else {
             $this->applyCommonWhere($where, $data);
+            if (isset($data['return_match_ids']) && is_array($data['return_match_ids'])) {
+                $where['unknown_payment_id'] = ['in', $data['return_match_ids']];
+            }
             if (!empty($data['claim_status'])) {
                 $where['claim_status'] = $data['claim_status'];
             }
             $this->applyRawDateRange($where, 'transaction_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
+            $this->applyAmountRange($where, 'unknown_amount', $data);
         }
         return $this->simpleAmountList(
             'unknown_payment',
@@ -138,7 +147,9 @@ class CaseFundBusinessQueryRepository
         if (!empty($data['invoice_type'])) {
             $where['invoice_type'] = $data['invoice_type'];
         }
-        $this->applyRawDateRange($where, 'receive_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
+        $dateStart = $this->callHook('normalize_date_filter', [$data['date_start'] ?? '']);
+        $dateEnd = $this->callHook('normalize_date_filter', [$data['date_end'] ?? '']);
+        $this->applyRawDateRange($where, 'receive_date', $dateStart, $dateEnd);
         return $this->simpleAmountList(
             'distribution',
             $where,
@@ -204,11 +215,25 @@ class CaseFundBusinessQueryRepository
 
     protected function applyRawDateRange(&$where, $field, $dateStart, $dateEnd)
     {
-        if ($dateStart !== '') {
-            $where[$field][] = ['>=', $dateStart];
+        if ($dateStart !== '' && $dateEnd !== '') {
+            $where[$field] = [['>=', $dateStart], ['<=', $dateEnd]];
+        } elseif ($dateStart !== '') {
+            $where[$field] = ['>=', $dateStart];
+        } elseif ($dateEnd !== '') {
+            $where[$field] = ['<=', $dateEnd];
         }
-        if ($dateEnd !== '') {
-            $where[$field][] = ['<=', $dateEnd];
+    }
+
+    protected function applyAmountRange(&$where, $field, $data)
+    {
+        $amountMin = trim((string)($data['amount_min'] ?? ($data['amountMin'] ?? '')));
+        $amountMax = trim((string)($data['amount_max'] ?? ($data['amountMax'] ?? '')));
+        if ($amountMin !== '' && $amountMax !== '') {
+            $where[$field] = [['>=', $amountMin], ['<=', $amountMax]];
+        } elseif ($amountMin !== '') {
+            $where[$field] = ['>=', $amountMin];
+        } elseif ($amountMax !== '') {
+            $where[$field] = ['<=', $amountMax];
         }
     }
 

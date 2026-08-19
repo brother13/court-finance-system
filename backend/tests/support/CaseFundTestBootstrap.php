@@ -16,12 +16,14 @@ require_once $backendRoot . '/app/finance/service/casefund/policy/CaseFundBusine
 require_once $backendRoot . '/app/finance/service/casefund/policy/CaseFundReceiptTracePolicy.php';
 require_once $backendRoot . '/app/finance/service/casefund/persistence/CaseFundBusinessDeletionService.php';
 require_once $backendRoot . '/app/finance/service/casefund/query/CaseFundBusinessQueryRepository.php';
+require_once $backendRoot . '/app/finance/service/casefund/returning/CaseFundUnknownRefundMatchService.php';
 require_once $backendRoot . '/app/finance/service/casefund/validation/CaseFundImportValidator.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherRule.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherPersistenceService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/CaseFundVoucherAuxiliaryService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/RefundVoucherGenerationService.php';
+require_once $backendRoot . '/app/finance/service/casefund/voucher/UnknownPaymentAuxiliaryCaseService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/UnknownPaymentVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/voucher/DistributionVoucherGenerationService.php';
 require_once $backendRoot . '/app/finance/service/casefund/subject/SubjectConfigResolver.php';

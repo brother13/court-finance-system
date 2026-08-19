@@ -42,7 +42,7 @@
             <span class="year-select-label">选择年度</span>
             <el-radio-group v-model="selectedYear" size="large">
               <el-radio-button
-                v-for="year in item.available_years"
+                v-for="year in sortedAvailableYears(item)"
                 :key="year"
                 :label="year"
               >
@@ -75,8 +75,6 @@ const accountSets = ref<AccountSet[]>([])
 const selectedAccountSet = ref<AccountSet | null>(null)
 const selectedYear = ref<number>(0)
 
-const currentCalendarYear = () => new Date().getFullYear()
-
 const bizTypeMeta = (type: string) => {
   const map: Record<string, { label: string; desc: string }> = {
     CASE_FUND: { label: '案款', desc: '只展示案款收支、余额、未退案款和案款业务入口。' },
@@ -87,11 +85,13 @@ const bizTypeMeta = (type: string) => {
   return map[type] || { label: type, desc: '专项资金独立账套。' }
 }
 
+const sortedAvailableYears = (item: AccountSet) => (
+  [...(item.available_years || [])].sort((left, right) => left - right)
+)
+
 const defaultSelectedYear = (item: AccountSet) => {
-  if (item.available_years?.includes(currentCalendarYear())) {
-    return currentCalendarYear()
-  }
-  return item.enabled_year || (item.available_years?.[0] ?? 0)
+  const years = sortedAvailableYears(item)
+  return years[years.length - 1] ?? item.enabled_year ?? 0
 }
 
 const selectCard = (item: AccountSet) => {

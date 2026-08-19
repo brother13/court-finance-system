@@ -73,6 +73,26 @@ class VoucherRenumberProbe extends Voucher
     {
         return $this->deletedVoucherRenumberConflicts($rows, $finalNumbers);
     }
+
+    public function lockedConflictReason($items)
+    {
+        return $this->voucherRenumberLockedConflictReason($items);
+    }
+
+    public function movableItems($items)
+    {
+        return $this->voucherRenumberMovableItems($items);
+    }
+
+    public function numberMap($items)
+    {
+        return $this->voucherRenumberNumberMap($items);
+    }
+
+    public function businessBatchStatement($table, $numberMap, $period, $updatedTime)
+    {
+        return $this->buildBusinessSourceVoucherNoBatchUpdateStatement($table, $numberMap, $period, $updatedTime);
+    }
 }
 
 $voucherSource = file_get_contents(__DIR__ . '/../app/finance/model/Voucher.php');
@@ -83,10 +103,24 @@ assertTrue(strpos($voucherSource, 'fin_voucher_no_adjust_log') !== false, 'Vouch
 
 $ddl = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');
 $patch = file_get_contents(__DIR__ . '/../database/finance_standard_patch.sql');
+$performancePatchPath = __DIR__ . '/../database/2026-08-10-voucher-renumber-performance-index.sql';
+$performancePatch = file_exists($performancePatchPath) ? file_get_contents($performancePatchPath) : '';
 $rbac = file_get_contents(__DIR__ . '/../database/migration_rbac.sql');
 assertTrue(strpos($ddl, 'create table fin_voucher_no_adjust_log') !== false, 'DDL should create fin_voucher_no_adjust_log');
 assertTrue(strpos($patch, 'fin_voucher_no_adjust_log') !== false, 'Patch should create fin_voucher_no_adjust_log');
 assertTrue(strpos($rbac, "'voucher:renumber'") !== false, 'RBAC should define voucher:renumber');
+foreach ([
+    'idx_case_fund_payment_voucher_sync',
+    'idx_case_fund_refund_voucher_sync',
+    'idx_case_fund_unknown_payment_voucher_sync',
+    'idx_case_fund_distribution_voucher_sync',
+] as $indexName) {
+    assertTrue(strpos($ddl, $indexName) !== false, 'DDL should define ' . $indexName);
+    assertTrue(strpos($patch, $indexName) !== false, 'Consolidated patch should define ' . $indexName);
+    assertTrue(strpos($performancePatch, $indexName) !== false, 'Production performance patch should define ' . $indexName);
+}
+assertTrue(strpos($voucherSource, 'syncGeneratedBusinessSourceVoucherNos($changedItems, $period)') !== false, 'Renumber should synchronize business source voucher numbers in one batch flow');
+assertTrue(strpos($voucherSource, "getdb('fin_voucher_no_adjust_log')->insertAll(\$logRows)") !== false, 'Renumber adjustment logs should be inserted in one batch');
 
 $probe = new VoucherRenumberProbe();
 $rows = [
@@ -170,7 +204,83 @@ assertSameValue('deleted-2', $deletedConflicts[0]['voucher_id'], 'Soft-deleted v
 
 assertSameValue('', $probe->blockReason(['status' => 'SUBMITTED', 'printed_flag' => '0', 'void_flag' => '0'], 'OPEN'), 'Submitted unprinted vouchers in open period should be renumberable');
 assertTrue($probe->blockReason(['status' => 'POSTED', 'printed_flag' => '0', 'void_flag' => '0'], 'OPEN') !== '', 'Posted vouchers should block renumber');
-assertTrue($probe->blockReason(['status' => 'SUBMITTED', 'printed_flag' => '1', 'void_flag' => '0'], 'OPEN') !== '', 'Printed vouchers should block first implementation');
+assertSameValue('', $probe->blockReason(['status' => 'PRINTED', 'printed_flag' => '1', 'void_flag' => '0'], 'OPEN'), 'Printed vouchers should be locked instead of blocking the whole period');
 assertTrue($probe->blockReason(['status' => 'SUBMITTED', 'printed_flag' => '0', 'void_flag' => '0'], 'CLOSED') !== '', 'Closed periods should block renumber');
+
+$lockedRows = [
+    [
+        'voucher_id' => 'printed-first',
+        'period' => '2026-05',
+        'voucher_date' => '2026-05-01',
+        'voucher_word' => '记',
+        'voucher_no' => 1,
+        'summary' => '收 已打印凭证',
+        'source_type' => 'PAYMENT',
+        'status' => 'PRINTED',
+        'printed_flag' => '1',
+        'created_time' => '2026-05-01 09:00:00',
+        'del_flag' => 0,
+    ],
+    [
+        'voucher_id' => 'unprinted-third',
+        'period' => '2026-05',
+        'voucher_date' => '2026-05-02',
+        'voucher_word' => '记',
+        'voucher_no' => 3,
+        'summary' => '收 未打印凭证一',
+        'source_type' => 'PAYMENT',
+        'status' => 'SUBMITTED',
+        'printed_flag' => '0',
+        'created_time' => '2026-05-02 09:00:00',
+        'del_flag' => 0,
+    ],
+    [
+        'voucher_id' => 'unprinted-fifth',
+        'period' => '2026-05',
+        'voucher_date' => '2026-05-03',
+        'voucher_word' => '记',
+        'voucher_no' => 5,
+        'summary' => '付 未打印凭证二',
+        'source_type' => 'REFUND',
+        'status' => 'SUBMITTED',
+        'printed_flag' => '0',
+        'created_time' => '2026-05-03 09:00:00',
+        'del_flag' => 0,
+    ],
+];
+$lockedMapped = $probe->mappedItems($lockedRows, 1);
+assertSameValue(true, $lockedMapped[0]['locked'], 'Printed first voucher should be marked as locked');
+assertSameValue(false, $lockedMapped[0]['changed'], 'Printed first voucher number should stay unchanged');
+assertSameValue(1, $lockedMapped[0]['new_voucher_no'], 'Printed first voucher should keep voucher number 1');
+assertSameValue(2, $lockedMapped[1]['new_voucher_no'], 'First unprinted voucher should fill the first gap');
+assertSameValue(3, $lockedMapped[2]['new_voucher_no'], 'Second unprinted voucher should continue the sequence');
+assertSameValue('', $probe->lockedConflictReason($lockedMapped), 'A correctly positioned printed anchor should allow renumbering');
+assertSameValue(2, count($probe->movableItems($lockedMapped)), 'Only unprinted vouchers should be moved during renumbering');
+
+$movementCandidates = $probe->movableItems([
+    ['voucher_id' => 'changed', 'changed' => true, 'locked' => false, 'new_voucher_no' => 2],
+    ['voucher_id' => 'unchanged', 'changed' => false, 'locked' => false, 'new_voucher_no' => 3],
+    ['voucher_id' => 'locked', 'changed' => false, 'locked' => true, 'new_voucher_no' => 4],
+]);
+assertSameValue(1, count($movementCandidates), 'Only changed and unlocked vouchers should enter the two-phase number update');
+assertSameValue('changed', $movementCandidates[0]['voucher_id'], 'Unchanged vouchers should not be rewritten during renumbering');
+
+$numberMap = $probe->numberMap($movementCandidates);
+assertSameValue(['changed' => 2], $numberMap, 'Changed vouchers should be reduced to a voucher-id-to-number map');
+$batchStatement = $probe->businessBatchStatement(
+    'fin_case_fund_payment',
+    $numberMap,
+    '2026-05',
+    '2026-05-31 12:00:00'
+);
+assertTrue(strpos($batchStatement['sql'], 'CASE voucher_id') !== false, 'Business source synchronization should use CASE for per-voucher target numbers');
+assertTrue(strpos($batchStatement['sql'], 'voucher_id IN') !== false, 'Business source synchronization should constrain the batch to changed vouchers');
+assertSameValue(2, $batchStatement['bind']['voucher_no_0'], 'Batch SQL should bind the new voucher number as an integer');
+assertSameValue('changed', $batchStatement['bind']['case_voucher_id_0'], 'Batch SQL should bind voucher ids instead of interpolating them');
+
+$conflictingLockedRows = $lockedRows;
+$conflictingLockedRows[0]['voucher_no'] = 2;
+$conflictingLockedItems = $probe->mappedItems($conflictingLockedRows, 1);
+assertTrue($probe->lockedConflictReason($conflictingLockedItems) !== '', 'A printed anchor in the wrong sorted position should block continuous renumbering');
 
 echo 'Voucher renumber test passed' . PHP_EOL;

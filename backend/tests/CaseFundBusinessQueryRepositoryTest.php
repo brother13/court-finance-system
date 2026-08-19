@@ -167,6 +167,8 @@ $payment = $repository->paymentList([
     'paymentMethod' => 'pos',
     'date_start' => '2026-07-01',
     'date_end' => '2026-07-31',
+    'amount_min' => '100.00',
+    'amount_max' => '200.50',
     'keyword' => 'CASE-001',
 ], 2, 25, ['执行、调解款']);
 businessQueryAssertSame(['items' => [['payment_id' => 'P-1']], 'total' => 2], $payment, 'Payment list result shape should remain stable');
@@ -176,6 +178,7 @@ businessQueryAssertSame('account-query', $paymentWhere['account_set_id'], 'Payme
 businessQueryAssertSame(2026, $paymentWhere['fiscal_year'], 'Payment list should scope current fiscal year');
 businessQueryAssertSame('POS', $paymentWhere['payment_method'], 'Payment method filter should be normalized against the dictionary');
 businessQueryAssertSame([['>=', '2026-07-01'], ['<=', '2026-07-31']], $paymentWhere['payment_date'], 'Payment list should preserve date range filters');
+businessQueryAssertSame([['>=', '100.00'], ['<=', '200.50']], $paymentWhere['payment_amount'], 'Payment list should apply the inclusive amount range');
 businessQueryAssertSame(['in', ['执行、调解款']], $paymentWhere['business_type'], 'Payment list should enforce the account-set business whitelist');
 businessQueryAssertSame('payment_date asc, source_row_no asc', $store->queries[0]['order'], 'Payment list ordering should remain stable');
 businessQueryAssertSame([2, 25], $store->queries[0]['page'], 'Payment list pagination should remain stable');
@@ -206,6 +209,8 @@ $refund = $repository->refundList([
     'startDate' => ' 2026-07-01 ',
     'endDate' => ' 2026-07-31 ',
     'out_status' => 'PAID',
+    'amount_min' => '300.00',
+    'amount_max' => '600.00',
     'caseNo' => 'CASE-R',
     'partyName' => '张三',
     'keyword' => 'OUT-001',
@@ -219,6 +224,7 @@ businessQueryAssertSame(3, count($store->queries), 'Refund list should use indep
 foreach ($store->queries as $query) {
     $where = $query['where'][0][1];
     businessQueryAssertSame([['>=', '2026-07-01'], ['<=', '2026-07-31']], $where['refund_date'], 'Refund list should normalize camel-case date filters');
+    businessQueryAssertSame([['>=', '300.00'], ['<=', '600.00']], $where['refund_amount'], 'Refund list amount range should apply to rows, count and total amount');
     businessQueryAssertSame(['in', ['执行、调解款发放']], $where['out_type'], 'Refund list should enforce the refund type whitelist');
     businessQueryAssertSame(['case_no', 'like', '%CASE-R%'], $query['where'][1], 'Refund case number filter should apply to every query object');
     businessQueryAssertSame(['party_name|actual_payee_name|payee_bank_account_name', 'like', '%张三%'], $query['where'][2], 'Refund party filter should apply to every query object');
@@ -245,7 +251,7 @@ $repository->refundList([
     'startDate' => ' 2026-07-01 ',
 ], 1, 50, ['执行、调解款发放']);
 businessQueryAssertSame(
-    [['>=', '2026-07-01']],
+    ['>=', '2026-07-01'],
     $store->queries[0]['where'][0][1]['refund_date'],
     'Refund list should preserve a start-only date filter'
 );
@@ -255,22 +261,48 @@ $repository->refundList([
     'endDate' => ' 2026-07-31 ',
 ], 1, 50, ['执行、调解款发放']);
 businessQueryAssertSame(
-    [['<=', '2026-07-31']],
+    ['<=', '2026-07-31'],
     $store->queries[0]['where'][0][1]['refund_date'],
     'Refund list should preserve an end-only date filter'
 );
 
 $store->queries = [];
 $unknown = $repository->unknownPaymentList([
-    'claim_status' => 'UNCLAIMED',
+    'claim_status' => '待认领',
     'date_start' => '2026-07-01',
     'date_end' => '2026-07-31',
+    'amount_min' => '50.00',
+    'amount_max' => '90.00',
     'keyword' => '付款人',
 ], 3, 10);
 businessQueryAssertSame(4, $unknown['total'], 'Unknown payment list should preserve total count');
 businessQueryAssertSame('77.00', $unknown['total_amount'], 'Unknown payment list should preserve total amount');
 businessQueryAssertSame(3, count($store->queries), 'Unknown payment list should not reuse a count query after aggregation');
 businessQueryAssertSame('transaction_date asc, source_row_no asc', $store->queries[0]['order'], 'Unknown payment ordering should remain stable');
+businessQueryAssertSame('待认领', $store->queries[0]['where'][0][1]['claim_status'], 'Unknown payment list should filter by the stored claim status value');
+foreach ($store->queries as $query) {
+    businessQueryAssertSame(
+        [['>=', '50.00'], ['<=', '90.00']],
+        $query['where'][0][1]['unknown_amount'],
+        'Unknown-payment amount range should apply to rows, count and total amount'
+    );
+}
+
+$store->queries = [];
+$repository->paymentList(['amount_min' => '18.88'], 1, 50, ['执行、调解款']);
+businessQueryAssertSame(
+    ['>=', '18.88'],
+    $store->queries[0]['where'][0][1]['payment_amount'],
+    'Amount range should support a minimum-only filter'
+);
+
+$store->queries = [];
+$repository->refundList(['amount_max' => '99.99'], 1, 50, ['执行、调解款发放']);
+businessQueryAssertSame(
+    ['<=', '99.99'],
+    $store->queries[0]['where'][0][1]['refund_amount'],
+    'Amount range should support a maximum-only filter'
+);
 
 $store->queries = [];
 $repository->unknownPaymentList([
@@ -288,6 +320,26 @@ businessQueryAssertSame(false, isset($unknownExactWhere['transaction_date']), 'E
 businessQueryAssertSame(1, count($store->queries[0]['where']), 'Exact unknown-payment drilldown should ignore keyword conditions');
 
 $store->queries = [];
+$repository->unknownPaymentList([
+    'return_match_ids' => ['U-RETURN-1', 'U-RETURN-2'],
+], 1, 50);
+businessQueryAssertSame(
+    ['in', ['U-RETURN-1', 'U-RETURN-2']],
+    $store->queries[0]['where'][0][1]['unknown_payment_id'],
+    'Unknown-payment return status filter should constrain all list queries to matched ids'
+);
+
+$store->queries = [];
+$repository->refundList([
+    'return_match_ids' => ['R-RETURN-1'],
+], 1, 50, ['执行、调解款发放']);
+businessQueryAssertSame(
+    ['in', ['R-RETURN-1']],
+    $store->queries[0]['where'][0][1]['refund_id'],
+    'Refund return status filter should constrain all list queries to matched ids'
+);
+
+$store->queries = [];
 $distribution = $repository->distributionList([
     'invoice_type' => '执行款',
     'date_start' => '2026-07-01',
@@ -297,5 +349,16 @@ $distribution = $repository->distributionList([
 businessQueryAssertSame(5, $distribution['total'], 'Distribution list should preserve total count');
 businessQueryAssertSame('88.00', $distribution['total_amount'], 'Distribution list should preserve total amount');
 businessQueryAssertSame('receive_date asc, distribution_no asc, source_row_no asc', $store->queries[0]['order'], 'Distribution ordering should remain stable');
+
+$store->queries = [];
+$repository->distributionList([
+    'date_start' => ' 2026-07-01 ',
+    'date_end' => null,
+], 1, 20);
+businessQueryAssertSame(
+    ['>=', '2026-07-01'],
+    $store->queries[0]['where'][0][1]['receive_date'],
+    'Distribution list should preserve a start-only date filter when the end date is cleared'
+);
 
 echo 'Case fund business query repository test passed' . PHP_EOL;

@@ -9,6 +9,8 @@ namespace app\finance\service\casefund\voucher;
  */
 class PaymentVoucherGenerationService
 {
+    const MAX_QUERY_ROWS = 5000;
+
     protected $policy;
     protected $resolver;
     protected $manager;
@@ -35,6 +37,7 @@ class PaymentVoucherGenerationService
             'current_year',
             'current_biz_type',
             'assert_rows_can_generate',
+            'assert_periods_open',
             'fiscal_year',
             'generate_next_voucher_no',
             'ensure_aux_archives',
@@ -65,16 +68,7 @@ class PaymentVoucherGenerationService
             return $this->errorResult('请选择要生成凭证的缴费记录');
         }
 
-        $rows = $this->db($this->paymentTable)
-            ->where([
-                'account_set_id' => $this->callHook('account_set_id'),
-                'fiscal_year' => $this->callHook('current_year'),
-                'del_flag' => 0,
-            ])
-            ->where('payment_id', 'in', $paymentIds)
-            ->field($this->paymentField)
-            ->order('payment_date asc, source_row_no asc')
-            ->select();
+        $rows = $this->rowsByIds($paymentIds, false);
 
         if (count($rows) !== count($paymentIds)) {
             return $this->errorResult('所选缴费记录不存在或已被删除，请刷新后重试');
@@ -103,6 +97,11 @@ class PaymentVoucherGenerationService
         if (!empty($data['date_end'])) {
             $where['payment_date'][] = ['<=', $data['date_end']];
         }
+        $this->applyAmountRange($where, 'payment_amount', $data);
+        $snapshotTime = trim((string)($data['scope_snapshot_time'] ?? ''));
+        if ($snapshotTime !== '' && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $snapshotTime)) {
+            $where['created_time'] = ['<=', $snapshotTime];
+        }
 
         $bizType = $this->callHook('current_biz_type');
         $allowedBusinessTypes = $this->policy->allowedPaymentBusinessTypes($bizType);
@@ -122,8 +121,27 @@ class PaymentVoucherGenerationService
         }
         $rows = $query->field($this->paymentField)
             ->order('payment_date asc, source_row_no asc')
+            ->limit(self::MAX_QUERY_ROWS + 1)
             ->select();
+        if (count($rows) > self::MAX_QUERY_ROWS) {
+            return $this->errorResult(
+                '单个后台制证任务最多处理' . self::MAX_QUERY_ROWS . '条记录，请缩小查询范围后重新提交'
+            );
+        }
         return ['error' => '', 'rows' => $rows];
+    }
+
+    protected function applyAmountRange(&$where, $field, $data)
+    {
+        $amountMin = trim((string)($data['amount_min'] ?? ($data['amountMin'] ?? '')));
+        $amountMax = trim((string)($data['amount_max'] ?? ($data['amountMax'] ?? '')));
+        if ($amountMin !== '' && $amountMax !== '') {
+            $where[$field] = [['>=', $amountMin], ['<=', $amountMax]];
+        } elseif ($amountMin !== '') {
+            $where[$field] = ['>=', $amountMin];
+        } elseif ($amountMax !== '') {
+            $where[$field] = ['<=', $amountMax];
+        }
     }
 
     public function prepareGeneration($rows, $generateScope = 'SELECTED')
@@ -166,6 +184,7 @@ class PaymentVoucherGenerationService
     public function generatePrepared($prepared)
     {
         $rows = $this->lockPreparedRows($prepared);
+        $this->callHook('assert_periods_open', [$rows, 'payment_date', '缴费']);
         $generationCheck = $this->callHook('assert_rows_can_generate', [$rows, '缴费记录']);
         if ($generationCheck !== null) {
             throw new \Exception($generationCheck);
@@ -258,25 +277,23 @@ class PaymentVoucherGenerationService
                 'total_cents' => $totalDebit,
             ], $detailsData);
 
-            foreach ($groupRows as $row) {
-                // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。
-                $affectedRows = $this->db($this->paymentTable)->where([
-                    'payment_id' => $row['payment_id'],
-                    'account_set_id' => $this->callHook('account_set_id'),
-                    'fiscal_year' => $this->callHook('current_year'),
-                    'del_flag' => 0,
-                ])->update([
-                    'voucher_status' => 'GENERATED',
-                    'voucher_id' => $voucherId,
-                    'voucher_no' => $voucherNo,
-                    'voucher_period' => $period,
-                    'voucher_generated_time' => $this->callHook('now'),
-                    'updated_by' => $this->callHook('current_user_id'),
-                    'updated_time' => $this->callHook('now'),
-                ]);
-                if ((int)$affectedRows !== 1) {
-                    throw new \Exception('缴费记录状态已变化，请刷新后重试');
-                }
+            $groupPaymentIds = $this->rowIds($groupRows, 'payment_id');
+            // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。
+            $affectedRows = $this->db($this->paymentTable)->where([
+                'account_set_id' => $this->callHook('account_set_id'),
+                'fiscal_year' => $this->callHook('current_year'),
+                'del_flag' => 0,
+            ])->where('payment_id', 'in', $groupPaymentIds)->update([
+                'voucher_status' => 'GENERATED',
+                'voucher_id' => $voucherId,
+                'voucher_no' => $voucherNo,
+                'voucher_period' => $period,
+                'voucher_generated_time' => $this->callHook('now'),
+                'updated_by' => $this->callHook('current_user_id'),
+                'updated_time' => $this->callHook('now'),
+            ]);
+            if ((int)$affectedRows !== count($groupPaymentIds)) {
+                throw new \Exception('缴费记录状态已变化，请刷新后重试');
             }
 
             $generatedCount++;
@@ -302,20 +319,39 @@ class PaymentVoucherGenerationService
             throw new \Exception('所选缴费记录不存在或已被删除，请刷新后重试');
         }
 
-        $rows = $this->db($this->paymentTable)
-            ->where([
-                'account_set_id' => $this->callHook('account_set_id'),
-                'fiscal_year' => $this->callHook('current_year'),
-                'del_flag' => 0,
-            ])
-            ->where('payment_id', 'in', $paymentIds)
-            ->field($this->paymentField)
-            ->order('payment_date asc, source_row_no asc')
-            ->lock(true)
-            ->select();
+        $rows = $this->rowsByIds($paymentIds, true);
         if (count($rows) !== count($paymentIds)) {
             throw new \Exception('所选缴费记录不存在或已被删除，请刷新后重试');
         }
+        return $rows;
+    }
+
+    protected function rowsByIds(array $paymentIds, $lock)
+    {
+        $rows = [];
+        foreach (array_chunk($paymentIds, 500) as $batch) {
+            $query = $this->db($this->paymentTable)
+                ->where([
+                    'account_set_id' => $this->callHook('account_set_id'),
+                    'fiscal_year' => $this->callHook('current_year'),
+                    'del_flag' => 0,
+                ])
+                ->where('payment_id', 'in', $batch)
+                ->field($this->paymentField);
+            if ($lock) {
+                $query->lock(true);
+            }
+            $rows = array_merge($rows, $query->select());
+        }
+        usort($rows, function ($left, $right) {
+            foreach (['payment_date', 'source_row_no', 'payment_id'] as $field) {
+                $comparison = ($left[$field] ?? '') <=> ($right[$field] ?? '');
+                if ($comparison !== 0) {
+                    return $comparison;
+                }
+            }
+            return 0;
+        });
         return $rows;
     }
 

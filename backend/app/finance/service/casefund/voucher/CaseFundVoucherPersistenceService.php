@@ -10,6 +10,8 @@ namespace app\finance\service\casefund\voucher;
  */
 class CaseFundVoucherPersistenceService
 {
+    const INSERT_BATCH_SIZE = 500;
+
     protected $hooks;
 
     public function __construct(array $hooks)
@@ -81,6 +83,8 @@ class CaseFundVoucherPersistenceService
             '凭证头写入失败'
         );
 
+        $detailRows = [];
+        $auxRows = [];
         foreach ($detailsData as $detail) {
             $detailRow = [
                 'detail_id' => $detail['detail_id'],
@@ -98,10 +102,7 @@ class CaseFundVoucherPersistenceService
                 'remark' => '',
             ];
             $detailRow = $this->callHook('prepare_create', [$detailRow]);
-            $this->assertInserted(
-                $this->db('fin_voucher_detail')->insert($detailRow),
-                '凭证明细写入失败：' . $detail['detail_id']
-            );
+            $detailRows[] = $detailRow;
 
             foreach (($detail['aux_values'] ?? []) as $aux) {
                 $auxTypeCode = trim((string)($aux['aux_type_code'] ?? ''));
@@ -123,11 +124,54 @@ class CaseFundVoucherPersistenceService
                     'remark' => '',
                 ];
                 $auxRow = $this->callHook('prepare_create', [$auxRow]);
-                $this->assertInserted(
-                    $this->db('fin_voucher_aux_value')->insert($auxRow),
-                    '凭证辅助核算值写入失败：' . $detail['detail_id'] . '/' . $auxTypeCode
-                );
+                $auxRows[] = $auxRow;
             }
+
+            if (count($detailRows) >= self::INSERT_BATCH_SIZE
+                || count($auxRows) >= self::INSERT_BATCH_SIZE
+            ) {
+                // 每批始终先写分录再写其辅助值；调用方外层事务保证后续任一批
+                // 失败时整张凭证回滚，同时避免在 PHP 内存中堆积全部大凭证行。
+                $this->flushVoucherRows($voucherId, $detailRows, $auxRows);
+            }
+        }
+        $this->flushVoucherRows($voucherId, $detailRows, $auxRows);
+    }
+
+    protected function flushVoucherRows($voucherId, array &$detailRows, array &$auxRows)
+    {
+        $this->insertRows(
+            'fin_voucher_detail',
+            $detailRows,
+            '凭证明细批量写入失败：' . $voucherId
+        );
+        $this->insertRows(
+            'fin_voucher_aux_value',
+            $auxRows,
+            '凭证辅助核算值批量写入失败：' . $voucherId
+        );
+        $detailRows = [];
+        $auxRows = [];
+    }
+
+    protected function insertRows($table, array $rows, $message)
+    {
+        if (empty($rows)) {
+            return;
+        }
+        $db = $this->db($table);
+        if (method_exists($db, 'insertAll')) {
+            foreach (array_chunk($rows, self::INSERT_BATCH_SIZE) as $batch) {
+                $affectedRows = $db->insertAll($batch);
+                if ((int)$affectedRows !== count($batch)) {
+                    throw new \RuntimeException($message);
+                }
+            }
+            return;
+        }
+        // 保留测试替身及极旧查询驱动的兼容路径；生产 ThinkPHP 查询使用 insertAll。
+        foreach ($rows as $row) {
+            $this->assertInserted($this->db($table)->insert($row), $message);
         }
     }
 

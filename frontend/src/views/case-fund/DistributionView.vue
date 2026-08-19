@@ -216,8 +216,8 @@ const load = async () => {
   loading.value = true
   try {
     const result = await caseFundApi.distributionList({
-      date_start: filters.date_start,
-      date_end: filters.date_end,
+      date_start: normalizeDateFilter(filters.date_start),
+      date_end: normalizeDateFilter(filters.date_end),
       voucher_status: filters.voucher_status,
       invoice_type: filters.invoice_type,
       keyword: filters.keyword,
@@ -309,6 +309,10 @@ function formatDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function normalizeDateFilter(value: string | null | undefined) {
+  return value ? String(value).trim() : ''
 }
 
 function initialDateRange(period: string) {

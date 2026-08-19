@@ -1890,6 +1890,16 @@ body {
   width: clamp(240px, 28vw, 340px);
 }
 
+.amount-range-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.amount-range-input {
+  width: 124px;
+}
+
 .date-filter-label,
 .date-separator {
   color: var(--text-secondary);
@@ -2983,6 +2993,70 @@ body {
   font-weight: 600;
 }
 
+.voucher-line-locator {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border: 1px solid #D8E1EC;
+  border-radius: var(--finance-radius);
+  background: #F8FAFD;
+}
+
+.voucher-line-locator-fields,
+.voucher-line-locator-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voucher-line-locator-fields {
+  min-width: 0;
+  flex: 1 1 560px;
+}
+
+.voucher-line-locator-actions {
+  justify-content: flex-end;
+}
+
+.voucher-line-locator-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-main);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.voucher-line-locator-input {
+  width: min(330px, 100%);
+}
+
+.voucher-line-locator-amount {
+  width: 230px;
+}
+
+.voucher-line-locator-amount.is-error .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--brand-danger) inset;
+}
+
+.voucher-line-locator-result,
+.voucher-line-locator-error {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.voucher-line-locator-result {
+  color: var(--text-secondary);
+}
+
+.voucher-line-locator-error {
+  color: var(--brand-danger);
+}
+
 .voucher-entry-wrap {
   overflow-x: auto;
   border: 1px solid #C7D0DC;
@@ -3016,6 +3090,12 @@ body {
 
 .voucher-entry-table tbody tr:hover {
   background: #F8FAFD;
+}
+
+.voucher-entry-table tbody tr.is-locator-active,
+.voucher-entry-table tbody tr.is-locator-active:hover {
+  background: #FFF7D6;
+  box-shadow: inset 4px 0 0 var(--brand-warning);
 }
 
 .voucher-entry-table tfoot td {
@@ -3139,6 +3219,14 @@ body {
   border-color: var(--brand-danger-border);
   background: var(--brand-danger-soft);
   color: #b91c1c;
+}
+
+.aux-archive-search-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* ============================================================

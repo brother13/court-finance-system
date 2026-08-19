@@ -186,7 +186,7 @@
         <el-form-item label="状态">
           <el-switch v-model="archiveEnabled" active-text="启用" inactive-text="停用" />
         </el-form-item>
-        <el-form-item :label="`${selectedTypeName}编码`"">
+        <el-form-item :label="`${selectedTypeName}编码`">
           <el-input v-model.trim="archiveForm.archive_code" placeholder="留空则自动生成序号（从1开始）" />
         </el-form-item>
         <el-form-item :label="`${selectedTypeName}名称`" required>

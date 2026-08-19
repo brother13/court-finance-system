@@ -123,6 +123,7 @@ class PaymentVoucherDbStub
     public $selectRows = [];
     public $lockValues = [];
     public $orders = [];
+    public $limits = [];
     public $whereCalls = [];
     public $inserts = [];
     public $updates = [];
@@ -136,6 +137,7 @@ class PaymentVoucherDbStub
 
     public function field($fields) { return $this; }
     public function order($order) { $this->orders[] = $order; return $this; }
+    public function limit($limit) { $this->limits[] = $limit; return $this; }
     public function lock($value) { $this->lockValues[] = $value; return $this; }
     public function select() { return $this->selectRows; }
     public function insert($row) { $this->inserts[] = $row; return 1; }
@@ -145,6 +147,11 @@ class PaymentVoucherDbStub
         $this->updates[] = $row;
         if (!empty($this->updateResults)) {
             return array_shift($this->updateResults);
+        }
+        foreach (array_reverse($this->whereCalls) as $whereCall) {
+            if (($whereCall[1] ?? null) === 'in' && is_array($whereCall[2] ?? null)) {
+                return count($whereCall[2]);
+            }
         }
         return 1;
     }
@@ -157,6 +164,7 @@ class PaymentVoucherRuntimeState
     public $idSequence = 0;
     public $lockEvents = [];
     public $auxiliaryDetailCounts = [];
+    public $periodChecks = [];
 }
 
 class PaymentFailingPersistenceStub
@@ -215,6 +223,9 @@ function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $upda
             }
             return null;
         },
+        'assert_periods_open' => function ($rows, $dateField, $label) use ($state) {
+            $state->periodChecks[] = [$dateField, $label, count($rows)];
+        },
         'fiscal_year' => function ($period) { return substr($period, 0, 4); },
         'generate_next_voucher_no' => function ($period) use ($state) {
             $state->lockEvents[] = 'voucher_no:' . $period;
@@ -260,6 +271,7 @@ $hooks = [
     'current_year' => function () { return '2026'; },
     'current_biz_type' => function () { return 'CASE_FUND'; },
     'assert_rows_can_generate' => function ($rows, $label) { return null; },
+    'assert_periods_open' => function ($rows, $dateField, $label) {},
     'fiscal_year' => function ($period) { return substr($period, 0, 4); },
     'generate_next_voucher_no' => function ($period) { return 1; },
     'ensure_aux_archives' => function ($details) {},
@@ -347,27 +359,63 @@ paymentServiceAssertSame(
 paymentServiceAssertSame([4], $runtimeState->auxiliaryDetailCounts, 'All payment voucher groups should prepare auxiliary archives in one call');
 paymentServiceAssertSame([true], $runtimeDbs['fin_case_fund_payment']->lockValues, 'Payment source rows should be locked inside generation');
 paymentServiceAssertSame(
-    ['payment_date asc, source_row_no asc'],
-    $runtimeDbs['fin_case_fund_payment']->orders,
-    'Payment source rows should preserve stable import order'
+    [['payment_date', '缴费', 2]],
+    $runtimeState->periodChecks,
+    'Payment periods must be rechecked after locking source rows'
 );
-paymentServiceAssertSame('GENERATED', $runtimeState->guardSnapshots[1][1]['voucher_status'], 'Locked payment status must be rechecked');
-paymentServiceAssertSame($lockedRows, $runtimeRule->groupRowsHistory[1], 'Payment groups must be rebuilt from locked rows');
+paymentServiceAssertSame('GENERATED', $runtimeState->guardSnapshots[1][0]['voucher_status'], 'Locked payment status must be rechecked');
+$sortedLockedRows = [$lockedRows[1], $lockedRows[0]];
+paymentServiceAssertSame($sortedLockedRows, $runtimeRule->groupRowsHistory[1], 'Payment groups must be rebuilt in stable date/source order from locked rows');
 paymentServiceAssertSame(2, $runtimeResult['generated_count'], 'Payment method split should create two vouchers from locked rows');
 paymentServiceAssertSame(2, $runtimeResult['payment_count'], 'Payment count should come from locked rows');
 paymentServiceAssertSame(2, count($runtimeDbs['fin_voucher']->inserts), 'Each payment group should persist one voucher');
 paymentServiceAssertSame('收案款', $runtimeDbs['fin_voucher']->inserts[0]['summary'], 'Payment persistence should keep detail summary');
-paymentServiceAssertSame('10.00', $runtimeDbs['fin_voucher']->inserts[0]['debit_amount'], 'Payment persistence should keep group total');
+paymentServiceAssertSame('20.00', $runtimeDbs['fin_voucher']->inserts[0]['debit_amount'], 'Payment persistence should follow stable date/source order and keep group total');
 paymentServiceAssertSame(2, count($runtimeDbs['fin_case_fund_payment']->updates), 'Every locked payment row should be updated once');
 $paymentUpdateScopeFound = false;
+$paymentIdBatchFound = false;
 foreach ($runtimeDbs['fin_case_fund_payment']->whereCalls as $whereCall) {
-    if (isset($whereCall[0]) && is_array($whereCall[0]) && ($whereCall[0]['payment_id'] ?? '') === 'payment-1') {
+    if (isset($whereCall[0]) && is_array($whereCall[0]) && isset($whereCall[0]['account_set_id'])) {
         $paymentUpdateScopeFound = $whereCall[0]['account_set_id'] === 'set-1'
             && $whereCall[0]['fiscal_year'] === '2026'
             && $whereCall[0]['del_flag'] === 0;
     }
+    if (($whereCall[0] ?? '') === 'payment_id' && ($whereCall[1] ?? '') === 'in') {
+        $paymentIdBatchFound = $paymentIdBatchFound || in_array('payment-1', $whereCall[2] ?? [], true);
+    }
 }
 paymentServiceAssertSame(true, $paymentUpdateScopeFound, 'Payment source update must retain account, year and soft-delete scope');
+paymentServiceAssertSame(true, $paymentIdBatchFound, 'Payment source updates should batch ids by voucher group');
+
+[$queryService, $queryDbs] = paymentRuntimeFixture([$initialRows[0]]);
+$queryResult = $queryService->rowsByQuery([
+    'period' => '2026-08',
+    'amount_min' => '10.00',
+    'amount_max' => '20.00',
+    'scope_snapshot_time' => '2026-08-03 12:34:56',
+]);
+paymentServiceAssertSame('', $queryResult['error'], 'Payment query selection should succeed below the safety limit');
+paymentServiceAssertSame([5001], $queryDbs['fin_case_fund_payment']->limits, 'Payment query selection must cap memory with one overflow row');
+$paymentSnapshotFound = false;
+$paymentAmountRangeFound = false;
+foreach ($queryDbs['fin_case_fund_payment']->whereCalls as $whereCall) {
+    if (isset($whereCall[0]) && is_array($whereCall[0])) {
+        $paymentSnapshotFound = ($whereCall[0]['created_time'] ?? null) === ['<=', '2026-08-03 12:34:56'];
+        $paymentAmountRangeFound = ($whereCall[0]['payment_amount'] ?? null) === [
+            ['>=', '10.00'],
+            ['<=', '20.00'],
+        ];
+    }
+}
+paymentServiceAssertSame(true, $paymentSnapshotFound, 'Payment query scope must use the submission snapshot time');
+paymentServiceAssertSame(true, $paymentAmountRangeFound, 'Payment query generation must preserve the visible amount range');
+$queryDbs['fin_case_fund_payment']->selectRows = array_fill(0, 5001, ['payment_id' => 'overflow']);
+$tooLargeQuery = $queryService->rowsByQuery(['period' => '2026-08']);
+paymentServiceAssertSame(
+    '单个后台制证任务最多处理5000条记录，请缩小查询范围后重新提交',
+    $tooLargeQuery['error'],
+    'Payment query selection should fail explicitly instead of loading an unbounded scope'
+);
 
 [$missingService, $missingDbs, $missingRule, $missingState] = paymentRuntimeFixture([$initialRows[0]]);
 $missingPrepared = $missingService->prepareGeneration($initialRows, 'SELECTED');

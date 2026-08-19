@@ -27,6 +27,8 @@ $subjectBalanceView = file_get_contents(__DIR__ . '/../../frontend/src/views/boo
 $checks = [
     [$book, 'loadSubjectBalanceVoucherRows', 'Subject balance should load voucher rows through a shared helper'],
     [$book, 'reportYearStartPeriod', 'Subject balance should calculate the fiscal year start period for cumulative amounts'],
+    [$book, '$yearStartPeriod = $this->reportYearStartPeriod($endPeriod);', 'Subject balance should derive the year-to-date start from the query end period'],
+    [$book, 'loadSubjectBalanceVoucherRows($yearStartPeriod, $endPeriod)', 'Subject balance should load year-to-date voucher rows independently from selected-range rows'],
     [$book, 'openingPeriodFor', 'Subject balance should locate the enabled/opening period instead of using only current period'],
     [$book, 'addSubjectBalanceAmount', 'Subject balance should roll amounts up to ancestor subjects'],
     [$book, "'opening_debit_amount'", 'Subject balance should expose opening debit amount'],
@@ -130,8 +132,13 @@ if ($row['ending_debit_amount'] !== '800.00' || $row['ending_credit_amount'] !==
     exit(1);
 }
 
-if ($row['year_debit_amount'] !== $row['debit_amount'] || $row['year_credit_amount'] !== $row['credit_amount']) {
-    fwrite(STDERR, 'Subject balance year-to-date amounts should equal selected-range current amounts' . PHP_EOL);
+if ($row['debit_amount'] !== '0.00' || $row['credit_amount'] !== '200.00') {
+    fwrite(STDERR, 'Subject balance should preserve selected-range current amounts' . PHP_EOL);
+    exit(1);
+}
+
+if ($row['year_debit_amount'] !== '0.00' || $row['year_credit_amount'] !== '500.00') {
+    fwrite(STDERR, 'Subject balance should preserve year-to-date amounts independently from selected-range current amounts' . PHP_EOL);
     exit(1);
 }
 

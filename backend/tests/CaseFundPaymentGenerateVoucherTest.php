@@ -142,8 +142,12 @@ class CaseFundGenerationGuardProbe extends CaseFund
 }
 
 $summaryProbe = new CaseFundGenerationGuardProbe(false);
-if ($summaryProbe->paymentSummary(['case_no' => '执恢123号', 'party_name' => '张三']) !== '收 执恢123号 张三') {
+if ($summaryProbe->paymentSummary(['case_no' => '执恢123号', 'party_name' => '张三', 'payment_method' => 'TRANSFER']) !== '收 执恢123号 张三') {
     fwrite(STDERR, 'Payment voucher summary should be 收 + case_no + party_name' . PHP_EOL);
+    exit(1);
+}
+if ($summaryProbe->paymentSummary(['case_no' => '执恢456号', 'party_name' => '李四', 'payment_method' => 'UNKNOWN']) !== '不明款认领 执恢456号 李四') {
+    fwrite(STDERR, 'Unknown-claim payment voucher summary should be 不明款认领 + case_no + party_name' . PHP_EOL);
     exit(1);
 }
 

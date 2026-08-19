@@ -186,13 +186,13 @@ if ($receiptKey !== 'receipt:0000665970') {
     fwrite(STDERR, 'Payment import duplicate key should prefer receipt no' . PHP_EOL);
     exit(1);
 }
-$accountAmountKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
+$noBusinessDuplicateKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
     'receipt_no' => '0000665970',
     'bank_account_no' => 'A001',
     'payment_amount' => '100.00',
 ], false);
-if ($accountAmountKeyWithoutReceiptCheck !== 'account_amount:A001|100.00') {
-    fwrite(STDERR, 'Payment import duplicate key should ignore receipt no when the credit subject has no receipt auxiliary config' . PHP_EOL);
+if ($noBusinessDuplicateKeyWithoutReceiptCheck !== '') {
+    fwrite(STDERR, 'Payment import should not use receipt no, bank account, or amount as a duplicate key when the credit subject has no receipt auxiliary config' . PHP_EOL);
     exit(1);
 }
 $fingerprintKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
@@ -203,6 +203,16 @@ $fingerprintKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
 ], false);
 if ($fingerprintKeyWithoutReceiptCheck !== 'fingerprint:fingerprint-one') {
     fwrite(STDERR, 'Payment import should use the source fingerprint instead of receipt no when receipt duplicate checking is disabled' . PHP_EOL);
+    exit(1);
+}
+$blankReceiptFingerprintKeyWithoutReceiptCheck = $duplicateKeyMethod->invoke($caseFund, [
+    'receipt_no' => '',
+    'bank_account_no' => 'A001',
+    'payment_amount' => '100.00',
+    'source_fingerprint' => 'fingerprint-two',
+], false);
+if ($blankReceiptFingerprintKeyWithoutReceiptCheck !== 'fingerprint:fingerprint-two') {
+    fwrite(STDERR, 'Payment import should still use the source fingerprint when receipt checking is disabled and receipt no is empty' . PHP_EOL);
     exit(1);
 }
 $accountAmountKey = $duplicateKeyMethod->invoke($caseFund, [

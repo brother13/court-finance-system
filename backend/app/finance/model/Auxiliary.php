@@ -165,16 +165,108 @@ class Auxiliary extends Common
         if (!empty($data['aux_type_code'])) {
             $where['aux_type_code'] = $data['aux_type_code'];
         }
-        $key = $data['keyword'] ?? '';
+        $key = trim((string)($data['keyword'] ?? ''));
+        $page = max(1, (int)($data['page'] ?? 1));
+        $pagesize = max(1, (int)($data['pagesize'] ?? 50));
+        $db = $this->getdb(self::TABLE_ARCHIVE);
+        $shortcut = $this->parseCaseNoShortcutKeyword($key, $data['aux_type_code'] ?? '');
+        if ($shortcut !== null) {
+            $candidateWhere = $where;
+            $candidateWhere['archive_code|archive_name'] = ['like', '%' . $shortcut['year'] . '%'];
+            $candidates = $db->where($candidateWhere)
+                ->order('aux_type_code asc, archive_code asc')
+                ->select();
+            $matchedRows = array_values(array_filter($candidates, function ($row) use ($shortcut) {
+                return $this->caseNoShortcutMatches($row, $shortcut['year'], $shortcut['sequence']);
+            }));
+            $total = count($matchedRows);
+            $rows = array_slice($matchedRows, ($page - 1) * $pagesize, $pagesize);
+            return $this->ok(['items' => $rows, 'total' => $total], 'OK', $total);
+        }
+        $fullCaseNoKeyword = $this->parseFullCaseNoKeyword($key, $data['aux_type_code'] ?? '');
+        if ($fullCaseNoKeyword !== null) {
+            $candidateWhere = $where;
+            $candidateWhere['archive_code|archive_name'] = ['like', '%' . $fullCaseNoKeyword['year'] . '%'];
+            $candidates = $db->where($candidateWhere)
+                ->order('aux_type_code asc, archive_code asc')
+                ->select();
+            $matchedRows = array_values(array_filter($candidates, function ($row) use ($fullCaseNoKeyword) {
+                return $this->normalizedCaseNoMatches($row, $fullCaseNoKeyword['normalized']);
+            }));
+            $total = count($matchedRows);
+            $rows = array_slice($matchedRows, ($page - 1) * $pagesize, $pagesize);
+            return $this->ok(['items' => $rows, 'total' => $total], 'OK', $total);
+        }
         if ($key !== '') {
             $where['archive_code|archive_name'] = ['like', "%{$key}%"];
         }
-        $page = $data['page'] ?? 1;
-        $pagesize = $data['pagesize'] ?? 50;
-        $db = $this->getdb(self::TABLE_ARCHIVE);
         $total = $db->where($where)->count();
         $rows = $db->where($where)->order('aux_type_code asc, archive_code asc')->page($page, $pagesize)->select();
         return $this->ok(['items' => $rows, 'total' => $total], 'OK', $total);
+    }
+
+    protected function parseCaseNoShortcutKeyword($keyword, $auxTypeCode)
+    {
+        if ($auxTypeCode !== 'case_no' || $keyword === '') {
+            return null;
+        }
+        if (!preg_match('/^(\d{4})\D*(\d+)\s*号?\s*$/u', $keyword, $matches)) {
+            return null;
+        }
+        return [
+            'year' => $matches[1],
+            'sequence' => ltrim($matches[2], '0') === '' ? '0' : ltrim($matches[2], '0'),
+        ];
+    }
+
+    protected function caseNoShortcutMatches($row, $year, $sequence)
+    {
+        $yearPattern = '/(?<!\d)' . preg_quote($year, '/') . '(?!\d)/u';
+        $sequencePattern = '/(?<!\d)' . preg_quote($sequence, '/') . '(?:\s*号|$)/u';
+        foreach (['archive_code', 'archive_name'] as $field) {
+            $text = (string)($row[$field] ?? '');
+            if ($text !== ''
+                && preg_match($yearPattern, $text)
+                && preg_match($sequencePattern, $text)
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function parseFullCaseNoKeyword($keyword, $auxTypeCode)
+    {
+        if ($auxTypeCode !== 'case_no' || $keyword === '') {
+            return null;
+        }
+        if (!preg_match('/^\s*[（(]?(\d{4})[）)]?(.+)$/u', $keyword, $matches)) {
+            return null;
+        }
+        $normalized = $this->normalizeCaseNoSearchText($keyword);
+        if ($normalized === '' || $normalized === $matches[1]) {
+            return null;
+        }
+        return [
+            'year' => $matches[1],
+            'normalized' => $normalized,
+        ];
+    }
+
+    protected function normalizedCaseNoMatches($row, $normalizedKeyword)
+    {
+        foreach (['archive_code', 'archive_name'] as $field) {
+            $normalizedText = $this->normalizeCaseNoSearchText((string)($row[$field] ?? ''));
+            if ($normalizedText !== '' && strpos($normalizedText, $normalizedKeyword) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function normalizeCaseNoSearchText($text)
+    {
+        return preg_replace('/[\s　()（）]/u', '', trim((string)$text));
     }
 
     public function archiveSave($id, $data)

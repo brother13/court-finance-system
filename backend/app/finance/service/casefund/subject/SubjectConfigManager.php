@@ -9,6 +9,8 @@ class SubjectConfigManager
 {
     protected $hooks;
     protected $subjectConfigTable;
+    protected $voucherSubjectCache = [];
+    protected $voucherSubjectHasChildCache = [];
 
     public function __construct(array $hooks, $subjectConfigTable)
     {
@@ -176,18 +178,28 @@ class SubjectConfigManager
         if ($subjectCode === '') {
             return $label . '不能为空';
         }
-        $subject = $this->db('fin_subject')->where([
-            'account_set_id' => $this->accountSetId(),
-            'subject_code' => $subjectCode,
-            'del_flag' => 0,
-        ])->find();
+        if (!array_key_exists($subjectCode, $this->voucherSubjectCache)) {
+            $this->voucherSubjectCache[$subjectCode] = $this->db('fin_subject')->where([
+                'account_set_id' => $this->accountSetId(),
+                'subject_code' => $subjectCode,
+                'del_flag' => 0,
+            ])->find() ?: null;
+        }
+        $subject = $this->voucherSubjectCache[$subjectCode];
         if (!$subject) {
             return $label . '不存在：' . $subjectCode;
         }
         if ((int)$subject['status'] !== 1) {
             return $label . '未启用：' . $subjectCode;
         }
-        if ((int)$subject['leaf_flag'] !== 1) {
+        if (!array_key_exists($subjectCode, $this->voucherSubjectHasChildCache)) {
+            $this->voucherSubjectHasChildCache[$subjectCode] = $this->db('fin_subject')->where([
+                'account_set_id' => $this->accountSetId(),
+                'parent_code' => $subjectCode,
+                'del_flag' => 0,
+            ])->count() > 0;
+        }
+        if ((int)$subject['leaf_flag'] !== 1 || $this->voucherSubjectHasChildCache[$subjectCode]) {
             return $label . '必须为末级科目：' . $subjectCode;
         }
         if (isset($subject['voucher_entry_flag']) && (int)$subject['voucher_entry_flag'] !== 1) {
@@ -228,12 +240,22 @@ class SubjectConfigManager
         return $this->accountSetFlag('generate_payment_voucher_by_method_flag', 0);
     }
 
-    public function saveSubjectConfigAccountSetFlag($flag, $refundOutOrderFlag = null, $paymentMethodFlag = null)
+    public function skipConfirmedReturnVoucherFlag()
+    {
+        return $this->accountSetFlag('skip_confirmed_return_voucher_flag', 0);
+    }
+
+    public function saveSubjectConfigAccountSetFlag(
+        $flag,
+        $refundOutOrderFlag = null,
+        $paymentMethodFlag = null,
+        $skipConfirmedReturnVoucherFlag = null
+    )
     {
         $before = $this->db('fin_account_set')->where([
             'account_set_id' => $this->accountSetId(),
             'del_flag' => 0,
-        ])->field('account_set_id,generate_voucher_by_day_flag,generate_payment_voucher_by_method_flag,generate_refund_voucher_by_out_order_no_flag')->find();
+        ])->field('account_set_id,generate_voucher_by_day_flag,generate_payment_voucher_by_method_flag,generate_refund_voucher_by_out_order_no_flag,skip_confirmed_return_voucher_flag')->find();
         if (!$before) {
             throw new \Exception('账套不存在');
         }
@@ -243,6 +265,9 @@ class SubjectConfigManager
         }
         if ($paymentMethodFlag !== null) {
             $update['generate_payment_voucher_by_method_flag'] = $this->callHook('normalize_flag', [$paymentMethodFlag]);
+        }
+        if ($skipConfirmedReturnVoucherFlag !== null) {
+            $update['skip_confirmed_return_voucher_flag'] = $this->callHook('normalize_flag', [$skipConfirmedReturnVoucherFlag]);
         }
         $update = $this->callHook('prepare_update', [$update]);
         $this->db('fin_account_set')->where([

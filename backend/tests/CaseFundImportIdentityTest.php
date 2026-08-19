@@ -197,6 +197,20 @@ importIdentityAssertSame(
 );
 importIdentityAssertSame([], $canonicalAmountCalls, 'Fingerprint keys should not invoke amount canonicalization');
 
+$blankReceiptFingerprintRow = [
+    'receipt_no' => '',
+    'source_fingerprint' => ' fp-blank-receipt ',
+    'bank_account_no' => ' ACCOUNT-SHARED ',
+    'payment_amount' => '7500.00',
+];
+$canonicalAmountCalls = [];
+importIdentityAssertSame(
+    'fingerprint:fp-blank-receipt',
+    $identity->paymentImportDuplicateKey($blankReceiptFingerprintRow, false),
+    'Disabled receipt checks should use the source fingerprint even when receipt number is empty'
+);
+importIdentityAssertSame([], $canonicalAmountCalls, 'Disabled receipt checks should never canonicalize amounts');
+
 $accountAmountRow = [
     'receipt_no' => '',
     'source_fingerprint' => ' fp-two ',
@@ -234,9 +248,9 @@ $receiptWithoutFingerprint = [
     'payment_amount' => '1,234.50',
 ];
 importIdentityAssertSame(
-    'account_amount:ACCOUNT-3|1234.50',
+    '',
     $identity->paymentImportDuplicateKey($receiptWithoutFingerprint, false),
-    'Disabled receipt checks should fall through to account and amount when fingerprint is absent'
+    'Disabled receipt checks should not fall through to receipt, account, or amount when fingerprint is absent'
 );
 
 $fingerprintOnlyRow = [
@@ -264,6 +278,7 @@ importIdentityAssertSame(
 $duplicateKeyCases = [
     [$receiptPreferredRow, true],
     [$fingerprintPreferredRow, false],
+    [$blankReceiptFingerprintRow, false],
     [$accountAmountRow, true],
     [$receiptWithoutFingerprint, false],
     [$fingerprintOnlyRow, true],

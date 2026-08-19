@@ -9,6 +9,9 @@ namespace app\finance\service\casefund\voucher;
  */
 class RefundVoucherGenerationService
 {
+    const MAX_QUERY_ROWS = 5000;
+    const RETURN_MATCH_TABLE = 'fin_case_fund_unknown_refund_match';
+
     protected $policy;
     protected $resolver;
     protected $manager;
@@ -36,6 +39,7 @@ class RefundVoucherGenerationService
             'current_biz_type',
             'normalize_date_filter',
             'assert_rows_can_generate',
+            'assert_periods_open',
             'fiscal_year',
             'generate_next_voucher_no',
             'ensure_aux_archives',
@@ -59,25 +63,27 @@ class RefundVoucherGenerationService
         $this->refundField = $refundField;
     }
 
-    public function selectedRows($refundIds)
+    public function selectedRows($refundIds, $excludeConfirmedReturns = true)
     {
         $refundIds = $this->normalizeIds($refundIds);
         if (empty($refundIds)) {
             return $this->errorResult('请选择要生成凭证的退付记录');
         }
 
-        $rows = $this->db($this->refundTable)
-            ->where([
-                'account_set_id' => $this->callHook('account_set_id'),
-                'fiscal_year' => $this->callHook('current_year'),
-                'del_flag' => 0,
-            ])
-            ->where('refund_id', 'in', $refundIds)
-            ->field($this->refundField)
-            ->order('refund_date asc, source_row_no asc')
-            ->select();
+        $rows = $this->rowsByIds($refundIds, false);
         if (count($rows) !== count($refundIds)) {
             return $this->errorResult('所选退付记录不存在或已被删除，请刷新后重试');
+        }
+        if ($excludeConfirmedReturns && $this->skipConfirmedReturns()) {
+            $confirmedIds = $this->confirmedReturnRefundIds($refundIds, false);
+            if (!empty($confirmedIds)) {
+                $rows = array_values(array_filter($rows, function ($row) use ($confirmedIds) {
+                    return !isset($confirmedIds[$row['refund_id'] ?? '']);
+                }));
+            }
+            if (empty($rows)) {
+                return $this->errorResult('所选出账记录均为已确认退汇，当前科目配置不生成凭证');
+            }
         }
         return ['error' => '', 'rows' => $rows];
     }
@@ -101,6 +107,11 @@ class RefundVoucherGenerationService
         }
         if ($dateEnd !== '') {
             $where['refund_date'][] = ['<=', $dateEnd];
+        }
+        $this->applyAmountRange($where, 'refund_amount', $data);
+        $snapshotTime = trim((string)($data['scope_snapshot_time'] ?? ''));
+        if ($snapshotTime !== '' && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $snapshotTime)) {
+            $where['created_time'] = ['<=', $snapshotTime];
         }
         if (!empty($data['out_status'])) {
             $where['out_status'] = $data['out_status'];
@@ -134,14 +145,43 @@ class RefundVoucherGenerationService
                 '%' . $keyword . '%'
             );
         }
+        if ($this->skipConfirmedReturns()) {
+            $confirmedIds = array_keys($this->confirmedReturnRefundIds([], false));
+            if (!empty($confirmedIds)) {
+                $query->where('refund_id', 'not in', $confirmedIds);
+            }
+        }
         $rows = $query->field($this->refundField)
             ->order('refund_date asc, source_row_no asc')
+            ->limit(self::MAX_QUERY_ROWS + 1)
             ->select();
+        if (count($rows) > self::MAX_QUERY_ROWS) {
+            return $this->errorResult(
+                '单个后台制证任务最多处理' . self::MAX_QUERY_ROWS . '条记录，请缩小查询范围后重新提交'
+            );
+        }
         return ['error' => '', 'rows' => $rows];
+    }
+
+    protected function applyAmountRange(&$where, $field, $data)
+    {
+        $amountMin = trim((string)($data['amount_min'] ?? ($data['amountMin'] ?? '')));
+        $amountMax = trim((string)($data['amount_max'] ?? ($data['amountMax'] ?? '')));
+        if ($amountMin !== '' && $amountMax !== '') {
+            $where[$field] = [['>=', $amountMin], ['<=', $amountMax]];
+        } elseif ($amountMin !== '') {
+            $where[$field] = ['>=', $amountMin];
+        } elseif ($amountMax !== '') {
+            $where[$field] = ['<=', $amountMax];
+        }
     }
 
     public function prepareGeneration($rows, $generateScope = 'SELECTED')
     {
+        $confirmedReturnError = $this->confirmedReturnVoucherError($rows, false);
+        if ($confirmedReturnError !== null) {
+            return $this->errorResult($confirmedReturnError);
+        }
         $generationCheck = $this->callHook('assert_rows_can_generate', [$rows, '退付记录']);
         if ($generationCheck !== null) {
             return $this->errorResult($generationCheck);
@@ -178,7 +218,12 @@ class RefundVoucherGenerationService
      */
     public function generatePrepared($prepared)
     {
+        $confirmedReturnError = $this->confirmedReturnVoucherError($prepared['rows'] ?? [], true);
+        if ($confirmedReturnError !== null) {
+            throw new \Exception($confirmedReturnError);
+        }
         $rows = $this->lockPreparedRows($prepared);
+        $this->callHook('assert_periods_open', [$rows, 'refund_date', '退付']);
         $generationCheck = $this->callHook('assert_rows_can_generate', [$rows, '退付记录']);
         if ($generationCheck !== null) {
             throw new \Exception($generationCheck);
@@ -285,25 +330,23 @@ class RefundVoucherGenerationService
                 'total_cents' => $totalDebit,
             ], $detailsData);
 
-            foreach ($groupRows as $row) {
-                // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。
-                $affectedRows = $this->db($this->refundTable)->where([
-                    'refund_id' => $row['refund_id'],
-                    'account_set_id' => $this->callHook('account_set_id'),
-                    'fiscal_year' => $this->callHook('current_year'),
-                    'del_flag' => 0,
-                ])->update([
-                    'voucher_status' => 'GENERATED',
-                    'voucher_id' => $voucherId,
-                    'voucher_no' => $voucherNo,
-                    'voucher_period' => $period,
-                    'voucher_generated_time' => $this->callHook('now'),
-                    'updated_by' => $this->callHook('current_user_id'),
-                    'updated_time' => $this->callHook('now'),
-                ]);
-                if ((int)$affectedRows !== 1) {
-                    throw new \Exception('退付记录状态已变化，请刷新后重试');
-                }
+            $groupRefundIds = $this->rowIds($groupRows, 'refund_id');
+            // 不限定 UNGENERATED：原凭证已删除或缺失时，GENERATED 源记录允许在锁后复核通过后重制。
+            $affectedRows = $this->db($this->refundTable)->where([
+                'account_set_id' => $this->callHook('account_set_id'),
+                'fiscal_year' => $this->callHook('current_year'),
+                'del_flag' => 0,
+            ])->where('refund_id', 'in', $groupRefundIds)->update([
+                'voucher_status' => 'GENERATED',
+                'voucher_id' => $voucherId,
+                'voucher_no' => $voucherNo,
+                'voucher_period' => $period,
+                'voucher_generated_time' => $this->callHook('now'),
+                'updated_by' => $this->callHook('current_user_id'),
+                'updated_time' => $this->callHook('now'),
+            ]);
+            if ((int)$affectedRows !== count($groupRefundIds)) {
+                throw new \Exception('退付记录状态已变化，请刷新后重试');
             }
 
             $generatedCount++;
@@ -329,20 +372,39 @@ class RefundVoucherGenerationService
             throw new \Exception('所选退付记录不存在或已被删除，请刷新后重试');
         }
 
-        $rows = $this->db($this->refundTable)
-            ->where([
-                'account_set_id' => $this->callHook('account_set_id'),
-                'fiscal_year' => $this->callHook('current_year'),
-                'del_flag' => 0,
-            ])
-            ->where('refund_id', 'in', $refundIds)
-            ->field($this->refundField)
-            ->order('refund_date asc, source_row_no asc')
-            ->lock(true)
-            ->select();
+        $rows = $this->rowsByIds($refundIds, true);
         if (count($rows) !== count($refundIds)) {
             throw new \Exception('所选退付记录不存在或已被删除，请刷新后重试');
         }
+        return $rows;
+    }
+
+    protected function rowsByIds(array $refundIds, $lock)
+    {
+        $rows = [];
+        foreach (array_chunk($refundIds, 500) as $batch) {
+            $query = $this->db($this->refundTable)
+                ->where([
+                    'account_set_id' => $this->callHook('account_set_id'),
+                    'fiscal_year' => $this->callHook('current_year'),
+                    'del_flag' => 0,
+                ])
+                ->where('refund_id', 'in', $batch)
+                ->field($this->refundField);
+            if ($lock) {
+                $query->lock(true);
+            }
+            $rows = array_merge($rows, $query->select());
+        }
+        usort($rows, function ($left, $right) {
+            foreach (['refund_date', 'source_row_no', 'refund_id'] as $field) {
+                $comparison = ($left[$field] ?? '') <=> ($right[$field] ?? '');
+                if ($comparison !== 0) {
+                    return $comparison;
+                }
+            }
+            return 0;
+        });
         return $rows;
     }
 
@@ -351,6 +413,9 @@ class RefundVoucherGenerationService
         $bizType = $this->callHook('current_biz_type');
         $subjectConfigMap = $this->resolver->configsByBusinessItems($bizType, 'REFUND');
         foreach ($rows as $row) {
+            if (trim((string)($row['payee_bank_account_name'] ?? '')) === '') {
+                return ['error' => '案号【' . ($row['case_no'] ?? '') . '】收款人银行户名不能为空，不能生成凭证'];
+            }
             $outTypeConfigKey = $this->policy->voucherSubjectConfigKey(
                 $bizType,
                 'REFUND',
@@ -391,6 +456,60 @@ class RefundVoucherGenerationService
             }
         }
         return $this->normalizeIds($ids);
+    }
+
+    protected function skipConfirmedReturns()
+    {
+        return (int)$this->manager->skipConfirmedReturnVoucherFlag() === 1;
+    }
+
+    protected function confirmedReturnVoucherError($rows, $lock)
+    {
+        if (!$this->skipConfirmedReturns()) {
+            return null;
+        }
+        $refundIds = $this->rowIds($rows, 'refund_id');
+        if (empty($refundIds)) {
+            return null;
+        }
+        $confirmedIds = $this->confirmedReturnRefundIds($refundIds, $lock);
+        if (empty($confirmedIds)) {
+            return null;
+        }
+        foreach ($rows as $row) {
+            $refundId = trim((string)($row['refund_id'] ?? ''));
+            if ($refundId !== '' && isset($confirmedIds[$refundId])) {
+                $caseNo = trim((string)($row['case_no'] ?? ''));
+                return '案号【' . ($caseNo !== '' ? $caseNo : $refundId)
+                    . '】的出账记录已确认退汇，当前科目配置不生成凭证';
+            }
+        }
+        return '存在已确认退汇的出账记录，当前科目配置不生成凭证';
+    }
+
+    protected function confirmedReturnRefundIds(array $refundIds = [], $lock = false)
+    {
+        $query = $this->db(self::RETURN_MATCH_TABLE)->where([
+            'account_set_id' => $this->callHook('account_set_id'),
+            'fiscal_year' => $this->callHook('current_year'),
+            'del_flag' => 0,
+        ]);
+        if (!empty($refundIds)) {
+            $query->where('refund_id', 'in', $refundIds);
+        }
+        if (!$lock) {
+            $query->where('match_status', 'CONFIRMED');
+        } else {
+            $query->lock(true);
+        }
+        $rows = $query->field('refund_id,match_status')->select();
+        $confirmedIds = [];
+        foreach ($rows as $row) {
+            if (($row['match_status'] ?? '') === 'CONFIRMED' && !empty($row['refund_id'])) {
+                $confirmedIds[$row['refund_id']] = true;
+            }
+        }
+        return $confirmedIds;
     }
 
     protected function normalizeIds($ids)

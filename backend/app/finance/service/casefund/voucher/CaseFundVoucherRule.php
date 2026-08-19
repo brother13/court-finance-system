@@ -228,7 +228,12 @@ class CaseFundVoucherRule
         return $groups;
     }
 
-    public function buildUnknownPaymentVoucherDetailsData($groupRows, $subjectConfig)
+    public function buildUnknownPaymentVoucherDetailsData(
+        $groupRows,
+        $subjectConfig,
+        $debitConfigs = [],
+        $creditConfigs = []
+    )
     {
         $detailsData = [];
         $totalCents = 0;
@@ -238,6 +243,19 @@ class CaseFundVoucherRule
             $amountCents = $this->callHook('amount_to_cents', [$row['unknown_amount']]);
             $amountDecimal = $this->callHook('cents_to_decimal', [$amountCents]);
             $totalCents += $amountCents;
+            $caseNo = trim((string)($row['unknown_aux_case_no'] ?? ''));
+            if ($caseNo === '' && (
+                $this->configsContainAuxType($debitConfigs, 'case_no')
+                || $this->configsContainAuxType($creditConfigs, 'case_no')
+            )) {
+                throw new \InvalidArgumentException('不明款案号辅助核算值不能为空');
+            }
+            $rawAuxValues = $caseNo === '' ? [] : [[
+                'aux_type_code' => 'case_no',
+                'aux_value' => $caseNo,
+                'aux_label' => $caseNo,
+            ]];
+            $debitAuxValues = $this->callHook('filter_aux_values', [$rawAuxValues, $debitConfigs]);
             $detailsData[] = [
                 'detail_id' => $this->callHook('new_id'),
                 'line_no' => $lineNo++,
@@ -245,9 +263,11 @@ class CaseFundVoucherRule
                 'summary' => $summary,
                 'debit_amount' => $amountDecimal,
                 'credit_amount' => '0.00',
-                'verification_status' => 'NOT_REQUIRED',
-                'aux_desc' => '',
+                'verification_status' => $this->callHook('need_verification', [$debitConfigs]) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                'aux_desc' => $this->callHook('build_aux_desc', [$debitAuxValues]),
+                'aux_values' => $debitAuxValues,
             ];
+            $creditAuxValues = $this->callHook('filter_aux_values', [$rawAuxValues, $creditConfigs]);
             $detailsData[] = [
                 'detail_id' => $this->callHook('new_id'),
                 'line_no' => $lineNo++,
@@ -255,11 +275,22 @@ class CaseFundVoucherRule
                 'summary' => $summary,
                 'debit_amount' => '0.00',
                 'credit_amount' => $amountDecimal,
-                'verification_status' => 'NOT_REQUIRED',
-                'aux_desc' => '',
+                'verification_status' => $this->callHook('need_verification', [$creditConfigs]) ? 'UNVERIFIED' : 'NOT_REQUIRED',
+                'aux_desc' => $this->callHook('build_aux_desc', [$creditAuxValues]),
+                'aux_values' => $creditAuxValues,
             ];
         }
         return ['details' => $detailsData, 'total_cents' => $totalCents];
+    }
+
+    protected function configsContainAuxType($configs, $auxTypeCode)
+    {
+        foreach ($configs as $config) {
+            if (trim((string)($config['aux_type_code'] ?? '')) === $auxTypeCode) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public function groupRefundRowsForVoucher($rows, $byDayFlag, $byOutOrderNoFlag)
@@ -499,7 +530,9 @@ class CaseFundVoucherRule
 
     public function buildPaymentVoucherSummary($row)
     {
-        return trim('收 ' . ($row['case_no'] ?? '') . ' ' . ($row['party_name'] ?? ''));
+        $paymentMethod = $this->callHook('normalize_payment_method', [$row['payment_method'] ?? '']);
+        $prefix = $paymentMethod === 'UNKNOWN' ? '不明款认领' : '收';
+        return trim($prefix . ' ' . ($row['case_no'] ?? '') . ' ' . ($row['party_name'] ?? ''));
     }
 
     public function buildRefundVoucherHeaderSummary($row, $aggregateByOutOrderNo, $voucherDate)
@@ -512,7 +545,7 @@ class CaseFundVoucherRule
 
     public function buildRefundNormalVoucherSummary($row)
     {
-        return trim('付 ' . ($row['case_no'] ?? '') . ' ' . (($row['party_name'] ?? '') ?: ($row['actual_payee_name'] ?? '')));
+        return trim('付 ' . ($row['case_no'] ?? '') . ' ' . ($row['payee_bank_account_name'] ?? ''));
     }
 
     public function buildRefundAggregateCreditSummary($outOrderNo)

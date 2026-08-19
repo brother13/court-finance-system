@@ -108,6 +108,15 @@ if (strpos($ddlSource, 'uk_case_fund_unknown_payment_source on fin_case_fund_unk
     fwrite(STDERR, 'Unknown payment DDL unique index should include del_flag for soft-delete reimport' . PHP_EOL);
     exit(1);
 }
+if (strpos($ddlSource, 'aux_case_code varchar(20) null') === false
+    || strpos($ddlSource, 'uk_case_fund_unknown_payment_aux_code on fin_case_fund_unknown_payment (account_set_id, aux_case_code)') === false) {
+    fwrite(STDERR, 'Unknown payment DDL should persist an account-set unique BMK auxiliary code' . PHP_EOL);
+    exit(1);
+}
+if (strpos($ddlSource, 'archive_code varchar(200) not null') === false) {
+    fwrite(STDERR, 'Auxiliary archive code should support the full 200-character unknown-payment case value' . PHP_EOL);
+    exit(1);
+}
 
 $patchSource = file_get_contents($patchPath);
 if (strpos($patchSource, 'unique key uk_case_fund_unknown_payment_source (account_set_id, source_fingerprint, del_flag)') === false) {
@@ -117,6 +126,12 @@ if (strpos($patchSource, 'unique key uk_case_fund_unknown_payment_source (accoun
 if (strpos($patchSource, 'drop index uk_case_fund_unknown_payment_source on fin_case_fund_unknown_payment') === false
     || strpos($patchSource, 'alter table fin_case_fund_unknown_payment add unique key uk_case_fund_unknown_payment_source (account_set_id, source_fingerprint, del_flag)') === false) {
     fwrite(STDERR, 'Unknown payment patch should migrate existing unique index to include del_flag' . PHP_EOL);
+    exit(1);
+}
+if (strpos($patchSource, 'add column aux_case_code varchar(20) null after bank_remark') === false
+    || strpos($patchSource, 'add unique key uk_case_fund_unknown_payment_aux_code (account_set_id, aux_case_code)') === false
+    || strpos($patchSource, 'modify column archive_code varchar(200) not null') === false) {
+    fwrite(STDERR, 'Unknown payment patch should idempotently add BMK storage, uniqueness, and archive length support' . PHP_EOL);
     exit(1);
 }
 
@@ -450,12 +465,17 @@ foreach ([
     'public function unknownPaymentImport' => 'CaseFund should expose unknownPaymentImport',
     "requirePermission('case_fund:view')" => 'Unknown payment list should check view permission',
     "requirePermission('case_fund:import')" => 'Unknown payment import should check import permission',
+    'assignImportCodes' => 'Every unknown payment import should allocate BMK codes before the normal insert',
     'CASE_FUND_UNKNOWN_PAYMENT' => 'Unknown payment writes should use audit biz type',
 ] as $needle => $message) {
     if (strpos($source, $needle) === false) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }
+}
+if (strpos($source, 'unknownPaymentUsesCaseNoAuxiliary') !== false) {
+    fwrite(STDERR, 'Unknown payment import should not branch on subject case_no configuration when allocating BMK codes' . PHP_EOL);
+    exit(1);
 }
 
 echo 'Case fund unknown payment import test passed' . PHP_EOL;

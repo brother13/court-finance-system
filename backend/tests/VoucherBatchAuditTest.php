@@ -9,6 +9,11 @@ $checks = [
     [$source, '制单人不能审核自己制单的凭证', 'Batch audit should keep maker-reviewer separation rule'],
     [$source, "'audited_count'", 'Batch audit should return audited_count'],
     [$source, "'审核成功'", 'Batch audit should return audit success message'],
+    [$source, "case 'batchUnaudit':", 'Voucher router should expose /voucher/batchUnaudit'],
+    [$source, 'batchUnauditVouchers($data)', 'Voucher should implement batchUnauditVouchers'],
+    [$source, "return \$this->changeStatusIds(\$data['period'] ?? '', \$voucherIds, 'AUDITED', 'SUBMITTED', 'UNAUDIT');", 'Batch unaudit should reuse the audited-to-submitted status transition'],
+    [$source, "'unaudited_count'", 'Batch unaudit should return unaudited_count'],
+    [$source, "'反审核成功'", 'Batch unaudit should return unaudit success message'],
 ];
 
 foreach ($checks as [$haystack, $needle, $message]) {

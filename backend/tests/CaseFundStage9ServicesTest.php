@@ -264,6 +264,7 @@ $store->rows['refund'] = [[
     'del_flag' => 0,
     'refund_id' => 'refund-1',
     'refund_date' => '2026-07-10',
+    'refund_amount' => '12.34',
     'payee_bank_account_no' => '62220001',
     'payee_bank_account_name' => '张三',
 ]];
@@ -312,6 +313,7 @@ $store->rows['statement'] = [
         'del_flag' => 0,
         'direction' => 'DEBIT',
         'transaction_date' => '2026-07-10',
+        'debit_amount' => '12.34',
         'counterparty_account_no' => '62220001',
         'counterparty_account_name' => '张三',
         'bank_code' => 'CCB',
@@ -384,7 +386,7 @@ stage9AssertSame('refund-1', $repository->refundCandidatesByBankStatement([
 stage9AssertSame(true, $repository->bankStatementExistsByPayment($store->rows['payment'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Payment bank existence should use the same final-hyphen serial normalization');
 stage9AssertSame(false, $repository->bankStatementExistsByPayment($store->rows['payment'][2], 'CCB', '2026-07-01', '2026-07-31'), 'Payment bank existence should skip claimed registrations without a serial');
 stage9AssertSame(true, $repository->bankStatementExistsByUnknownPayment($store->rows['unknown_payment'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Unknown-payment bank existence should match normalized payer account and date');
-stage9AssertSame(true, $repository->bankStatementExistsByRefundPayee($store->rows['refund'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Refund bank existence query should preserve payee, bank and date scope');
+stage9AssertSame(true, $repository->bankStatementExistsByRefundPayee($store->rows['refund'][0], 'CCB', '2026-07-01', '2026-07-31'), 'Refund bank existence query should preserve payee, amount, bank and date scope');
 $summary = $repository->bankReconcileSummary([
     'account_set_id' => 'account-set-stage9',
     'fiscal_year' => 2026,
@@ -522,5 +524,53 @@ stage9AssertSame(1, $manager->subjectConfigAccountSetFlag(), 'Daily voucher flag
 stage9AssertSame(1, $accountBefore['generate_voucher_by_day_flag'], 'Account-set flag save should retain before image');
 stage9AssertSame(0, $accountAfter['generate_voucher_by_day_flag'], 'Account-set flag save should normalize and persist daily flag');
 stage9AssertSame(1, $accountAfter['generate_payment_voucher_by_method_flag'], 'Account-set flag save should persist payment-method flag');
+$store->rows['fin_subject'][] = [
+    'account_set_id' => 'account-set-stage9',
+    'subject_code' => '10020101',
+    'subject_name' => '银行存款明细',
+    'parent_code' => '100201',
+    'status' => 1,
+    'leaf_flag' => 1,
+    'voucher_entry_flag' => 1,
+    'del_flag' => 0,
+];
+$managerWithChild = new SubjectConfigManager([
+    'get_db' => function ($table) use ($store) {
+        return $store->db($table);
+    },
+    'account_set_id' => function () {
+        return 'account-set-stage9';
+    },
+    'new_id' => function () {
+        return 'unused';
+    },
+    'prepare_create' => function ($row) {
+        return $row;
+    },
+    'prepare_update' => $prepareUpdate,
+    'payment_method_options' => function () {
+        return [];
+    },
+    'normalize_payment_method' => function ($method) {
+        return $method;
+    },
+    'payment_method_config_map' => function () {
+        return [];
+    },
+    'subject_name_map' => function () {
+        return [];
+    },
+    'validate_subject_code' => function () {
+        return null;
+    },
+    'normalize_flag' => function ($value) {
+        return (int)$value === 0 ? 0 : 1;
+    },
+], 'subject_config');
+stage9AssertSame(
+    '借方科目必须为末级科目：100201',
+    $managerWithChild->validateVoucherSubjectCode('100201', '借方科目'),
+    'Subject config should reject a subject with active children even when its leaf flags are stale'
+);
 
 echo 'Case fund stage 9 services test passed' . PHP_EOL;

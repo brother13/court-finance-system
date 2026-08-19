@@ -31,42 +31,20 @@ require_once __DIR__ . '/../app/finance/model/Voucher.php';
 
 use app\finance\model\Voucher;
 
-class VoucherBusinessSourceNoDbStub
-{
-    public $where = [];
-    public $updates = [];
-    private $affectedRows;
-
-    public function __construct($affectedRows)
-    {
-        $this->affectedRows = $affectedRows;
-    }
-
-    public function where($where)
-    {
-        $this->where[] = $where;
-        return $this;
-    }
-
-    public function update($update)
-    {
-        $this->updates[] = $update;
-        return $this->affectedRows;
-    }
-}
-
 class VoucherBusinessSourceNoSyncProbe extends Voucher
 {
-    public static $dbs = [];
+    public $statements = [];
+    private $affectedRows = [1, 2, 3, 4];
 
-    public static function getdb($table = '')
+    public function syncSourceVoucherNos($items, $period)
     {
-        return self::$dbs[$table];
+        return $this->syncGeneratedBusinessSourceVoucherNos($items, $period);
     }
 
-    public function syncSourceVoucherNo($voucherId, $period, $voucherNo)
+    protected function executeVoucherRenumberStatement($sql, $bind)
     {
-        return $this->syncGeneratedBusinessSourceVoucherNo($voucherId, $period, $voucherNo);
+        $this->statements[] = ['sql' => $sql, 'bind' => $bind];
+        return array_shift($this->affectedRows);
     }
 }
 
@@ -85,12 +63,13 @@ $tables = [
     'fin_case_fund_unknown_payment',
     'fin_case_fund_distribution',
 ];
-foreach ($tables as $index => $table) {
-    VoucherBusinessSourceNoSyncProbe::$dbs[$table] = new VoucherBusinessSourceNoDbStub($index + 1);
-}
 
 $probe = new VoucherBusinessSourceNoSyncProbe();
-$counts = $probe->syncSourceVoucherNo('voucher-1', '2026-05', 7);
+$counts = $probe->syncSourceVoucherNos([
+    ['voucher_id' => 'voucher-1', 'new_voucher_no' => 7, 'changed' => true, 'locked' => false],
+    ['voucher_id' => 'voucher-2', 'new_voucher_no' => 8, 'changed' => true, 'locked' => false],
+    ['voucher_id' => 'voucher-unchanged', 'new_voucher_no' => 9, 'changed' => false, 'locked' => false],
+], '2026-05');
 
 voucherNoSyncAssertSame([
     'fin_case_fund_payment' => 1,
@@ -98,28 +77,36 @@ voucherNoSyncAssertSame([
     'fin_case_fund_unknown_payment' => 3,
     'fin_case_fund_distribution' => 4,
 ], $counts, 'Voucher renumber should report every synchronized business source');
+voucherNoSyncAssertSame(4, count($probe->statements), 'Voucher renumber should execute one batch statement per business source table');
 
-foreach ($tables as $table) {
-    $db = VoucherBusinessSourceNoSyncProbe::$dbs[$table];
-    voucherNoSyncAssertSame([[
-        'account_set_id' => 'account-set-1',
-        'fiscal_year' => 2026,
-        'voucher_id' => 'voucher-1',
-        'voucher_status' => 'GENERATED',
-        'del_flag' => 0,
-    ]], $db->where, $table . ' synchronization should retain account/year/voucher/status scope');
-    voucherNoSyncAssertSame(7, $db->updates[0]['voucher_no'], $table . ' should synchronize voucher number');
-    voucherNoSyncAssertSame('2026-05', $db->updates[0]['voucher_period'], $table . ' should synchronize voucher period');
-    voucherNoSyncAssertSame('system', $db->updates[0]['updated_by'], $table . ' should keep updater audit field');
-    voucherNoSyncAssertSame('2026-07-16 16:00:00', $db->updates[0]['updated_time'], $table . ' should keep update time');
+foreach ($tables as $index => $table) {
+    $statement = $probe->statements[$index];
+    if (strpos($statement['sql'], 'UPDATE ' . $table . ' SET voucher_no = CASE voucher_id') === false) {
+        fwrite(STDERR, $table . ' should use one CASE UPDATE statement' . PHP_EOL);
+        exit(1);
+    }
+    voucherNoSyncAssertSame('account-set-1', $statement['bind']['account_set_id'], $table . ' should retain account scope');
+    voucherNoSyncAssertSame(2026, $statement['bind']['fiscal_year'], $table . ' should retain fiscal year scope');
+    voucherNoSyncAssertSame('GENERATED', $statement['bind']['voucher_status'], $table . ' should retain generated status scope');
+    voucherNoSyncAssertSame(0, $statement['bind']['del_flag'], $table . ' should retain active-row scope');
+    voucherNoSyncAssertSame(7, $statement['bind']['voucher_no_0'], $table . ' should bind the first voucher number');
+    voucherNoSyncAssertSame(8, $statement['bind']['voucher_no_1'], $table . ' should bind the second voucher number');
+    voucherNoSyncAssertSame('2026-05', $statement['bind']['voucher_period'], $table . ' should synchronize voucher period');
+    voucherNoSyncAssertSame('system', $statement['bind']['updated_by'], $table . ' should keep updater audit field');
+    voucherNoSyncAssertSame('2026-07-16 16:00:00', $statement['bind']['updated_time'], $table . ' should keep update time');
 }
 
-voucherNoSyncAssertSame([], $probe->syncSourceVoucherNo('', '2026-05', 7), 'Empty voucher id should not update sources');
-voucherNoSyncAssertSame([], $probe->syncSourceVoucherNo('voucher-1', '', 7), 'Empty period should not update sources');
-voucherNoSyncAssertSame([], $probe->syncSourceVoucherNo('voucher-1', '2026-05', 0), 'Invalid voucher number should not update sources');
+$emptyProbe = new VoucherBusinessSourceNoSyncProbe();
+voucherNoSyncAssertSame([
+    'fin_case_fund_payment' => 0,
+    'fin_case_fund_refund' => 0,
+    'fin_case_fund_unknown_payment' => 0,
+    'fin_case_fund_distribution' => 0,
+], $emptyProbe->syncSourceVoucherNos([], '2026-05'), 'Empty change set should not update sources');
+voucherNoSyncAssertSame(0, count($emptyProbe->statements), 'Empty change set should execute no SQL');
 
 $source = file_get_contents(__DIR__ . '/../app/finance/model/Voucher.php');
-if (strpos($source, 'syncGeneratedBusinessSourceVoucherNo(') === false) {
+if (strpos($source, 'syncGeneratedBusinessSourceVoucherNos(') === false) {
     fwrite(STDERR, 'Voucher renumber should synchronize generated business source numbers' . PHP_EOL);
     exit(1);
 }

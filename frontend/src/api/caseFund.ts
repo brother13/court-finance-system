@@ -1,5 +1,20 @@
 import { apiAction } from './http'
-import type { CaseFundBankReconcile, CaseFundBankStatement, CaseFundDistribution, CaseFundPayment, CaseFundRefund, CaseFundSubjectConfig, CaseFundUnknownPayment } from '../types/api'
+import type {
+  CaseFundBankReconcile,
+  CaseFundBankStatement,
+  CaseFundDistribution,
+  CaseFundJob,
+  CaseFundJobCreateRequest,
+  CaseFundJobErrorListResult,
+  CaseFundJobListParams,
+  CaseFundJobListResult,
+  CaseFundPayment,
+  CaseFundRefund,
+  CaseFundReturnMatchItem,
+  CaseFundReturnMatchStats,
+  CaseFundSubjectConfig,
+  CaseFundUnknownPayment
+} from '../types/api'
 
 type CaseFundVoucherBizType = 'PAYMENT' | 'PAYMENT_METHOD' | 'REFUND' | 'UNKNOWN_PAYMENT' | 'DISTRIBUTION'
 
@@ -34,6 +49,34 @@ export const caseFundApi = {
   },
   deleteUnknownPayments(unknownPaymentIds: string[]) {
     return apiAction('/caseFund/unknownPaymentDelete', { unknown_payment_ids: unknownPaymentIds }) as Promise<{ deleted_count: number }>
+  },
+  previewUnknownRefundMatches(period: string) {
+    return apiAction('/caseFund/unknownRefundMatchPreview', { period }) as Promise<{
+      period: string
+      stats: CaseFundReturnMatchStats
+    }>
+  },
+  scanUnknownRefundMatches(period: string) {
+    return apiAction('/caseFund/unknownRefundMatchScan', { period }) as Promise<{
+      period: string
+      stats: CaseFundReturnMatchStats
+    }>
+  },
+  unknownRefundMatchCandidates(payload: { unknown_payment_id?: string; refund_id?: string }) {
+    return apiAction('/caseFund/unknownRefundMatchCandidates', payload) as Promise<{
+      items: CaseFundReturnMatchItem[]
+      status: string
+      candidate_count: number
+    }>
+  },
+  confirmUnknownRefundMatch(matchId: string) {
+    return apiAction('/caseFund/unknownRefundMatchConfirm', { match_id: matchId }) as Promise<{ match_id: string }>
+  },
+  rejectUnknownRefundMatch(matchId: string, remark = '') {
+    return apiAction('/caseFund/unknownRefundMatchReject', { match_id: matchId, remark }) as Promise<{ match_id: string }>
+  },
+  cancelUnknownRefundMatch(matchId: string) {
+    return apiAction('/caseFund/unknownRefundMatchCancel', { match_id: matchId }) as Promise<{ match_id: string }>
   },
   distributionList(payload: Record<string, any> = {}) {
     return apiAction('/caseFund/distributionList', payload) as Promise<{
@@ -105,6 +148,7 @@ export const caseFundApi = {
       generate_voucher_by_day_flag: number
       generate_payment_voucher_by_method_flag: number
       generate_refund_voucher_by_out_order_no_flag: number
+      skip_confirmed_return_voucher_flag: number
       payment_method_items?: CaseFundSubjectConfig[]
     }>
   },
@@ -114,7 +158,8 @@ export const caseFundApi = {
     generateVoucherByDayFlag = 1,
     generateRefundVoucherByOutOrderNoFlag?: number,
     generatePaymentVoucherByMethodFlag?: number,
-    paymentMethodItems?: CaseFundSubjectConfig[]
+    paymentMethodItems?: CaseFundSubjectConfig[],
+    skipConfirmedReturnVoucherFlag?: number
   ) {
     const payload: Record<string, any> = {
       voucher_biz_type: voucherBizType,
@@ -129,6 +174,9 @@ export const caseFundApi = {
     }
     if (paymentMethodItems !== undefined) {
       payload.payment_method_items = paymentMethodItems
+    }
+    if (skipConfirmedReturnVoucherFlag !== undefined) {
+      payload.skip_confirmed_return_voucher_flag = skipConfirmedReturnVoucherFlag
     }
     return apiAction('/caseFund/subjectConfigSave', payload) as Promise<{ saved: number }>
   },
@@ -173,5 +221,17 @@ export const caseFundApi = {
       distribution_count: number
       vouchers: { voucher_id: string; voucher_no: number; period: string }[]
     }>
+  },
+  jobCreate(request: CaseFundJobCreateRequest) {
+    return apiAction('/caseFund/jobCreate', request, {}, { timeout: 120000 }) as Promise<CaseFundJob>
+  },
+  jobStatus(jobId: string) {
+    return apiAction('/caseFund/jobStatus', { job_id: jobId }) as Promise<CaseFundJob>
+  },
+  jobList(payload: CaseFundJobListParams = {}) {
+    return apiAction('/caseFund/jobList', payload) as Promise<CaseFundJobListResult>
+  },
+  jobErrorList(jobId: string, payload: { page?: number; pagesize?: number } = {}) {
+    return apiAction('/caseFund/jobErrorList', { job_id: jobId, ...payload }) as Promise<CaseFundJobErrorListResult>
   }
 }

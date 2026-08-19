@@ -20,11 +20,10 @@
       </div>
 
       <el-menu
-        :key="sidebarMenuKey"
+        ref="sidebarMenuRef"
         router
         :collapse="sidebarCollapsed"
         :default-active="$route.path"
-        :default-openeds="openedSidebarMenus"
         class="nav-menu"
         @open="handleSidebarMenuOpen"
         @close="handleSidebarMenuClose"
@@ -46,6 +45,7 @@
           <el-menu-item v-if="context.hasPermission('menu:book:subject_balance')" index="/books/subject-balance">科目余额表</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:book:subject_summary')" index="/books/subject-summary">科目汇总表</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:book:aux_balance')" index="/books/aux-balance">辅助核算余额表</el-menu-item>
+          <el-menu-item v-if="context.hasPermission('menu:book:case_movement_detail')" index="/books/case-movement-detail">案号收支明细表</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="fundBusinessMenuBizTypes.includes(context.bizType) && context.hasAnyPermission(caseFundMenuPermissions)" index="/case-fund">
           <template #title>
@@ -134,7 +134,7 @@
       </div>
       <el-main class="main">
         <router-view v-slot="{ Component }">
-          <KeepAlive include="VoucherListView">
+          <KeepAlive include="VoucherListView,BankStatementView">
             <component :is="Component" />
           </KeepAlive>
         </router-view>
@@ -151,6 +151,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Calendar, Close, Coin, DataLine, Expand, Fold, Grid, Key, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
+import type { MenuInstance } from 'element-plus'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
 import raspberryLogo from './assets/raspberry-logo.png'
@@ -159,7 +160,7 @@ const route = useRoute()
 const router = useRouter()
 const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
-const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance']
+const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance', 'menu:book:case_movement_detail']
 const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement', 'menu:case_fund:unknown_payment', 'menu:case_fund:distribution']
 const fundBusinessMenuBizTypes = ['CASE_FUND', 'LITIGATION_FEE']
 const baseMenuPermissions = ['menu:base:subject', 'menu:base:opening', 'menu:base:aux', 'menu:base:carry_forward']
@@ -180,6 +181,7 @@ const titleMap: Record<string, string> = {
   '/books/subject-balance': '科目余额表',
   '/books/subject-summary': '科目汇总表',
   '/books/aux-balance': '辅助核算余额表',
+  '/books/case-movement-detail': '案号收支明细表',
   '/case-fund/payments': '缴费登记',
   '/case-fund/refunds': '出账查询',
   '/case-fund/bank-statements': '银行对账单',
@@ -203,13 +205,13 @@ const isAuthPage = computed(() => route.path === '/login' || route.path === '/se
 const defaultTabs: PageTab[] = [{ path: '/dashboard', title: '首页看板', closable: false }]
 const openedTabs = ref<PageTab[]>(loadTabs())
 const sidebarCollapsed = ref(false)
+const sidebarMenuRef = ref<MenuInstance>()
 const openedSidebarMenus = ref<string[]>([])
 const maxOpenedSidebarMenus = 2
 const changePasswordDialogVisible = ref(false)
 const sidebarWidth = computed(() => sidebarCollapsed.value ? '64px' : '200px')
 const sidebarToggleTitle = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
-const sidebarMenuKey = computed(() => `${sidebarCollapsed.value ? 'collapsed' : 'expanded'}-${openedSidebarMenus.value.join('|')}`)
 const bizTypeLabel = computed(() => {
   const map: Record<string, string> = {
     CASE_FUND: '案款',
@@ -297,13 +299,17 @@ const toggleSidebar = () => {
 }
 
 const handleSidebarMenuOpen = (index: string) => {
-  openedSidebarMenus.value = [
+  const nextOpenedMenus = [
     ...openedSidebarMenus.value.filter((item) => item !== index),
     index
   ]
-  while (openedSidebarMenus.value.length > maxOpenedSidebarMenus) {
-    openedSidebarMenus.value.shift()
+  while (nextOpenedMenus.length > maxOpenedSidebarMenus) {
+    const oldestIndex = nextOpenedMenus.shift()
+    if (oldestIndex) {
+      sidebarMenuRef.value?.close(oldestIndex)
+    }
   }
+  openedSidebarMenus.value = nextOpenedMenus
 }
 
 const handleSidebarMenuClose = (index: string) => {

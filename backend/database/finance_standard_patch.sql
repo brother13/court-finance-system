@@ -149,6 +149,21 @@ prepare stmt from @sql;
 execute stmt;
 deallocate prepare stmt;
 
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_account_set add column skip_confirmed_return_voucher_flag tinyint not null default 0 after generate_refund_voucher_by_out_order_no_flag',
+        'select 1'
+    )
+    from information_schema.columns
+    where table_schema = database()
+      and table_name = 'fin_account_set'
+      and column_name = 'skip_confirmed_return_voucher_flag'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
 update fin_account_set
 set enabled_period = concat(enabled_year, '-01')
 where enabled_period is null
@@ -406,7 +421,9 @@ create table if not exists fin_case_fund_payment (
     key idx_case_fund_payment_case (account_set_id, case_no),
     key idx_case_fund_payment_receipt (account_set_id, receipt_no),
     key idx_case_fund_payment_bank_serial (account_set_id, bank_serial_no),
-    key idx_case_fund_payment_voucher (account_set_id, voucher_status, voucher_period, voucher_id)
+    key idx_case_fund_payment_voucher (account_set_id, voucher_status, voucher_period, voucher_id),
+    key idx_case_fund_payment_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag),
+    key idx_case_fund_payment_reconcile_scope (account_set_id, fiscal_year, del_flag, payment_date, bank_serial_no)
 );
 
 create table if not exists fin_case_fund_refund (
@@ -462,7 +479,9 @@ create table if not exists fin_case_fund_refund (
     key idx_case_fund_refund_out_type (account_set_id, out_type, del_flag),
     key idx_case_fund_refund_case (account_set_id, case_no),
     key idx_case_fund_refund_source_receipt (account_set_id, source_receipt_no),
-    key idx_case_fund_refund_voucher (account_set_id, voucher_status, voucher_period, voucher_id)
+    key idx_case_fund_refund_voucher (account_set_id, voucher_status, voucher_period, voucher_id),
+    key idx_case_fund_refund_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag),
+    key idx_case_fund_refund_reconcile_scope (account_set_id, fiscal_year, del_flag, refund_date, payee_bank_account_no)
 );
 
 create table if not exists fin_case_fund_unknown_payment (
@@ -476,6 +495,7 @@ create table if not exists fin_case_fund_unknown_payment (
     unknown_amount decimal(18,2) not null default 0.00,
     bank_summary varchar(255) not null default '',
     bank_remark varchar(255) not null default '',
+    aux_case_code varchar(20) null,
     transaction_date date not null,
     transaction_time datetime not null,
     court_bank_account_no varchar(80) not null default '',
@@ -502,10 +522,39 @@ create table if not exists fin_case_fund_unknown_payment (
     version int not null default 0,
     remark varchar(255) not null default '',
     unique key uk_case_fund_unknown_payment_source (account_set_id, source_fingerprint, del_flag),
+    unique key uk_case_fund_unknown_payment_aux_code (account_set_id, aux_case_code),
     key idx_case_fund_unknown_payment_period (account_set_id, period, transaction_date),
     key idx_case_fund_unknown_payment_bank (account_set_id, court_bank_account_no, transaction_date),
     key idx_case_fund_unknown_payment_payer (account_set_id, payer_name),
-    key idx_case_fund_unknown_payment_voucher (account_set_id, voucher_status, voucher_period, voucher_id)
+    key idx_case_fund_unknown_payment_voucher (account_set_id, voucher_status, voucher_period, voucher_id),
+    key idx_case_fund_unknown_payment_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag),
+    key idx_case_fund_unknown_reconcile_scope (account_set_id, fiscal_year, del_flag, transaction_date, claim_status, payer_account_no)
+);
+
+create table if not exists fin_case_fund_unknown_refund_match (
+    match_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    unknown_payment_id varchar(36) not null,
+    refund_id varchar(36) not null,
+    match_status varchar(30) not null default 'AUTO_CANDIDATE',
+    match_rule varchar(60) not null default 'SAME_MONTH_NAME_AMOUNT_ACCOUNT',
+    candidate_count int not null default 1,
+    match_evidence_json text,
+    decision_by varchar(36),
+    decision_time datetime,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500),
+    unique key uk_case_fund_unknown_refund_pair (account_set_id, unknown_payment_id, refund_id),
+    key idx_case_fund_return_match_unknown (account_set_id, fiscal_year, unknown_payment_id, del_flag, match_status),
+    key idx_case_fund_return_match_refund (account_set_id, fiscal_year, refund_id, del_flag, match_status),
+    key idx_case_fund_return_match_period (account_set_id, fiscal_year, period, del_flag, match_status)
 );
 
 set @sql = (
@@ -518,6 +567,51 @@ set @sql = (
     where table_schema = database()
       and table_name = 'fin_case_fund_unknown_payment'
       and index_name = 'uk_case_fund_unknown_payment_source'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_unknown_payment add column aux_case_code varchar(20) null after bank_remark',
+        'select 1'
+    )
+    from information_schema.columns
+    where table_schema = database()
+      and table_name = 'fin_case_fund_unknown_payment'
+      and column_name = 'aux_case_code'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_unknown_payment add unique key uk_case_fund_unknown_payment_aux_code (account_set_id, aux_case_code)',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_unknown_payment'
+      and index_name = 'uk_case_fund_unknown_payment_aux_code'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        coalesce(max(character_maximum_length), 0) < 200,
+        'alter table fin_aux_archive modify column archive_code varchar(200) not null',
+        'select 1'
+    )
+    from information_schema.columns
+    where table_schema = database()
+      and table_name = 'fin_aux_archive'
+      and column_name = 'archive_code'
 );
 prepare stmt from @sql;
 execute stmt;
@@ -581,7 +675,8 @@ create table if not exists fin_case_fund_distribution (
     key idx_case_fund_distribution_in_case (account_set_id, in_case_no),
     key idx_case_fund_distribution_out_case (account_set_id, out_case_no),
     key idx_case_fund_distribution_receipt (account_set_id, receipt_no),
-    key idx_case_fund_distribution_voucher (account_set_id, voucher_status, voucher_period, voucher_id)
+    key idx_case_fund_distribution_voucher (account_set_id, voucher_status, voucher_period, voucher_id),
+    key idx_case_fund_distribution_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag)
 );
 
 set @sql = (
@@ -649,7 +744,8 @@ create table if not exists fin_case_fund_bank_statement (
     key idx_case_fund_bank_statement_period (account_set_id, period, transaction_date),
     key idx_case_fund_bank_statement_bank (account_set_id, bank_code, transaction_date),
     key idx_case_fund_bank_statement_serial (account_set_id, bank_serial_no),
-    key idx_case_fund_bank_statement_reconcile (account_set_id, reconcile_status, transaction_date)
+    key idx_case_fund_bank_statement_reconcile (account_set_id, reconcile_status, transaction_date),
+    key idx_case_fund_bank_statement_reconcile_scope (account_set_id, fiscal_year, del_flag, transaction_date, direction, counterparty_account_no)
 );
 
 create table if not exists fin_case_fund_bank_reconcile (
@@ -684,8 +780,164 @@ create table if not exists fin_case_fund_bank_reconcile (
     key idx_case_fund_bank_reconcile_status (account_set_id, match_status, reconcile_date),
     key idx_case_fund_bank_reconcile_statement (account_set_id, statement_id),
     key idx_case_fund_bank_reconcile_biz (account_set_id, biz_type, biz_id),
-    key idx_case_fund_bank_reconcile_serial (account_set_id, bank_serial_no)
+    key idx_case_fund_bank_reconcile_serial (account_set_id, bank_serial_no),
+    key idx_case_fund_bank_reconcile_replace_scope (account_set_id, fiscal_year, del_flag, match_rule, reconcile_date),
+    key idx_case_fund_bank_reconcile_active_statement (account_set_id, fiscal_year, del_flag, statement_id)
 );
+
+-- Existing installations need the same indexes as newly initialized databases. Each online
+-- ALTER is guarded by information_schema, so this consolidated patch remains idempotent.
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_bank_statement add index idx_case_fund_bank_statement_reconcile_scope (account_set_id, fiscal_year, del_flag, transaction_date, direction, counterparty_account_no), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_bank_statement'
+      and index_name = 'idx_case_fund_bank_statement_reconcile_scope'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_payment add index idx_case_fund_payment_reconcile_scope (account_set_id, fiscal_year, del_flag, payment_date, bank_serial_no), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_payment'
+      and index_name = 'idx_case_fund_payment_reconcile_scope'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_refund add index idx_case_fund_refund_reconcile_scope (account_set_id, fiscal_year, del_flag, refund_date, payee_bank_account_no), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_refund'
+      and index_name = 'idx_case_fund_refund_reconcile_scope'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_unknown_payment add index idx_case_fund_unknown_reconcile_scope (account_set_id, fiscal_year, del_flag, transaction_date, claim_status, payer_account_no), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_unknown_payment'
+      and index_name = 'idx_case_fund_unknown_reconcile_scope'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_bank_reconcile add index idx_case_fund_bank_reconcile_replace_scope (account_set_id, fiscal_year, del_flag, match_rule, reconcile_date), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_bank_reconcile'
+      and index_name = 'idx_case_fund_bank_reconcile_replace_scope'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_bank_reconcile add index idx_case_fund_bank_reconcile_active_statement (account_set_id, fiscal_year, del_flag, statement_id), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_bank_reconcile'
+      and index_name = 'idx_case_fund_bank_reconcile_active_statement'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+-- 凭证号整理会按 voucher_id 批量回写四张业务来源表。旧索引在 voucher_id
+-- 前包含 voucher_period，无法覆盖不带 voucher_period 的同步条件。
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_payment add index idx_case_fund_payment_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_payment'
+      and index_name = 'idx_case_fund_payment_voucher_sync'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_refund add index idx_case_fund_refund_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_refund'
+      and index_name = 'idx_case_fund_refund_voucher_sync'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_unknown_payment add index idx_case_fund_unknown_payment_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_unknown_payment'
+      and index_name = 'idx_case_fund_unknown_payment_voucher_sync'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(
+        count(*) = 0,
+        'alter table fin_case_fund_distribution add index idx_case_fund_distribution_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag), algorithm=inplace, lock=none',
+        'select 1'
+    )
+    from information_schema.statistics
+    where table_schema = database()
+      and table_name = 'fin_case_fund_distribution'
+      and index_name = 'idx_case_fund_distribution_voucher_sync'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
 
 create table if not exists fin_case_fund_subject_config (
     config_id varchar(36) primary key,
@@ -718,7 +970,8 @@ insert into fin_permission (permission_code, permission_name, permission_type, m
 ('case_fund:generate_voucher', '案款生成凭证', 2, 'case_fund', '根据案款业务登记批量生成凭证', 253),
 ('case_fund:subject_config', '案款科目配置', 2, 'case_fund', '配置案款业务生成凭证的借贷科目', 254),
 ('case_fund:reconcile', '案款银行对账', 2, 'case_fund', '按银行流水号执行案款银行自动对账', 255),
-('case_fund:delete', '案款业务删除', 2, 'case_fund', '删除未制证且未对账的案款业务数据', 256)
+('case_fund:delete', '案款业务删除', 2, 'case_fund', '删除未制证且未对账的案款业务数据', 256),
+('case_fund:return_match', '案款退汇识别', 2, 'case_fund', '识别、确认、排除和取消不明款与出账记录的退汇关联', 257)
 on duplicate key update
     permission_name = values(permission_name),
     permission_type = values(permission_type),
@@ -742,6 +995,7 @@ join (
     union all select 'case_fund:subject_config'
     union all select 'case_fund:reconcile'
     union all select 'case_fund:delete'
+    union all select 'case_fund:return_match'
 ) p
 where r.role_code in ('finance_manager', 'voucher_maker');
 

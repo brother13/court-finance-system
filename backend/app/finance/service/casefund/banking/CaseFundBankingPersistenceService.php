@@ -12,6 +12,8 @@ class CaseFundBankingPersistenceService
 {
     const RESULT_STATUSES = ['MATCHED', 'AMOUNT_DIFF', 'BANK_ONLY', 'BIZ_ONLY', 'DUPLICATE'];
     const STATEMENT_STATUSES = ['MATCHED', 'AMOUNT_DIFF', 'BANK_ONLY', 'DUPLICATE'];
+    const RECONCILE_INSERT_BATCH_SIZE = 200;
+    const STATEMENT_UPDATE_BATCH_SIZE = 500;
 
     protected $hooks;
     protected $tables;
@@ -154,33 +156,93 @@ class CaseFundBankingPersistenceService
 
         $this->softDeleteReconcileScope($dateStart, $dateEnd);
 
+        $this->insertReconcileRows($resultRows);
+        $this->updateStatementStatuses($statementStatuses, $currentStatementStatuses);
+    }
+
+    protected function insertReconcileRows(array $resultRows)
+    {
+        if (empty($resultRows)) {
+            return;
+        }
+        $chunk = [];
         foreach ($resultRows as $row) {
-            $reconcileId = trim((string)$row['reconcile_id']);
             $row['account_set_id'] = $this->accountSetId();
             $row['fiscal_year'] = $this->currentYear();
-            $row = $this->callHook('prepare_create', [$row]);
-            $this->assertInserted(
-                $this->db($this->tables['reconcile'])->insert($row),
-                '银行对账结果写入失败：' . $reconcileId
-            );
-        }
-
-        foreach ($statementStatuses as $statementId => $status) {
-            $update = $this->callHook('prepare_update', [['reconcile_status' => $status]]);
-            $affectedRows = $this->db($this->tables['statement'])->where([
-                'account_set_id' => $this->accountSetId(),
-                'fiscal_year' => $this->currentYear(),
-                'statement_id' => $statementId,
-                'del_flag' => 0,
-            ])->update($update);
-            $affectedRows = (int)$affectedRows;
-            $oldStatus = (string)$currentStatementStatuses[$statementId];
-            if (($oldStatus !== (string)$status && $affectedRows !== 1)
-                || ($oldStatus === (string)$status && !in_array($affectedRows, [0, 1], true))
-            ) {
-                throw new \RuntimeException('银行流水对账状态写入失败：' . $statementId);
+            $chunk[] = $this->callHook('prepare_create', [$row]);
+            if (count($chunk) >= self::RECONCILE_INSERT_BATCH_SIZE) {
+                $this->insertReconcileChunk($chunk);
+                $chunk = [];
             }
         }
+        $this->insertReconcileChunk($chunk);
+    }
+
+    protected function insertReconcileChunk(array $chunk)
+    {
+        if (empty($chunk)) {
+            return;
+        }
+        $affectedRows = $this->db($this->tables['reconcile'])->insertAll($chunk);
+        if ($affectedRows === false || (int)$affectedRows !== count($chunk)) {
+            $firstId = trim((string)($chunk[0]['reconcile_id'] ?? 'UNKNOWN'));
+            $lastId = trim((string)($chunk[count($chunk) - 1]['reconcile_id'] ?? $firstId));
+            $range = $firstId === $lastId ? $firstId : $firstId . '...' . $lastId;
+            throw new \RuntimeException('银行对账结果写入失败：' . $range);
+        }
+    }
+
+    protected function updateStatementStatuses(array $statementStatuses, array $currentStatementStatuses)
+    {
+        $transitionGroups = [];
+        foreach ($statementStatuses as $statementId => $status) {
+            $oldStatus = (string)$currentStatementStatuses[$statementId];
+            $groupKey = $oldStatus . "\0" . (string)$status;
+            if (!isset($transitionGroups[$groupKey])) {
+                $transitionGroups[$groupKey] = [
+                    'old_status' => $oldStatus,
+                    'new_status' => (string)$status,
+                    'statement_ids' => [],
+                ];
+            }
+            $transitionGroups[$groupKey]['statement_ids'][] = $statementId;
+        }
+
+        foreach ($transitionGroups as $group) {
+            foreach (array_chunk($group['statement_ids'], self::STATEMENT_UPDATE_BATCH_SIZE) as $statementIds) {
+                $oldStatus = $group['old_status'];
+                $newStatus = $group['new_status'];
+                // 状态不变时 MySQL 可能返回0行；先独立 count 严格确认完整范围，
+                // 再允许更新时间批量写入返回0..N。查询对象不可在 count 后复用。
+                if ($oldStatus === $newStatus) {
+                    $expectedRows = (int)$this->statementTransitionQuery($statementIds, $oldStatus)->count();
+                    if ($expectedRows !== count($statementIds)) {
+                        throw new \RuntimeException('银行流水对账状态写入失败：' . $statementIds[0]);
+                    }
+                }
+                $update = $this->callHook('prepare_update', [['reconcile_status' => $newStatus]]);
+                $affectedRows = $this->statementTransitionQuery($statementIds, $oldStatus)->update($update);
+                if ($affectedRows === false) {
+                    throw new \RuntimeException('银行流水对账状态写入失败：' . $statementIds[0]);
+                }
+                $affectedRows = (int)$affectedRows;
+                if (($oldStatus !== $newStatus && $affectedRows !== count($statementIds))
+                    || ($oldStatus === $newStatus && ($affectedRows < 0 || $affectedRows > count($statementIds)))
+                ) {
+                    throw new \RuntimeException('银行流水对账状态写入失败：' . $statementIds[0]);
+                }
+            }
+        }
+    }
+
+    protected function statementTransitionQuery(array $statementIds, $oldStatus)
+    {
+        return $this->db($this->tables['statement'])->where([
+            'account_set_id' => $this->accountSetId(),
+            'fiscal_year' => $this->currentYear(),
+            'reconcile_status' => $oldStatus,
+            'del_flag' => 0,
+        ])->where('statement_id', 'in', $statementIds);
     }
 
     protected function softDeleteReconcileScope($dateStart, $dateEnd)

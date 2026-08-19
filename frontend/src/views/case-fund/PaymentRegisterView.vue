@@ -21,11 +21,17 @@
           <el-option label="银行转账" value="TRANSFER" />
           <el-option label="不明款认领" value="UNKNOWN" />
         </el-select>
+        <div class="amount-range-filter" role="group" aria-label="金额区间">
+          <el-input-number v-model="filters.amount_min" :min="0" :precision="2" :controls="false" placeholder="最低金额" class="amount-range-input" />
+          <span class="date-separator">至</span>
+          <el-input-number v-model="filters.amount_max" :min="0" :precision="2" :controls="false" placeholder="最高金额" class="amount-range-input" />
+        </div>
         <el-input v-model="filters.keyword" placeholder="案号 / 当事人 / 票据 / 流水号" clearable class="case-fund-search" @keyup.enter="query" />
         <el-button type="primary" :icon="Search" :loading="loading" @click="query">查询</el-button>
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls" class="case-fund-file-input" @change="handlePaymentImportFile" />
+        <el-button v-if="paymentJob" type="primary" plain @click="openPaymentJobDialog">后台任务</el-button>
         <el-dropdown v-if="canUseMoreActions" trigger="click" @command="handleMoreAction">
           <el-button :icon="MoreFilled">
             更多功能
@@ -33,9 +39,9 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item v-permission="'case_fund:delete'" command="delete" :icon="Delete" :disabled="deleting" class="danger-dropdown-item" style="color: var(--el-color-danger)">删除</el-dropdown-item>
-              <el-dropdown-item v-permission="'case_fund:subject_config'" command="subjectConfig" :icon="Setting">科目配置</el-dropdown-item>
-              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="importing">导入缴费</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:delete'" command="delete" :icon="Delete" :disabled="deleting || paymentJobBusy" class="danger-dropdown-item" style="color: var(--el-color-danger)">删除</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:subject_config'" command="subjectConfig" :icon="Setting" :disabled="paymentJobBusy">科目配置</el-dropdown-item>
+              <el-dropdown-item v-permission="'case_fund:import'" command="import" :icon="Upload" :disabled="paymentJobBusy">导入缴费</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -46,6 +52,13 @@
       <template #title>
         <span>正在查看银行对账关联的缴费记录</span>
         <el-button link type="primary" @click="clearLinkedPayment">返回当前期间全部数据</el-button>
+      </template>
+    </el-alert>
+
+    <el-alert v-if="paymentRecoveryUnconfirmed" type="warning" show-icon :closable="false" class="case-fund-link-alert">
+      <template #title>
+        <span>上次后台任务的提交或运行结果尚未确认，为避免重复导入或重复制证，相关操作已暂时锁定。</span>
+        <el-button link type="warning" :loading="paymentRecoveryLoading" @click="retryPaymentJobRecovery">重新确认</el-button>
       </template>
     </el-alert>
 
@@ -63,8 +76,8 @@
         <strong>{{ ungeneratedCount }}</strong>
       </div>
       <div class="case-fund-summary-actions">
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucher">生成凭证</el-button>
-        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" :disabled="paymentJobBusy" @click="handleGenerateVoucher">生成凭证</el-button>
+        <el-button v-permission="'case_fund:generate_voucher'" type="success" :icon="DocumentChecked" :loading="generating" :disabled="paymentJobBusy" @click="handleGenerateVoucherByQuery">按查询生成</el-button>
       </div>
     </div>
 
@@ -197,6 +210,17 @@
         <el-button type="primary" :loading="subjectConfigSaving" @click="saveSubjectConfig">保存</el-button>
       </template>
     </el-dialog>
+
+    <CaseFundJobProgressDialog
+      v-model="paymentJobDialogVisible"
+      :job="paymentJob"
+      title="缴费业务后台任务"
+      :job-type-label="paymentJobTypeLabel"
+      :poll-error="paymentJobPollError"
+      :status-loading="paymentJobStatusLoading"
+      @refresh="refreshPaymentJob"
+      @view-errors="showPaymentJobErrors"
+    />
   </div>
 </template>
 
@@ -207,9 +231,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Search, Setting, Upload, DocumentChecked, Delete, MoreFilled } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
+import CaseFundJobProgressDialog from '../../components/case-fund/CaseFundJobProgressDialog.vue'
+import { createCaseFundClientRequestId, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
 import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
-import type { CaseFundPayment, CaseFundSubjectConfig, Subject } from '../../types/api'
+import type { CaseFundJob, CaseFundPayment, CaseFundSubjectConfig, Subject } from '../../types/api'
 
 const context = useContextStore()
 const route = useRoute()
@@ -220,8 +246,6 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
-const importing = ref(false)
-const generating = ref(false)
 const deleting = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedPaymentIds = ref<string[]>([])
@@ -241,6 +265,8 @@ const filters = reactive({
   date_end: initialRange.end,
   voucher_status: '',
   payment_method: '',
+  amount_min: null as number | null,
+  amount_max: null as number | null,
   keyword: ''
 })
 const linkedPaymentId = computed(() => routeQueryText(route.query.payment_id))
@@ -263,6 +289,8 @@ const load = async () => {
       date_end: filters.date_end,
       voucher_status: filters.voucher_status,
       payment_method: filters.payment_method,
+      amount_min: filters.amount_min,
+      amount_max: filters.amount_max,
       keyword: filters.keyword,
       page: page.value,
       pagesize: pageSize.value
@@ -274,13 +302,236 @@ const load = async () => {
   }
 }
 
+const PAYMENT_IMPORT_JOB_TYPE = 'CASE_FUND_PAYMENT_IMPORT'
+const PAYMENT_VOUCHER_JOB_TYPE = 'CASE_FUND_PAYMENT_VOUCHER'
+type PendingPaymentJobSubmission = {
+  client_request_id: string
+  job_type: string
+}
+
+const paymentJobStorageKey = () => `court-finance-case-fund-job:${context.accountSetId}:${context.userId}:${context.year}:payments`
+const paymentPendingStorageKey = () => `${paymentJobStorageKey()}:pending`
+
+const readStoredPaymentJobId = () => {
+  try {
+    return String(localStorage.getItem(paymentJobStorageKey()) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+const readPendingPaymentSubmission = (): PendingPaymentJobSubmission | null => {
+  try {
+    const raw = localStorage.getItem(paymentPendingStorageKey())
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<PendingPaymentJobSubmission>
+    const clientRequestId = String(parsed.client_request_id || '').trim()
+    const jobType = String(parsed.job_type || '').trim()
+    return clientRequestId && jobType ? { client_request_id: clientRequestId, job_type: jobType } : null
+  } catch {
+    return null
+  }
+}
+
+const storedPaymentJobId = ref(readStoredPaymentJobId())
+const pendingPaymentSubmission = ref<PendingPaymentJobSubmission | null>(readPendingPaymentSubmission())
+const paymentRecoveryUnconfirmed = ref(false)
+const paymentRecoveryLoading = ref(false)
+
+const persistPendingPaymentSubmission = (pending: PendingPaymentJobSubmission) => {
+  pendingPaymentSubmission.value = pending
+  paymentRecoveryUnconfirmed.value = false
+  try {
+    localStorage.setItem(paymentPendingStorageKey(), JSON.stringify(pending))
+  } catch {
+    // 内存状态仍会阻止当前页面重复提交。
+  }
+}
+
+const clearPendingPaymentSubmission = () => {
+  pendingPaymentSubmission.value = null
+  paymentRecoveryUnconfirmed.value = false
+  try {
+    localStorage.removeItem(paymentPendingStorageKey())
+  } catch {
+    // 本地存储清理失败不影响已经取得的任务状态。
+  }
+}
+
+const persistPaymentJob = (job: CaseFundJob) => {
+  storedPaymentJobId.value = job.job_id
+  try {
+    localStorage.setItem(paymentJobStorageKey(), job.job_id)
+    clearPendingPaymentSubmission()
+  } catch {
+    // 保留 pending，刷新后仍可按幂等号查回任务。
+  }
+}
+
+const removeStoredPaymentJob = (jobId?: string) => {
+  if (!jobId || storedPaymentJobId.value === jobId) {
+    storedPaymentJobId.value = ''
+  }
+  try {
+    const storageKey = paymentJobStorageKey()
+    if (!jobId || localStorage.getItem(storageKey) === jobId) {
+      localStorage.removeItem(storageKey)
+    }
+  } catch {
+    // 本地存储清理失败不影响后台任务结果。
+  }
+}
+
+const handlePaymentJobFinished = async (finishedJob: CaseFundJob) => {
+  removeStoredPaymentJob(finishedJob.job_id)
+  clearPendingPaymentSubmission()
+  const result = finishedJob.result || {}
+  if (finishedJob.job_type === PAYMENT_VOUCHER_JOB_TYPE) {
+    selectedPaymentIds.value = []
+    selectedPaymentRows.value = []
+  }
+  if (finishedJob.status === 'SUCCEEDED') {
+    if (finishedJob.job_type === PAYMENT_IMPORT_JOB_TYPE) {
+      ElMessage.success(`缴费导入完成：新增${Number(result.created || 0)}条，覆盖${Number(result.updated || 0)}条，跳过重复${Number(result.skipped || 0)}条`)
+      page.value = 1
+    } else {
+      ElMessage.success(`凭证生成完成：成功生成 ${Number(result.generated_count || 0)} 张凭证，处理 ${Number(result.payment_count || finishedJob.success_count || 0)} 条缴费记录`)
+    }
+  } else if (finishedJob.status === 'PARTIAL_FAILED') {
+    ElMessage.warning(`后台任务已完成，但有 ${Number(finishedJob.failure_count || 0)} 条数据失败，请查看错误明细`)
+  } else {
+    ElMessage.error(finishedJob.error_message || '缴费业务后台任务执行失败')
+  }
+  await load().catch(() => {})
+}
+
+const {
+  job: paymentJob,
+  dialogVisible: paymentJobDialogVisible,
+  creating: paymentJobCreating,
+  statusLoading: paymentJobStatusLoading,
+  createError: paymentJobCreateError,
+  pollError: paymentJobPollError,
+  isActive: paymentJobActive,
+  createJob: createPaymentJob,
+  trackJob: trackPaymentJob,
+  resumeJob: resumePaymentJob,
+  refreshJob: refreshPaymentJob,
+  openDialog: openPaymentJobDialog
+} = useCaseFundJob({
+  onUpdated: persistPaymentJob,
+  onFinished: (job) => { void handlePaymentJobFinished(job) }
+})
+
+const paymentJobUnresolved = computed(() => (
+  Boolean(pendingPaymentSubmission.value)
+  || Boolean(storedPaymentJobId.value && !paymentJob.value)
+))
+const paymentJobBusy = computed(() => (
+  paymentJobCreating.value
+  || paymentJobActive.value
+  || paymentJobUnresolved.value
+  || paymentRecoveryLoading.value
+))
+const generating = computed(() => (
+  pendingPaymentSubmission.value?.job_type === PAYMENT_VOUCHER_JOB_TYPE
+  || (paymentJobActive.value && paymentJob.value?.job_type === PAYMENT_VOUCHER_JOB_TYPE)
+))
+const paymentJobTypeLabel = computed(() => (
+  paymentJob.value?.job_type === PAYMENT_IMPORT_JOB_TYPE ? '缴费登记导入' : '缴费凭证生成'
+))
+
+const recoverPendingPaymentJob = async (showMessage = true) => {
+  const pending = pendingPaymentSubmission.value
+  if (!pending) return null
+  paymentRecoveryLoading.value = true
+  try {
+    const result = await caseFundApi.jobList({
+      client_request_id: pending.client_request_id,
+      job_type: pending.job_type,
+      page: 1,
+      pagesize: 10
+    })
+    const recoveredJob = result.items.find((item) => (
+      item.client_request_id === pending.client_request_id
+      && item.job_type === pending.job_type
+    ))
+    if (!recoveredJob) {
+      // 只有精确任务查询成功且确认不存在时才解除锁定；查询失败仍保留 pending，
+      // 避免把“暂时查不到”误判成“任务未创建”而造成重复导入或重复制证。
+      clearPendingPaymentSubmission()
+      if (showMessage) {
+        ElMessage.info('已确认后台不存在上次待提交任务，操作锁定已解除，请重新发起操作')
+      }
+      return null
+    }
+    paymentRecoveryUnconfirmed.value = false
+    trackPaymentJob(recoveredJob, true)
+    if (showMessage && !isCaseFundJobTerminal(recoveredJob.status)) {
+      ElMessage.info('已恢复上次待确认的缴费后台任务')
+    }
+    return recoveredJob
+  } catch (error: any) {
+    paymentRecoveryUnconfirmed.value = true
+    if (showMessage) {
+      ElMessage.warning(error?.message || '暂时无法确认上次任务状态，原任务可能仍在运行，请勿重复提交')
+    }
+    return null
+  } finally {
+    paymentRecoveryLoading.value = false
+  }
+}
+
+const restorePaymentJob = async (showMessage = true) => {
+  const jobId = storedPaymentJobId.value
+  if (!jobId) return recoverPendingPaymentJob(showMessage)
+  paymentRecoveryLoading.value = true
+  try {
+    const restoredJob = await resumePaymentJob(jobId, true)
+    paymentRecoveryUnconfirmed.value = false
+    if (showMessage && !isCaseFundJobTerminal(restoredJob.status)) {
+      ElMessage.info('已恢复上次未完成的缴费后台任务')
+    }
+    return restoredJob
+  } catch (error: any) {
+    paymentRecoveryUnconfirmed.value = true
+    if (showMessage) {
+      ElMessage.warning(error?.message || '暂时无法恢复后台任务状态，原任务可能仍在运行，请勿重复提交')
+    }
+    return null
+  } finally {
+    paymentRecoveryLoading.value = false
+  }
+}
+
+const retryPaymentJobRecovery = () => { void restorePaymentJob(true) }
+
+const keepOrClearPendingPaymentSubmission = (error: any) => {
+  if (error?.result) {
+    clearPendingPaymentSubmission()
+    return
+  }
+  if (pendingPaymentSubmission.value) {
+    paymentRecoveryUnconfirmed.value = true
+  }
+}
+
 const query = async () => {
+  if (!validateAmountRange()) return
   if (linkedPaymentId.value) {
     await clearLinkedPayment()
     return
   }
   page.value = 1
   await load()
+}
+
+const validateAmountRange = () => {
+  if (filters.amount_min !== null && filters.amount_max !== null && filters.amount_min > filters.amount_max) {
+    ElMessage.warning('最低金额不能大于最高金额')
+    return false
+  }
+  return true
 }
 
 const clearLinkedPayment = async () => {
@@ -465,24 +716,43 @@ const handlePaymentImportFile = async (event: Event) => {
     ElMessage.warning('请选择 .xls 格式的缴费登记文件')
     return
   }
-  importing.value = true
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.warning('缴费登记文件不能超过10MB，请拆分后导入')
+    return
+  }
+  if (paymentJobBusy.value) {
+    ElMessage.warning('已有后台任务或待确认提交，请先确认任务状态')
+    return
+  }
   try {
     const contentBase64 = await readFileBase64(file)
-    const result = await caseFundApi.importPayments(file.name, contentBase64)
-    ElMessage.success(`导入完成：新增${result.created}条，覆盖${result.updated || 0}条，跳过重复${result.skipped}条`)
-    page.value = 1
-    await load()
+    const clientRequestId = createCaseFundClientRequestId('payment-import')
+    persistPendingPaymentSubmission({
+      client_request_id: clientRequestId,
+      job_type: PAYMENT_IMPORT_JOB_TYPE
+    })
+    await createPaymentJob({
+      job_type: PAYMENT_IMPORT_JOB_TYPE,
+      client_request_id: clientRequestId,
+      payload: { period: context.period },
+      filename: file.name,
+      content_base64: contentBase64
+    })
+    ElMessage.success('缴费导入任务已提交，后台正在处理')
   } catch (error: any) {
-    await showPaymentImportError(error)
-  } finally {
-    importing.value = false
+    keepOrClearPendingPaymentSubmission(error)
+    const detailsShown = await showPaymentImportError(error)
+    if (!detailsShown) {
+      const message = paymentJobCreateError.value || error?.message || '缴费导入任务提交失败'
+      error?.result ? ElMessage.error(message) : ElMessage.warning(message)
+    }
   }
 }
 
 const showPaymentImportError = async (error: any) => {
   const details = Array.isArray(error?.data) ? error.data.filter(Boolean).map(String) : []
   if (details.length === 0) {
-    return
+    return false
   }
   const visibleDetails = details.slice(0, 80)
   const moreText = details.length > visibleDetails.length ? `\n还有 ${details.length - visibleDetails.length} 条错误未显示，请先处理前面错误后重新导入。` : ''
@@ -495,6 +765,7 @@ const showPaymentImportError = async (error: any) => {
       customClass: 'import-validation-dialog'
     }
   ).catch(() => {})
+  return true
 }
 
 const readFileBase64 = (file: File) => {
@@ -546,6 +817,8 @@ const buildGenerateVoucherQueryPayload = () => ({
   date_end: filters.date_end,
   voucher_status: 'UNGENERATED',
   payment_method: filters.payment_method,
+  amount_min: filters.amount_min,
+  amount_max: filters.amount_max,
   keyword: filters.keyword
 })
 
@@ -563,20 +836,35 @@ const handleGenerateVoucher = async () => {
   } catch {
     return
   }
-  generating.value = true
+  if (paymentJobBusy.value) {
+    ElMessage.warning('已有后台任务或待确认提交，请先确认任务状态')
+    return
+  }
+  const clientRequestId = createCaseFundClientRequestId('payment-voucher-selected')
+  persistPendingPaymentSubmission({
+    client_request_id: clientRequestId,
+    job_type: PAYMENT_VOUCHER_JOB_TYPE
+  })
   try {
-    const result = await caseFundApi.paymentGenerateVoucher(selectedPaymentIds.value)
-    ElMessage.success(`成功生成 ${result.generated_count} 张凭证`)
-    selectedPaymentIds.value = []
-    await load()
+    await createPaymentJob({
+      job_type: PAYMENT_VOUCHER_JOB_TYPE,
+      client_request_id: clientRequestId,
+      payload: {
+        period: context.period,
+        generate_scope: 'SELECTED',
+        payment_ids: [...selectedPaymentIds.value]
+      }
+    })
+    ElMessage.success('缴费凭证生成任务已提交，后台正在处理')
   } catch (e: any) {
-    ElMessage.error(e?.message || '生成凭证失败')
-  } finally {
-    generating.value = false
+    keepOrClearPendingPaymentSubmission(e)
+    const message = paymentJobCreateError.value || e?.message || '凭证生成任务提交失败'
+    e?.result ? ElMessage.error(message) : ElMessage.warning(message)
   }
 }
 
 const handleGenerateVoucherByQuery = async () => {
+  if (!validateAmountRange()) return
   try {
     await ElMessageBox.confirm(
       '确定按当前查询条件生成全部未制证缴费记录的凭证吗？该操作不受当前分页限制。',
@@ -586,17 +874,30 @@ const handleGenerateVoucherByQuery = async () => {
   } catch {
     return
   }
-  generating.value = true
+  if (paymentJobBusy.value) {
+    ElMessage.warning('已有后台任务或待确认提交，请先确认任务状态')
+    return
+  }
+  const clientRequestId = createCaseFundClientRequestId('payment-voucher-query')
+  persistPendingPaymentSubmission({
+    client_request_id: clientRequestId,
+    job_type: PAYMENT_VOUCHER_JOB_TYPE
+  })
   try {
-    const result = await caseFundApi.paymentGenerateVoucherByQuery(buildGenerateVoucherQueryPayload())
-    ElMessage.success(`成功生成 ${result.generated_count} 张凭证，处理 ${result.payment_count} 条缴费记录`)
-    selectedPaymentIds.value = []
-    selectedPaymentRows.value = []
-    await load()
+    await createPaymentJob({
+      job_type: PAYMENT_VOUCHER_JOB_TYPE,
+      client_request_id: clientRequestId,
+      payload: {
+        period: context.period,
+        generate_scope: 'QUERY',
+        ...buildGenerateVoucherQueryPayload()
+      }
+    })
+    ElMessage.success('按查询条件生成缴费凭证的任务已提交，后台正在处理')
   } catch (e: any) {
-    ElMessage.error(e?.message || '生成凭证失败')
-  } finally {
-    generating.value = false
+    keepOrClearPendingPaymentSubmission(e)
+    const message = paymentJobCreateError.value || e?.message || '凭证生成任务提交失败'
+    e?.result ? ElMessage.error(message) : ElMessage.warning(message)
   }
 }
 
@@ -627,6 +928,35 @@ const handleDeletePayments = async () => {
   }
 }
 
+const showPaymentJobErrors = async () => {
+  if (!paymentJob.value) return
+  let result
+  try {
+    result = await caseFundApi.jobErrorList(paymentJob.value.job_id, { page: 1, pagesize: 80 })
+  } catch (error: any) {
+    ElMessage.error(error?.message || '任务错误明细查询失败')
+    return
+  }
+  if (!result.items.length) {
+    ElMessage.info(paymentJob.value.error_message || '当前任务没有可展示的逐条错误明细')
+    return
+  }
+  const details = result.items.map((item) => {
+    const rowLabel = item.source_row_no ? `第${item.source_row_no}行` : `第${item.item_no || '-'}项`
+    return `${rowLabel}：${item.error_message || item.error_code || '处理失败'}`
+  })
+  const moreText = result.total > details.length ? `\n还有 ${result.total - details.length} 条错误未显示。` : ''
+  await ElMessageBox.alert(
+    `${details.join('\n')}${moreText}`,
+    '任务错误明细',
+    {
+      type: 'error',
+      confirmButtonText: '知道了',
+      customClass: 'import-validation-dialog'
+    }
+  ).catch(() => {})
+}
+
 watch(
   () => route.query.payment_id,
   async () => {
@@ -636,7 +966,10 @@ watch(
   }
 )
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void restorePaymentJob()
+})
 </script>
 
 <style scoped>

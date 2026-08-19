@@ -230,6 +230,48 @@ importPersistenceAssertSame('account-set-import', $paymentInsert['row']['account
 importPersistenceAssertSame('new.xls', $paymentInsert['row']['source_file_name'], 'Payment insert should retain source filename');
 importPersistenceAssertSame('import-user', $paymentInsert['row']['created_by'], 'Payment insert should use the caller create metadata hook');
 
+$store->queries = [];
+$noReceiptAuxExisting = $persistence->loadExistingPaymentsForImport([
+    [
+        'source_fingerprint' => 'FP-JUNE-NEW',
+        'receipt_no' => '',
+        'bank_account_no' => 'BANK-2',
+        'payment_amount' => '20.00',
+    ],
+], false);
+importPersistenceAssertSame([], $noReceiptAuxExisting, 'No-receipt-aux import should not match an existing row by bank account and amount');
+importPersistenceAssertSame(1, count($store->queries), 'No-receipt-aux import should only query existing source fingerprints');
+importPersistenceAssertSame(
+    ['source_fingerprint', ['FP-JUNE-NEW']],
+    $store->queries[0]['in'],
+    'No-receipt-aux import should not query receipt numbers or bank accounts'
+);
+
+$store->inserts = [];
+$noReceiptAuxResult = $persistence->persistPaymentRows([
+    [
+        'source_fingerprint' => 'FP-SAME-AMOUNT-ONE',
+        'receipt_no' => '',
+        'bank_account_no' => 'BANK-SHARED',
+        'payment_amount' => '7500.00',
+    ],
+    [
+        'source_fingerprint' => 'FP-SAME-AMOUNT-TWO',
+        'receipt_no' => '',
+        'bank_account_no' => 'BANK-SHARED',
+        'payment_amount' => '7500.00',
+    ],
+], [], [
+    'filename' => 'no-receipt-aux.xls',
+    'use_receipt_no_as_duplicate_key' => false,
+]);
+importPersistenceAssertSame(
+    ['created' => 2, 'updated' => 0, 'skipped' => 0],
+    $noReceiptAuxResult,
+    'No-receipt-aux import should keep different source rows even when bank account and amount are identical'
+);
+importPersistenceAssertSame(2, count($store->inserts), 'No-receipt-aux import should insert both distinct source rows');
+
 $duplicateErrors = $persistence->paymentReceiptNoDuplicateErrors([
     ['source_row_no' => 2, 'receipt_no' => 'R-ACTIVE'],
     ['source_row_no' => 3, 'receipt_no' => 'R-ACTIVE'],

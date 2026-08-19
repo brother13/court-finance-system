@@ -338,12 +338,13 @@ foreach (['Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbid
     }
 }
 $modelSource = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
-if (substr_count($modelSource, 'voucherAuxiliaryService()->ensureArchivesForVoucherDetails') !== 3) {
-    voucherAuxiliaryFail('Payment, refund and distribution generation must share the auxiliary service');
+if (substr_count($modelSource, 'voucherAuxiliaryService()->ensureArchivesForVoucherDetails') !== 4) {
+    voucherAuxiliaryFail('Payment, refund, unknown-payment and distribution generation must share the auxiliary service');
 }
 foreach ([
     'PaymentVoucherGenerationService.php',
     'RefundVoucherGenerationService.php',
+    'UnknownPaymentVoucherGenerationService.php',
     'DistributionVoucherGenerationService.php',
 ] as $generationFile) {
     $generationSource = file_get_contents(

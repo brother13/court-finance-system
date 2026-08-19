@@ -72,6 +72,12 @@ class CaseFundBankingPersistenceQuery
         return $this->store->nextResult($this->store->insertResults, $this->table, 1);
     }
 
+    public function insertAll($rows)
+    {
+        $this->remember('insertAll', $rows);
+        return $this->store->nextResult($this->store->insertResults, $this->table, count($rows));
+    }
+
     public function update($row)
     {
         $this->remember('update', $row);
@@ -286,13 +292,13 @@ $operations = array_map(function ($event) {
 if ($operations !== [
     'reconcile:count',
     'reconcile:update',
-    'reconcile:insert',
+    'reconcile:insertAll',
     'statement:update',
     'statement:update',
 ]) {
-    bankingPersistenceFail('Reconcile persistence should count, replace, insert and then update statuses in order');
+    bankingPersistenceFail('Reconcile persistence should count, replace, batch insert and then update grouped statuses in order');
 }
-$reconcileInsert = $store->events[2]['row'];
+$reconcileInsert = $store->events[2]['row'][0];
 if (($reconcileInsert['account_set_id'] ?? '') !== 'set-1'
     || ($reconcileInsert['fiscal_year'] ?? 0) !== 2026
 ) {
@@ -339,6 +345,7 @@ $store->events = [];
 $store->countResults['reconcile'] = 0;
 $store->updateResults['reconcile'] = 0;
 $store->updateResults['statement'] = 0;
+$store->countResults['statement'] = 1;
 $service->persistReconcileResult(
     '',
     '',
@@ -363,6 +370,68 @@ try {
 } catch (\RuntimeException $e) {
     if ($e->getMessage() !== '银行流水对账状态写入失败：S-CHANGED') {
         bankingPersistenceFail('Changed-status update failure should identify its statement');
+    }
+}
+
+$store->events = [];
+$store->countResults['reconcile'] = 0;
+$store->updateResults['reconcile'] = 0;
+$store->updateResults['statement'] = 3;
+$service->persistReconcileResult(
+    '2026-07-01',
+    '2026-07-31',
+    ['S-GROUP-1', 'S-GROUP-2', 'S-GROUP-3'],
+    [],
+    [
+        'S-GROUP-1' => 'MATCHED',
+        'S-GROUP-2' => 'MATCHED',
+        'S-GROUP-3' => 'MATCHED',
+    ],
+    [
+        'S-GROUP-1' => 'UNMATCHED',
+        'S-GROUP-2' => 'UNMATCHED',
+        'S-GROUP-3' => 'UNMATCHED',
+    ]
+);
+$statementUpdates = array_values(array_filter($store->events, function ($event) {
+    return $event['table'] === 'statement' && $event['operation'] === 'update';
+}));
+if (count($statementUpdates) !== 1) {
+    bankingPersistenceFail('Same statement status transition should use one grouped update');
+}
+if ($statementUpdates[0]['where'][0][1]['reconcile_status'] !== 'UNMATCHED'
+    || $statementUpdates[0]['where'][1] !== [
+        'statement_id',
+        'in',
+        ['S-GROUP-1', 'S-GROUP-2', 'S-GROUP-3'],
+    ]
+) {
+    bankingPersistenceFail('Grouped statement update should fence the old status and exact statement ids');
+}
+
+$store->events = [];
+$store->updateResults['statement'] = 2;
+try {
+    $service->persistReconcileResult(
+        '',
+        '',
+        ['S-PARTIAL-1', 'S-PARTIAL-2', 'S-PARTIAL-3'],
+        [],
+        [
+            'S-PARTIAL-1' => 'MATCHED',
+            'S-PARTIAL-2' => 'MATCHED',
+            'S-PARTIAL-3' => 'MATCHED',
+        ],
+        [
+            'S-PARTIAL-1' => 'UNMATCHED',
+            'S-PARTIAL-2' => 'UNMATCHED',
+            'S-PARTIAL-3' => 'UNMATCHED',
+        ]
+    );
+    bankingPersistenceFail('Partial grouped statement status update should fail');
+} catch (\RuntimeException $e) {
+    if ($e->getMessage() !== '银行流水对账状态写入失败：S-PARTIAL-1') {
+        bankingPersistenceFail('Partial grouped statement update should identify the failed scope');
     }
 }
 
@@ -401,7 +470,7 @@ try {
 }
 
 $store->events = [];
-$store->insertResults['reconcile'] = [1, 0];
+$store->insertResults['reconcile'] = 1;
 $store->countResults['reconcile'] = 0;
 $store->updateResults['reconcile'] = 0;
 try {
@@ -411,10 +480,33 @@ try {
     ], [], []);
     bankingPersistenceFail('Second reconcile insert failure should propagate');
 } catch (\RuntimeException $e) {
-    if ($e->getMessage() !== '银行对账结果写入失败：R-SECOND') {
-        bankingPersistenceFail('Second reconcile insert failure should identify its row');
+    if ($e->getMessage() !== '银行对账结果写入失败：R-FIRST...R-SECOND') {
+        bankingPersistenceFail('Partial batch reconcile insert failure should identify its row range');
     }
 }
+
+$store->events = [];
+$store->insertResults['reconcile'] = [200, 200, 1];
+$store->countResults['reconcile'] = 0;
+$store->updateResults['reconcile'] = 0;
+$bulkRows = [];
+for ($index = 1; $index <= 401; $index++) {
+    $bulkRows[] = [
+        'reconcile_id' => 'R-BULK-' . $index,
+        'match_status' => 'BIZ_ONLY',
+        'match_rule' => 'SERIAL_NO_DATE',
+    ];
+}
+$service->persistReconcileResult('', '', [], $bulkRows, [], []);
+$bulkInsertEvents = array_values(array_filter($store->events, function ($event) {
+    return $event['table'] === 'reconcile' && $event['operation'] === 'insertAll';
+}));
+if (array_map(function ($event) {
+    return count($event['row']);
+}, $bulkInsertEvents) !== [200, 200, 1]) {
+    bankingPersistenceFail('Reconcile result insertAll should use bounded 200-row batches');
+}
+unset($bulkRows);
 
 $serviceSource = file_get_contents(__DIR__ . '/../app/finance/service/casefund/banking/CaseFundBankingPersistenceService.php');
 foreach (['Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {
@@ -429,16 +521,16 @@ foreach (['insertStatements', 'deleteStatements', 'lockReconcileScope', 'persist
         bankingPersistenceFail('CaseFund should delegate banking write boundary: ' . $method);
     }
 }
-$runStart = strpos($modelSource, 'public function bankReconcileRun');
+$runStart = strpos($modelSource, 'protected function executeBankReconcile');
 $runEnd = strpos($modelSource, 'public function bankReconcileList', $runStart);
 $runSource = substr($modelSource, $runStart, $runEnd - $runStart);
 $runOrder = [
     'Db::startTrans()',
     'lockReconcileScope',
-    'bankStatementsInScope',
-    'bankReconcileMatcher()->match',
+    'prefetchReconcileScope',
+    'bankReconcileMatcher()->matchPrefetched',
     'persistReconcileResult',
-    "logAudit('CASE_FUND_BANK_RECONCILE'",
+    "'CASE_FUND_BANK_RECONCILE'",
     'Db::commit()',
 ];
 $position = -1;

@@ -73,9 +73,14 @@ class CaseFundVoucherRuleProbe extends CaseFund
         return $this->voucherRule()->groupUnknownPaymentRowsForVoucher($rows, $byDay);
     }
 
-    public function unknownPaymentDetails($rows, $subjectConfig)
+    public function unknownPaymentDetails($rows, $subjectConfig, $debitConfigs = [], $creditConfigs = [])
     {
-        return $this->voucherRule()->buildUnknownPaymentVoucherDetailsData($rows, $subjectConfig);
+        return $this->voucherRule()->buildUnknownPaymentVoucherDetailsData(
+            $rows,
+            $subjectConfig,
+            $debitConfigs,
+            $creditConfigs
+        );
     }
 
     public function distributionDetails($rows, $subjectConfigMap)
@@ -198,6 +203,7 @@ $unknownRows = [
         'payer_name' => '甲',
         'bank_remark' => '备注一',
         'bank_summary' => '',
+        'unknown_aux_case_no' => '甲｜备注一｜BMK-A82F193B',
     ],
     [
         'unknown_payment_id' => 'u2',
@@ -206,6 +212,7 @@ $unknownRows = [
         'payer_name' => '乙',
         'bank_remark' => '',
         'bank_summary' => '摘要二',
+        'unknown_aux_case_no' => '乙｜BMK-C0FFEE01',
     ],
 ];
 voucherRuleAssertSame(
@@ -226,6 +233,29 @@ voucherRuleAssertSame(1201, $unknownDetails['total_cents'], 'Unknown-payment tot
 voucherRuleAssertSame(4, count($unknownDetails['details']), 'Each unknown-payment row should create one debit and one credit detail');
 voucherRuleAssertSame('收 不明款 甲 备注一', $unknownDetails['details'][0]['summary'], 'Unknown-payment summary should prefer bank remark');
 voucherRuleAssertSame('收 不明款 乙 摘要二', $unknownDetails['details'][2]['summary'], 'Unknown-payment summary should fall back to bank summary');
+voucherRuleAssertSame([], $unknownDetails['details'][0]['aux_values'] ?? [], 'Unconfigured unknown-payment subjects should keep the original no-auxiliary behavior');
+
+$configuredUnknownDetails = $probe->unknownPaymentDetails(
+    [$unknownRows[0]],
+    ['debit_subject_code' => '100201', 'credit_subject_code' => '224101'],
+    [],
+    [['aux_type_code' => 'case_no', 'required_flag' => 1, 'verification_flag' => 0]]
+);
+voucherRuleAssertSame([], $configuredUnknownDetails['details'][0]['aux_values'], 'Unknown-payment debit line should not receive case_no unless its own subject is configured');
+voucherRuleAssertSame(
+    [[
+        'aux_type_code' => 'case_no',
+        'aux_value' => '甲｜备注一｜BMK-A82F193B',
+        'aux_label' => '甲｜备注一｜BMK-A82F193B',
+    ]],
+    $configuredUnknownDetails['details'][1]['aux_values'],
+    'Unknown-payment credit line should receive the normal case_no value when its subject is configured'
+);
+voucherRuleAssertSame(
+    'case_no:甲｜备注一｜BMK-A82F193B',
+    $configuredUnknownDetails['details'][1]['aux_desc'],
+    'Unknown-payment auxiliary description should use the common case_no formatter'
+);
 
 $override = new CaseFundVoucherRuleOverrideProbe();
 $override->setSubjectAuxConfigs(['100201' => [], '224101' => []]);

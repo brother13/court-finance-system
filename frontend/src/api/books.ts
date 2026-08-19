@@ -1,5 +1,5 @@
 import { apiAction, apiBlobAction } from './http'
-import type { AuxBalanceRow, Subject, SubjectSummaryRow } from '../types/api'
+import type { AuxBalanceResult, CaseMovementDetailResult, Subject, SubjectSummaryRow } from '../types/api'
 
 export const booksApi = {
   detailLedger(params: {
@@ -166,6 +166,10 @@ export const booksApi = {
     subjectCode?: string
     caseNo?: string
     receiptNo?: string
+    onlyMonitor?: boolean
+    page?: number
+    pagesize?: number
+    exportAll?: boolean
     refreshSnapshot?: boolean
   }) {
     return apiAction('/book/auxBalance', {
@@ -173,10 +177,33 @@ export const booksApi = {
       subject_code: params.subjectCode,
       case_no: params.caseNo,
       receipt_no: params.receiptNo,
+      only_monitor: params.onlyMonitor ? 1 : 0,
+      page: params.page,
+      pagesize: params.pagesize,
+      export_all: params.exportAll ? 1 : 0,
       refresh_snapshot: params.refreshSnapshot ? 1 : 0
-    }) as Promise<{ items: AuxBalanceRow[]; total: number; period: string }>
+    }) as Promise<AuxBalanceResult>
   },
   auxBalanceSubjects() {
     return apiAction('/book/auxBalanceSubjects') as Promise<Subject[]>
+  },
+  caseMovementDetail(params: {
+    period: string
+    subjectCode?: string
+    caseNo?: string
+    receiptNo?: string
+    page?: number
+    pagesize?: number
+    refreshSnapshot?: boolean
+  }) {
+    return apiAction('/book/caseMovementDetail', {
+      period: params.period,
+      subject_code: params.subjectCode,
+      case_no: params.caseNo,
+      receipt_no: params.receiptNo,
+      page: params.page,
+      pagesize: params.pagesize,
+      refresh_snapshot: params.refreshSnapshot ? 1 : 0
+    }) as Promise<CaseMovementDetailResult>
   }
 }

@@ -112,6 +112,7 @@ create table fin_account_set (
     generate_voucher_by_day_flag tinyint not null default 1,
     generate_payment_voucher_by_method_flag tinyint not null default 0,
     generate_refund_voucher_by_out_order_no_flag tinyint not null default 0,
+    skip_confirmed_return_voucher_flag tinyint not null default 0,
     subject_code_rule varchar(50) not null default '4-2-2-2',
     status int not null,
     created_by varchar(36),
@@ -190,7 +191,7 @@ create table fin_aux_archive (
     archive_id varchar(36) primary key,
     account_set_id varchar(36) not null,
     aux_type_code varchar(50) not null,
-    archive_code varchar(100) not null,
+    archive_code varchar(200) not null,
     archive_name varchar(200) not null,
     extra_json text,
     status int not null,
@@ -411,6 +412,7 @@ create index idx_voucher_aux_voucher on fin_voucher_aux_value (account_set_id, v
 create index idx_voucher_aux_detail on fin_voucher_aux_value (account_set_id, detail_id);
 create index idx_voucher_aux_detail_id on fin_voucher_aux_value (voucher_id, detail_id);
 create index idx_voucher_aux_value on fin_voucher_aux_value (account_set_id, aux_type_code, aux_value);
+create index idx_voucher_aux_label_lookup on fin_voucher_aux_value (account_set_id, aux_type_code, aux_label, del_flag, fiscal_year, period);
 create index idx_voucher_aux_del on fin_voucher_aux_value (account_set_id, del_flag);
 
 create table fin_aux_balance_snapshot (
@@ -448,6 +450,44 @@ create index idx_aux_balance_snapshot_subject on fin_aux_balance_snapshot (accou
 create index idx_aux_balance_snapshot_case on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, case_no, del_flag);
 create index idx_aux_balance_snapshot_receipt on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, receipt_no, del_flag);
 create index idx_aux_balance_snapshot_monitor on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, monitor_flag, del_flag);
+create index idx_aux_balance_snapshot_page on fin_aux_balance_snapshot (account_set_id, fiscal_year, period, del_flag, subject_code, case_no);
+
+create table fin_case_movement_snapshot (
+    snapshot_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    voucher_id varchar(36) not null,
+    voucher_date date not null,
+    voucher_word varchar(10) not null default '记',
+    voucher_no int not null,
+    voucher_status varchar(20) not null default '',
+    detail_id varchar(36) not null,
+    line_no int not null default 0,
+    subject_code varchar(50) not null,
+    subject_name varchar(200) not null default '',
+    direction varchar(20) not null default 'DEBIT',
+    case_no varchar(200) not null,
+    receipt_no varchar(200) not null default '',
+    summary varchar(500) not null default '',
+    debit_amount decimal(18,2) not null default 0,
+    credit_amount decimal(18,2) not null default 0,
+    source_updated_time datetime,
+    snapshot_time datetime not null,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+
+create unique index uk_case_movement_snapshot_detail on fin_case_movement_snapshot (account_set_id, detail_id);
+create index idx_case_movement_snapshot_page on fin_case_movement_snapshot (account_set_id, period, del_flag, subject_code, case_no, voucher_date, voucher_no);
+create index idx_case_movement_snapshot_case on fin_case_movement_snapshot (account_set_id, case_no, period, del_flag);
+create index idx_case_movement_snapshot_receipt on fin_case_movement_snapshot (account_set_id, receipt_no, period, del_flag);
+create index idx_case_movement_snapshot_source on fin_case_movement_snapshot (account_set_id, source_updated_time, del_flag);
 
 create table fin_case_fund_payment (
     payment_id varchar(36) primary key,
@@ -503,6 +543,8 @@ create index idx_case_fund_payment_case on fin_case_fund_payment (account_set_id
 create index idx_case_fund_payment_receipt on fin_case_fund_payment (account_set_id, receipt_no);
 create index idx_case_fund_payment_bank_serial on fin_case_fund_payment (account_set_id, bank_serial_no);
 create index idx_case_fund_payment_voucher on fin_case_fund_payment (account_set_id, voucher_status, voucher_period, voucher_id);
+create index idx_case_fund_payment_voucher_sync on fin_case_fund_payment (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag);
+create index idx_case_fund_payment_reconcile_scope on fin_case_fund_payment (account_set_id, fiscal_year, del_flag, payment_date, bank_serial_no);
 
 create table fin_case_fund_refund (
     refund_id varchar(36) primary key,
@@ -560,6 +602,8 @@ create index idx_case_fund_refund_out_type on fin_case_fund_refund (account_set_
 create index idx_case_fund_refund_case on fin_case_fund_refund (account_set_id, case_no);
 create index idx_case_fund_refund_source_receipt on fin_case_fund_refund (account_set_id, source_receipt_no);
 create index idx_case_fund_refund_voucher on fin_case_fund_refund (account_set_id, voucher_status, voucher_period, voucher_id);
+create index idx_case_fund_refund_voucher_sync on fin_case_fund_refund (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag);
+create index idx_case_fund_refund_reconcile_scope on fin_case_fund_refund (account_set_id, fiscal_year, del_flag, refund_date, payee_bank_account_no);
 
 create table fin_case_fund_distribution (
     distribution_id varchar(36) primary key,
@@ -606,6 +650,7 @@ create index idx_case_fund_distribution_in_case on fin_case_fund_distribution (a
 create index idx_case_fund_distribution_out_case on fin_case_fund_distribution (account_set_id, out_case_no);
 create index idx_case_fund_distribution_receipt on fin_case_fund_distribution (account_set_id, receipt_no);
 create index idx_case_fund_distribution_voucher on fin_case_fund_distribution (account_set_id, voucher_status, voucher_period, voucher_id);
+create index idx_case_fund_distribution_voucher_sync on fin_case_fund_distribution (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag);
 
 create table fin_case_fund_unknown_payment (
     unknown_payment_id varchar(36) primary key,
@@ -618,6 +663,7 @@ create table fin_case_fund_unknown_payment (
     unknown_amount decimal(18,2) not null default 0.00,
     bank_summary varchar(255) not null default '',
     bank_remark varchar(255) not null default '',
+    aux_case_code varchar(20) null,
     transaction_date date not null,
     transaction_time datetime not null,
     court_bank_account_no varchar(80) not null default '',
@@ -645,10 +691,39 @@ create table fin_case_fund_unknown_payment (
     remark varchar(255) not null default ''
 );
 create unique index uk_case_fund_unknown_payment_source on fin_case_fund_unknown_payment (account_set_id, source_fingerprint, del_flag);
+create unique index uk_case_fund_unknown_payment_aux_code on fin_case_fund_unknown_payment (account_set_id, aux_case_code);
 create index idx_case_fund_unknown_payment_period on fin_case_fund_unknown_payment (account_set_id, period, transaction_date);
 create index idx_case_fund_unknown_payment_bank on fin_case_fund_unknown_payment (account_set_id, court_bank_account_no, transaction_date);
 create index idx_case_fund_unknown_payment_payer on fin_case_fund_unknown_payment (account_set_id, payer_name);
 create index idx_case_fund_unknown_payment_voucher on fin_case_fund_unknown_payment (account_set_id, voucher_status, voucher_period, voucher_id);
+create index idx_case_fund_unknown_payment_voucher_sync on fin_case_fund_unknown_payment (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag);
+create index idx_case_fund_unknown_reconcile_scope on fin_case_fund_unknown_payment (account_set_id, fiscal_year, del_flag, transaction_date, claim_status, payer_account_no);
+
+create table fin_case_fund_unknown_refund_match (
+    match_id varchar(36) primary key,
+    account_set_id varchar(36) not null,
+    fiscal_year int not null,
+    period varchar(7) not null,
+    unknown_payment_id varchar(36) not null,
+    refund_id varchar(36) not null,
+    match_status varchar(30) not null default 'AUTO_CANDIDATE',
+    match_rule varchar(60) not null default 'SAME_MONTH_NAME_AMOUNT_ACCOUNT',
+    candidate_count int not null default 1,
+    match_evidence_json text,
+    decision_by varchar(36),
+    decision_time datetime,
+    created_by varchar(36),
+    created_time datetime,
+    updated_by varchar(36),
+    updated_time datetime,
+    del_flag int not null default 0,
+    version int not null default 0,
+    remark varchar(500)
+);
+create unique index uk_case_fund_unknown_refund_pair on fin_case_fund_unknown_refund_match (account_set_id, unknown_payment_id, refund_id);
+create index idx_case_fund_return_match_unknown on fin_case_fund_unknown_refund_match (account_set_id, fiscal_year, unknown_payment_id, del_flag, match_status);
+create index idx_case_fund_return_match_refund on fin_case_fund_unknown_refund_match (account_set_id, fiscal_year, refund_id, del_flag, match_status);
+create index idx_case_fund_return_match_period on fin_case_fund_unknown_refund_match (account_set_id, fiscal_year, period, del_flag, match_status);
 
 create table fin_case_fund_bank_statement (
     statement_id varchar(36) primary key,
@@ -688,6 +763,7 @@ create index idx_case_fund_bank_statement_period on fin_case_fund_bank_statement
 create index idx_case_fund_bank_statement_bank on fin_case_fund_bank_statement (account_set_id, bank_code, transaction_date);
 create index idx_case_fund_bank_statement_serial on fin_case_fund_bank_statement (account_set_id, bank_serial_no);
 create index idx_case_fund_bank_statement_reconcile on fin_case_fund_bank_statement (account_set_id, reconcile_status, transaction_date);
+create index idx_case_fund_bank_statement_reconcile_scope on fin_case_fund_bank_statement (account_set_id, fiscal_year, del_flag, transaction_date, direction, counterparty_account_no);
 
 create table fin_case_fund_bank_reconcile (
     reconcile_id varchar(36) primary key,
@@ -724,6 +800,8 @@ create index idx_case_fund_bank_reconcile_status on fin_case_fund_bank_reconcile
 create index idx_case_fund_bank_reconcile_statement on fin_case_fund_bank_reconcile (account_set_id, statement_id);
 create index idx_case_fund_bank_reconcile_biz on fin_case_fund_bank_reconcile (account_set_id, biz_type, biz_id);
 create index idx_case_fund_bank_reconcile_serial on fin_case_fund_bank_reconcile (account_set_id, bank_serial_no);
+create index idx_case_fund_bank_reconcile_replace_scope on fin_case_fund_bank_reconcile (account_set_id, fiscal_year, del_flag, match_rule, reconcile_date);
+create index idx_case_fund_bank_reconcile_active_statement on fin_case_fund_bank_reconcile (account_set_id, fiscal_year, del_flag, statement_id);
 
 create table fin_case_fund_subject_config (
     config_id varchar(36) primary key,

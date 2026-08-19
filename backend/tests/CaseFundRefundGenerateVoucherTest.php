@@ -30,6 +30,8 @@ $checks = [
     ['fin_voucher_aux_value', 'Refund voucher generation should write voucher aux values'],
     ['persistVoucher', 'Refund voucher generation should use common voucher persistence'],
     ['generateRefundVoucherByOutOrderNoFlag', 'Refund voucher generation should read out-order grouping config'],
+    ['skipConfirmedReturnVoucherFlag', 'Refund voucher generation should read confirmed-return skip config'],
+    ["'fin_case_fund_unknown_refund_match'", 'Refund voucher generation should read confirmed return associations'],
     ['groupRefundRowsForVoucher', 'Refund voucher generation should group rows through a dedicated helper'],
     ['assertRowsCanGenerateVoucher', 'Refund voucher generation should validate whether selected generated rows can be regenerated'],
     ['hasActiveGeneratedVoucher', 'Refund voucher generation should block duplicate generation when the original voucher is still active'],
@@ -62,6 +64,8 @@ if (strpos($source, '缺少出账单号，不能按出账单号汇总生成凭�
 $schemaChecks = [
     [$ddl, 'generate_refund_voucher_by_out_order_no_flag tinyint not null default 0', 'DDL should add refund out-order grouping flag'],
     [$patch, 'generate_refund_voucher_by_out_order_no_flag', 'Patch should add refund out-order grouping flag idempotently'],
+    [$ddl, 'skip_confirmed_return_voucher_flag tinyint not null default 0', 'DDL should add confirmed-return voucher skip flag'],
+    [$patch, 'skip_confirmed_return_voucher_flag', 'Patch should add confirmed-return voucher skip flag idempotently'],
 ];
 
 foreach ($schemaChecks as [$haystack, $needle, $message]) {
@@ -179,7 +183,8 @@ $detailResult = $detailProbe->buildRefundDetails([
         'refund_id' => 'refund-a1',
         'case_no' => '案一',
         'party_name' => '张三',
-        'actual_payee_name' => '',
+        'actual_payee_name' => '收款人甲',
+        'payee_bank_account_name' => '银行户名甲',
         'out_type' => '执行款退付',
         'out_order_no' => 'OUT-001',
         'refund_amount' => '10.00',
@@ -190,7 +195,8 @@ $detailResult = $detailProbe->buildRefundDetails([
         'refund_id' => 'refund-a2',
         'case_no' => '案二',
         'party_name' => '李四',
-        'actual_payee_name' => '',
+        'actual_payee_name' => '收款人乙',
+        'payee_bank_account_name' => '银行户名乙',
         'out_type' => '执行款退付',
         'out_order_no' => 'OUT-001',
         'refund_amount' => '20.00',
@@ -201,7 +207,8 @@ $detailResult = $detailProbe->buildRefundDetails([
         'refund_id' => 'refund-b1',
         'case_no' => '案三',
         'party_name' => '王五',
-        'actual_payee_name' => '',
+        'actual_payee_name' => '收款人丙',
+        'payee_bank_account_name' => '银行户名丙',
         'out_type' => '执行款退付',
         'out_order_no' => 'OUT-002',
         'refund_amount' => '30.00',
@@ -217,11 +224,11 @@ $detailSummaries = array_map(function ($detail) {
     ];
 }, $detailResult['details']);
 $expectedDetails = [
-    ['summary' => '付 案一 张三', 'debit' => '10.00', 'credit' => '0.00'],
-    ['summary' => '付 案二 李四', 'debit' => '20.00', 'credit' => '0.00'],
+    ['summary' => '付 案一 银行户名甲', 'debit' => '10.00', 'credit' => '0.00'],
+    ['summary' => '付 案二 银行户名乙', 'debit' => '20.00', 'credit' => '0.00'],
     ['summary' => '付 出账单号OUT-001 合计', 'debit' => '0.00', 'credit' => '30.00'],
-    ['summary' => '付 案三 王五', 'debit' => '30.00', 'credit' => '0.00'],
-    ['summary' => '付 案三 王五', 'debit' => '0.00', 'credit' => '30.00'],
+    ['summary' => '付 案三 银行户名丙', 'debit' => '30.00', 'credit' => '0.00'],
+    ['summary' => '付 案三 银行户名丙', 'debit' => '0.00', 'credit' => '30.00'],
 ];
 if ($detailSummaries !== $expectedDetails) {
     fwrite(STDERR, 'Refund voucher details should keep repeated out_order_no as debit...credit group and unique out_order_no as debit-credit pair' . PHP_EOL);
@@ -239,6 +246,7 @@ $normalDetailResult = $detailProbe->buildRefundDetails([
         'case_no' => '案四',
         'party_name' => '',
         'actual_payee_name' => '赵六',
+        'payee_bank_account_name' => '银行户名赵六',
         'out_type' => '执行款退付',
         'out_order_no' => 'OUT-003',
         'refund_amount' => '40.00',
@@ -249,13 +257,13 @@ $normalDetailResult = $detailProbe->buildRefundDetails([
 $normalSummaries = array_map(function ($detail) {
     return $detail['summary'];
 }, $normalDetailResult['details']);
-if ($normalSummaries !== ['付 案四 赵六', '付 案四 赵六']) {
-    fwrite(STDERR, 'Normal refund voucher details should be 付 + case_no + party/payee' . PHP_EOL);
+if ($normalSummaries !== ['付 案四 银行户名赵六', '付 案四 银行户名赵六']) {
+    fwrite(STDERR, 'Normal refund voucher details should be 付 + case_no + payee bank account name' . PHP_EOL);
     fwrite(STDERR, var_export($normalSummaries, true) . PHP_EOL);
     exit(1);
 }
-if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => ''], false, '2026-03-05') !== '付 案五 钱七') {
-    fwrite(STDERR, 'Normal refund voucher header summary should be 付 + case_no + party/payee' . PHP_EOL);
+if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => '实际收款人孙八', 'payee_bank_account_name' => '银行户名孙八'], false, '2026-03-05') !== '付 案五 银行户名孙八') {
+    fwrite(STDERR, 'Normal refund voucher header summary should be 付 + case_no + payee bank account name' . PHP_EOL);
     exit(1);
 }
 if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => ''], true, '2026-03-05') !== '2026-03-05 付合计') {
@@ -275,7 +283,8 @@ foreach ([
         'refund_id' => $item[0],
         'case_no' => $item[1],
         'party_name' => '当事人',
-        'actual_payee_name' => '',
+        'actual_payee_name' => '实际收款人',
+        'payee_bank_account_name' => '银行户名',
         'out_type' => '执行款退付',
         'out_order_no' => $item[2],
         'refund_amount' => '1.00',
@@ -288,15 +297,15 @@ $interleavedShape = array_map(function ($detail) {
     return [$detail['summary'], $detail['debit_amount'], $detail['credit_amount']];
 }, $interleavedResult['details']);
 $expectedInterleavedShape = [
-    ['付 案A1 当事人', '1.00', '0.00'],
-    ['付 案A2 当事人', '1.00', '0.00'],
+    ['付 案A1 银行户名', '1.00', '0.00'],
+    ['付 案A2 银行户名', '1.00', '0.00'],
     ['付 出账单号A 合计', '0.00', '2.00'],
-    ['付 案B1 当事人', '1.00', '0.00'],
-    ['付 案B1 当事人', '0.00', '1.00'],
-    ['付 案空 当事人', '1.00', '0.00'],
-    ['付 案空 当事人', '0.00', '1.00'],
-    ['付 案C1 当事人', '1.00', '0.00'],
-    ['付 案C1 当事人', '0.00', '1.00'],
+    ['付 案B1 银行户名', '1.00', '0.00'],
+    ['付 案B1 银行户名', '0.00', '1.00'],
+    ['付 案空 银行户名', '1.00', '0.00'],
+    ['付 案空 银行户名', '0.00', '1.00'],
+    ['付 案C1 银行户名', '1.00', '0.00'],
+    ['付 案C1 银行户名', '0.00', '1.00'],
 ];
 if ($interleavedShape !== $expectedInterleavedShape) {
     fwrite(STDERR, 'Refund interleaved out-order groups should follow first occurrence and keep each debit-credit bucket adjacent' . PHP_EOL);

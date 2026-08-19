@@ -14,6 +14,7 @@ const viewPaths = [
   '../views/books/SubjectBalanceView.vue',
   '../views/books/SubjectSummaryView.vue',
   '../views/books/AuxBalanceView.vue',
+  '../views/books/CaseMovementDetailView.vue',
   '../views/case-fund/PaymentRegisterView.vue',
   '../views/case-fund/RefundRegisterView.vue',
   '../views/case-fund/BankStatementView.vue',

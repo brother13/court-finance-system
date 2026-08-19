@@ -8,6 +8,7 @@ const DetailLedgerView = () => import('../views/books/DetailLedgerView.vue')
 const SubjectBalanceView = () => import('../views/books/SubjectBalanceView.vue')
 const SubjectSummaryView = () => import('../views/books/SubjectSummaryView.vue')
 const AuxBalanceView = () => import('../views/books/AuxBalanceView.vue')
+const CaseMovementDetailView = () => import('../views/books/CaseMovementDetailView.vue')
 const PaymentRegisterView = () => import('../views/case-fund/PaymentRegisterView.vue')
 const RefundRegisterView = () => import('../views/case-fund/RefundRegisterView.vue')
 const BankStatementView = () => import('../views/case-fund/BankStatementView.vue')
@@ -41,6 +42,7 @@ const router = createRouter({
     { path: '/books/subject-balance', component: SubjectBalanceView, meta: { permission: 'menu:book:subject_balance' } },
     { path: '/books/subject-summary', component: SubjectSummaryView, meta: { permission: 'menu:book:subject_summary' } },
     { path: '/books/aux-balance', component: AuxBalanceView, meta: { permission: 'menu:book:aux_balance' } },
+    { path: '/books/case-movement-detail', component: CaseMovementDetailView, meta: { permission: 'menu:book:case_movement_detail' } },
     { path: '/case-fund/payments', component: PaymentRegisterView, meta: { permission: 'menu:case_fund:payment' } },
     { path: '/case-fund/refunds', component: RefundRegisterView, meta: { permission: 'menu:case_fund:refund' } },
     { path: '/case-fund/bank-statements', component: BankStatementView, meta: { permission: 'menu:case_fund:bank_statement' } },

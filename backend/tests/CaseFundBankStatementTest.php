@@ -42,7 +42,8 @@ $checks = [
     [$bankImplementationSource, 'refundCandidatesByBankStatement', 'Debit bank statement should reconcile refund rows by bank statement counterparty fields'],
     [$bankImplementationSource, "->where('payment_date', \$statement['transaction_date'])", 'Payment reconcile should first narrow by bank transaction date'],
     [$bankImplementationSource, "->where('refund_date', \$statement['transaction_date'])", 'Refund reconcile should first narrow by bank transaction date'],
-    [$bankImplementationSource, 'PAYEE_ACCOUNT_DATE', 'Refund reconcile should record payee account/date match rule'],
+    [$bankImplementationSource, 'PAYEE_ACCOUNT_DATE_AMOUNT', 'Refund reconcile should record payee account/date/amount match rule'],
+    [$bankRepositorySource, "'debit_amount' => \$refund['refund_amount'] ?? '0'", 'Refund bank-existence checks should include the outgoing amount'],
     [$bankImplementationSource, 'PAYER_ACCOUNT_DATE', 'Unknown-payment reconcile should record payer account/date match rule'],
     [$source, 'const BANK_RECONCILE_AUTO_MATCH_RULES = [', 'Bank reconcile rerun should define the complete automatic match-rule cleanup list'],
     [$bankPersistenceSource, "->where('match_rule', 'in', \$this->autoMatchRules)", 'Bank reconcile cleanup should cover every automatic match rule before inserting rerun results'],
@@ -83,7 +84,7 @@ if (!preg_match('/const BANK_RECONCILE_AUTO_MATCH_RULES\s*=\s*\[(.*?)\];/s', $so
     fwrite(STDERR, 'Bank reconcile automatic match rules should remain a class constant' . PHP_EOL);
     exit(1);
 }
-foreach (['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE', 'PAYER_ACCOUNT_DATE'] as $autoMatchRule) {
+foreach (['SERIAL_NO', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'PAYER_ACCOUNT_DATE'] as $autoMatchRule) {
     if (strpos($autoMatchRuleMatch[1], "'" . $autoMatchRule . "'") === false) {
         fwrite(STDERR, 'Bank reconcile cleanup should include automatic rule: ' . $autoMatchRule . PHP_EOL);
         exit(1);

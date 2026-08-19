@@ -232,7 +232,53 @@ export interface AuxBalanceRow {
   entry_count: number
   monitor_flag: boolean
   monitor_count: number
+  receipt_count?: number
   children?: AuxBalanceRow[]
+}
+
+export interface AuxBalanceResult {
+  items: AuxBalanceRow[]
+  total: number
+  monitor_total?: number
+  ending_total?: string | number
+  period: string
+  page?: number
+  pagesize?: number
+  snapshot_time?: string
+}
+
+export interface CaseMovementDetailRow {
+  snapshot_id: string
+  voucher_id: string
+  fiscal_year: number
+  period: string
+  voucher_date: string
+  voucher_word: string
+  voucher_no: number
+  voucher_label: string
+  voucher_status: string
+  detail_id: string
+  line_no: number
+  subject_code: string
+  subject_name: string
+  direction: 'DEBIT' | 'CREDIT' | string
+  case_no: string
+  receipt_no: string
+  summary: string
+  debit_amount: string | number
+  credit_amount: string | number
+}
+
+export interface CaseMovementDetailResult {
+  items: CaseMovementDetailRow[]
+  total: number
+  debit_total: string | number
+  credit_total: string | number
+  start_period: string
+  end_period: string
+  snapshot_time?: string
+  page: number
+  pagesize: number
 }
 
 export interface CaseFundPayment {
@@ -274,6 +320,56 @@ export interface CaseFundPayment {
   voucher_generated_time?: string
 }
 
+export type CaseFundReturnMatchStatus =
+  | 'INELIGIBLE'
+  | 'UNMATCHED'
+  | 'AUTO_CANDIDATE'
+  | 'AMBIGUOUS'
+  | 'CONFIRMED'
+  | 'REJECTED'
+
+export interface CaseFundReturnMatchStats {
+  total_unknown: number
+  ineligible: number
+  unmatched: number
+  auto_candidate: number
+  ambiguous: number
+  confirmed: number
+  rejected: number
+  candidate_pairs: number
+  saved_pairs?: number
+}
+
+export interface CaseFundReturnMatchItem {
+  match_id: string
+  account_set_id: string
+  fiscal_year: number
+  period: string
+  unknown_payment_id: string
+  refund_id: string
+  match_status: CaseFundReturnMatchStatus
+  match_rule: string
+  candidate_count: number
+  decision_by?: string
+  decision_time?: string
+  remark?: string
+  payer_name?: string
+  unknown_amount: string | number
+  payer_account_no?: string
+  transaction_date?: string
+  claim_status?: string
+  claim_user_name?: string
+  claim_date?: string
+  case_no?: string
+  out_order_no?: string
+  out_status?: string
+  out_type?: string
+  actual_payee_name?: string
+  refund_amount: string | number
+  payee_bank_account_no?: string
+  refund_date?: string
+}
+
 export interface CaseFundRefund {
   refund_id: string
   account_set_id: string
@@ -312,6 +408,10 @@ export interface CaseFundRefund {
   voucher_no?: number
   voucher_period?: string
   voucher_generated_time?: string
+  return_match_status?: CaseFundReturnMatchStatus
+  return_match_count?: number
+  return_match_id?: string
+  matched_unknown_payment_id?: string
 }
 
 export interface CaseFundUnknownPayment {
@@ -329,7 +429,10 @@ export interface CaseFundUnknownPayment {
   payer_name?: string
   bank_summary?: string
   bank_remark?: string
+  aux_case_code?: string
   claim_status?: 'UNCLAIMED' | 'CLAIMED' | string
+  claim_user_name?: string
+  claim_date?: string
   source_file_name?: string
   source_row_no?: number
   voucher_status: 'UNGENERATED' | 'GENERATED' | 'VOIDED' | string
@@ -337,6 +440,10 @@ export interface CaseFundUnknownPayment {
   voucher_no?: number
   voucher_period?: string
   voucher_generated_time?: string
+  return_match_status?: CaseFundReturnMatchStatus
+  return_match_count?: number
+  return_match_id?: string
+  matched_refund_id?: string
 }
 
 export interface CaseFundDistribution {
@@ -438,5 +545,101 @@ export interface CaseFundSubjectConfigResult {
   generate_voucher_by_day_flag?: number
   generate_payment_voucher_by_method_flag?: number
   generate_refund_voucher_by_out_order_no_flag?: number
+  skip_confirmed_return_voucher_flag?: number
   payment_method_items?: CaseFundSubjectConfig[]
+}
+
+export type CaseFundJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'PARTIAL_FAILED' | 'FAILED'
+
+export type CaseFundJobStage =
+  | 'PARSING'
+  | 'VALIDATING'
+  | 'MATCHING'
+  | 'WRITING'
+  | 'GENERATING'
+  | 'FINALIZING'
+  | string
+
+export interface CaseFundJob {
+  job_id: string
+  account_set_id?: string
+  fiscal_year?: number
+  period?: string
+  job_type: string
+  client_request_id: string
+  status: CaseFundJobStatus
+  stage?: CaseFundJobStage
+  progress_percent?: number
+  total_count?: number
+  processed_count?: number
+  success_count?: number
+  failure_count?: number
+  message?: string
+  error_message?: string
+  launcher_warning?: string
+  result?: Record<string, any> | null
+  source_file_name?: string
+  queued_time?: string
+  started_time?: string
+  heartbeat_time?: string
+  finished_time?: string
+  created_time?: string
+  updated_time?: string
+  remark?: string
+}
+
+export interface CaseFundJobCreateRequest {
+  job_type: string
+  payload: Record<string, any>
+  client_request_id: string
+  filename?: string
+  content_base64?: string
+}
+
+export interface CaseFundJobListParams {
+  job_type?: string
+  status?: CaseFundJobStatus | ''
+  client_request_id?: string
+  page?: number
+  pagesize?: number
+}
+
+export interface CaseFundJobListResult {
+  items: CaseFundJob[]
+  total: number
+  page?: number
+  pagesize?: number
+}
+
+export interface CaseFundJobError {
+  item_id: string
+  job_id: string
+  account_set_id?: string
+  fiscal_year?: number
+  period?: string
+  item_no?: number
+  source_row_no?: number
+  source_type?: string
+  source_id?: string
+  group_key?: string
+  amount?: string | number
+  status?: string
+  result?: Record<string, any> | null
+  error_code?: string
+  error_message: string
+  voucher_id?: string
+  voucher_no?: number
+  voucher_period?: string
+  started_time?: string
+  finished_time?: string
+  created_time?: string
+  updated_time?: string
+  remark?: string
+}
+
+export interface CaseFundJobErrorListResult {
+  items: CaseFundJobError[]
+  total: number
+  page?: number
+  pagesize?: number
 }

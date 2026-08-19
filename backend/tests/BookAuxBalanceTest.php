@@ -30,6 +30,7 @@ $book = file_get_contents(__DIR__ . '/../app/finance/model/Book.php');
 $rbac = file_get_contents(__DIR__ . '/../database/migration_rbac.sql');
 $ddl = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');
 $patch = file_get_contents(__DIR__ . '/../database/2026-06-12-aux-balance-snapshot.sql');
+$paginationPatch = file_get_contents(__DIR__ . '/../database/2026-07-19-aux-balance-pagination-detail-index.sql');
 
 $checks = [
     [$book, "case 'auxBalance'", 'Book should route auxBalance'],
@@ -45,9 +46,20 @@ $checks = [
     [$book, 'auxBalanceSnapshotFresh($period)', 'Aux balance should check whether the snapshot is still fresh'],
     [$book, 'rebuildAuxBalanceSnapshot($period)', 'Aux balance should rebuild stale or missing snapshots'],
     [$book, 'loadAuxBalanceSnapshotRows', 'Aux balance should read rows from the snapshot table for normal queries'],
-    [$book, 'openingPeriodFor($period, \'fin_aux_opening_balance\')', 'Aux balance should use the enabled/opening period for auxiliary opening balances'],
+    [$book, 'loadAuxBalanceSnapshotPage', 'Aux balance should page case-level rows on the server'],
+    [$book, 'count(distinct case_no) as case_total', 'Aux balance should count one case number once across configured subjects'],
+    [$book, "->group('case_no')", 'Aux balance should paginate by distinct case number'],
+    [$book, "->where('case_no', 'in', \$pageCaseNos)", 'Aux balance should load all configured subject rows for the selected case page'],
+    [$book, 'sum(ending_balance_amount) as ending_total', 'Aux balance total should preserve signed ending balances'],
+    [$book, "'page' => \$page", 'Aux balance should return the current server page'],
+    [$book, "'pagesize' => \$pageSize", 'Aux balance should return the server page size'],
+    [$book, "'only_monitor'", 'Aux balance should support server-side unsettled filtering'],
+    [$book, "openingPeriodFor(\$period, 'fin_aux_opening_balance')", 'Aux balance should use the current fiscal year auxiliary opening period'],
+    [$book, 'reportYearStartPeriod($period)', 'Aux balance should accumulate current fiscal year movements'],
     [$book, 'fin_voucher_aux_value', 'Aux balance should read voucher auxiliary values'],
-    [$book, 'reportYearStartPeriod($period)', 'Aux balance should accumulate voucher movements through the selected period'],
+    [$book, '$caseSubjectMap', 'Aux balance should filter opening rows by active case-number subject configuration'],
+    [$book, "case_cfg.aux_type_code='case_no'", 'Aux balance voucher query should exclude subjects without active case-number configuration'],
+    [$book, "->where('d.period', 'between', [\$this->reportYearStartPeriod(\$period), \$period])", 'Aux balance should accumulate voucher movements for the selected fiscal year'],
     [$book, 'sum(d.debit_amount) as debit_amount', 'Aux balance should aggregate voucher debit amount in SQL before PHP grouping'],
     [$book, 'sum(d.credit_amount) as credit_amount', 'Aux balance should aggregate voucher credit amount in SQL before PHP grouping'],
     [$book, 'count(*) as entry_count', 'Aux balance should aggregate voucher entry count in SQL before PHP grouping'],
@@ -65,6 +77,10 @@ $checks = [
     [$ddl, 'uk_aux_balance_snapshot', 'DDL should enforce one snapshot row per account set, period, subject, case and receipt'],
     [$patch, 'create table if not exists fin_aux_balance_snapshot', 'Upgrade patch should create auxiliary balance snapshot table idempotently'],
     [$patch, 'idx_aux_balance_snapshot_monitor', 'Upgrade patch should index monitor flag for unsettled receipt filtering'],
+    [$ddl, 'idx_aux_balance_snapshot_page', 'DDL should index case-level auxiliary balance pagination'],
+    [$ddl, 'idx_voucher_aux_label_lookup', 'DDL should index displayed case labels for movement detail lookup'],
+    [$paginationPatch, 'idx_aux_balance_snapshot_page', 'Dated patch should add the auxiliary balance page index idempotently'],
+    [$paginationPatch, 'idx_voucher_aux_label_lookup', 'Dated patch should add the auxiliary label lookup index idempotently'],
 ];
 
 foreach ($checks as [$haystack, $needle, $message]) {
@@ -72,6 +88,11 @@ foreach ($checks as [$haystack, $needle, $message]) {
         fwrite(STDERR, $message . PHP_EOL);
         exit(1);
     }
+}
+
+if (strpos($book, 'sum(abs(ending_balance_amount))') !== false) {
+    fwrite(STDERR, 'Aux balance total must not inflate signed balances with abs()' . PHP_EOL);
+    exit(1);
 }
 
 require_once __DIR__ . '/../app/finance/model/Common.php';
@@ -86,6 +107,8 @@ $buildRows = new ReflectionMethod(app\finance\model\Book::class, 'buildAuxBalanc
 $buildRows->setAccessible(true);
 $snapshotRow = new ReflectionMethod(app\finance\model\Book::class, 'buildAuxBalanceSnapshotInsertRow');
 $snapshotRow->setAccessible(true);
+$caseRow = new ReflectionMethod(app\finance\model\Book::class, 'formatAuxBalanceCaseRow');
+$caseRow->setAccessible(true);
 
 if ($normalBalance->invoke($model, 'CREDIT', 1000, 7000) !== 6000) {
     fwrite(STDERR, 'Credit subject balance should be credit minus debit' . PHP_EOL);
@@ -162,6 +185,23 @@ if ($row['opening_balance_amount'] !== '60.00' || $row['ending_balance_amount'] 
 
 if ((int)$row['monitor_flag'] !== 1 || (int)$row['entry_count'] !== 3) {
     fwrite(STDERR, 'Aux balance snapshot should persist monitor flag and entry count' . PHP_EOL);
+    exit(1);
+}
+
+$pagedCase = $caseRow->invoke($model, [
+    'subject_code' => '220101',
+    'subject_name' => '执行案款',
+    'direction' => 'CREDIT',
+    'case_no' => '（2026）辽0111执2号',
+    'opening_debit_amount' => '0.00',
+    'opening_credit_amount' => '100.00',
+    'debit_amount' => '30.00',
+    'credit_amount' => '50.00',
+    'entry_count' => 2,
+    'monitor_count' => 1,
+]);
+if ($pagedCase['ending_balance_amount'] !== '120.00' || !$pagedCase['monitor_flag'] || $pagedCase['children'] !== []) {
+    fwrite(STDERR, 'Paged auxiliary case row should keep case totals and remain collapsed' . PHP_EOL);
     exit(1);
 }
 

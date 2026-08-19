@@ -151,6 +151,12 @@ class Subject extends Common
             }
         }
 
+        $whereActiveChild = $this->accountWhere();
+        $whereActiveChild['parent_code'] = $code;
+        if ($this->getdb(self::TABLE)->where($whereActiveChild)->count() > 0) {
+            $d['leaf_flag'] = 0;
+            $d['voucher_entry_flag'] = 0;
+        }
         if ((int)$d['voucher_entry_flag'] === 1 && (int)$d['leaf_flag'] !== 1) {
             return $this->error('非末级科目不允许直接录入凭证');
         }

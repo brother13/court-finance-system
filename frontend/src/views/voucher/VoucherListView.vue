@@ -72,8 +72,14 @@
                 <el-dropdown-item v-if="context.hasPermission('voucher:audit')" command="audit" :disabled="selectedRows.length === 0">
                   批量审核
                 </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:unaudit')" command="unaudit" :disabled="selectedRows.length === 0">
+                  批量取消审核
+                </el-dropdown-item>
                 <el-dropdown-item v-if="context.hasPermission('voucher:post')" command="post" :disabled="selectedRows.length === 0">
                   批量记账
+                </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:unpost')" command="unpost" :disabled="selectedRows.length === 0">
+                  批量反记账
                 </el-dropdown-item>
                 <el-dropdown-item v-if="context.hasPermission('voucher:delete')" command="delete" :disabled="selectedRows.length === 0">
                   批量删除
@@ -217,6 +223,40 @@
         </div>
       </label>
       <label class="query-field">
+        <span>借方科目</span>
+        <el-select
+          v-model="advancedDraft.debit_subject_code"
+          filterable
+          clearable
+          :loading="subjectOptionsLoading"
+          placeholder="选择借方科目"
+        >
+          <el-option
+            v-for="subject in subjectOptions"
+            :key="`debit-${subjectCodeOf(subject)}`"
+            :label="subjectOptionLabel(subject)"
+            :value="subjectCodeOf(subject)"
+          />
+        </el-select>
+      </label>
+      <label class="query-field">
+        <span>贷方科目</span>
+        <el-select
+          v-model="advancedDraft.credit_subject_code"
+          filterable
+          clearable
+          :loading="subjectOptionsLoading"
+          placeholder="选择贷方科目"
+        >
+          <el-option
+            v-for="subject in subjectOptions"
+            :key="`credit-${subjectCodeOf(subject)}`"
+            :label="subjectOptionLabel(subject)"
+            :value="subjectCodeOf(subject)"
+          />
+        </el-select>
+      </label>
+      <label class="query-field">
         <span>借方金额区间</span>
         <div class="range-inputs">
           <el-input v-model="advancedDraft.debit_min" placeholder="最小金额" clearable />
@@ -288,7 +328,7 @@
   >
     <div class="renumber-dialog-content">
       <el-alert
-        title="整理将按制单日期重排本期间凭证号，同一天缴款凭证在前、退款凭证在后。已记账、已作废、已打印凭证不参与第一版整理。"
+        title="整理将按制单日期重排本期间凭证号，同一天缴款凭证在前、退款凭证在后。已打印凭证保留原号并锁定，只整理未打印凭证；已记账、已作废或已结账期间不能整理。"
         type="warning"
         :closable="false"
         show-icon
@@ -309,6 +349,7 @@
       <div v-if="renumberPreviewRows.length > 0" class="renumber-summary">
         <span>凭证 {{ renumberPreview?.voucher_count || 0 }} 张</span>
         <span>变更 {{ renumberPreview?.change_count || 0 }} 张</span>
+        <span>锁定 {{ renumberPreview?.locked_count || 0 }} 张</span>
         <span>{{ renumberPreview?.has_gap ? '存在断号' : '无断号' }}</span>
       </div>
       <el-table v-if="renumberPreviewRows.length > 0" :data="renumberPreviewRows" max-height="340" size="small" border>
@@ -330,7 +371,8 @@
         </el-table-column>
         <el-table-column label="是否变更" width="86" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.changed" type="warning" size="small">变更</el-tag>
+            <el-tag v-if="row.locked" type="info" size="small">已锁定</el-tag>
+            <el-tag v-else-if="row.changed" type="warning" size="small">变更</el-tag>
             <span v-else class="muted">不变</span>
           </template>
         </el-table-column>
@@ -424,8 +466,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Check, Delete as DeleteIcon, Document, Edit, Filter, Operation, Plus, Printer, RefreshLeft, Search, Tickets, Upload } from '@element-plus/icons-vue'
+import { baseApi } from '../../api/base'
 import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
+import type { Subject } from '../../types/api'
 import * as XLSX from 'xlsx'
 
 defineOptions({ name: 'VoucherListView' })
@@ -441,6 +485,8 @@ type TopFilter = {
 type AdvancedFilter = {
   voucher_no_start: string
   voucher_no_end: string
+  debit_subject_code: string
+  credit_subject_code: string
   debit_min: string
   debit_max: string
   credit_min: string
@@ -457,6 +503,8 @@ type AdvancedFilter = {
 const context = useContextStore()
 const route = useRoute()
 const router = useRouter()
+const subjects = ref<Subject[]>([])
+const subjectOptionsLoading = ref(false)
 const rows = ref<any[]>([])
 const selectedRows = ref<any[]>([])
 const pageTotal = ref(0)
@@ -514,6 +562,8 @@ const topFilter = reactive<TopFilter>({
 const emptyAdvanced = (): AdvancedFilter => ({
   voucher_no_start: '',
   voucher_no_end: '',
+  debit_subject_code: '',
+  credit_subject_code: '',
   debit_min: '',
   debit_max: '',
   credit_min: '',
@@ -530,6 +580,17 @@ const emptyAdvanced = (): AdvancedFilter => ({
 const advancedDraft = reactive<AdvancedFilter>(emptyAdvanced())
 const advancedApplied = ref<AdvancedFilter>(emptyAdvanced())
 
+const subjectCodeOf = (subject: Subject) => String(subject.subject_code || subject.subjectCode || '')
+const subjectNameOf = (subject: Subject) => String(subject.subject_name || subject.subjectName || '')
+const subjectOptionLabel = (subject: Subject) => `${subjectCodeOf(subject)} ${subjectNameOf(subject)}`.trim()
+const subjectOptions = computed(() => {
+  const parentCodes = new Set(subjects.value.map((subject) => String(subject.parent_code || subject.parentCode || '')).filter(Boolean))
+  return subjects.value.filter((subject) => {
+    const code = subjectCodeOf(subject)
+    return code !== '' && !parentCodes.has(code)
+  })
+})
+
 const periodOptions = computed(() =>
   Array.from({ length: 12 }, (_, index) => `${topFilter.year}-${String(index + 1).padStart(2, '0')}`)
 )
@@ -543,7 +604,9 @@ const periodRangeLabel = computed(() => {
 const showFundAuxFilters = computed(() => ['CASE_FUND', 'LITIGATION_FEE'].includes(context.bizType))
 const hasBatchActions = computed(() =>
   context.hasPermission('voucher:audit') ||
+  context.hasPermission('voucher:unaudit') ||
   context.hasPermission('voucher:post') ||
+  context.hasPermission('voucher:unpost') ||
   context.hasPermission('voucher:delete') ||
   context.hasPermission('voucher:import') ||
   context.hasPermission('voucher:renumber')
@@ -620,6 +683,15 @@ const load = async () => {
   }
 }
 
+const loadSubjectOptions = async () => {
+  subjectOptionsLoading.value = true
+  try {
+    subjects.value = await baseApi.subjects()
+  } finally {
+    subjectOptionsLoading.value = false
+  }
+}
+
 const query = async () => {
   page.value = 1
   await load()
@@ -692,7 +764,7 @@ const canUnauditRow = (row: any) => statusForRow(row) === 'AUDITED' && context.h
 const canPostRow = (row: any) => statusForRow(row) === 'AUDITED' && context.hasPermission('voucher:post')
 const canUnpostRow = (row: any) => statusForRow(row) === 'POSTED' && context.hasPermission('voucher:unpost')
 const canPrintRow = (row: any) => context.hasPermission('voucher:print') && statusForRow(row) !== 'VOIDED'
-const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row) || canAuditRow(row) || canPostRow(row)
+const canSelectRow = (row: any) => canDeleteRow(row) || canPrintRow(row) || canAuditRow(row) || canUnauditRow(row) || canPostRow(row) || canUnpostRow(row)
 
 const handleSelectionChange = (selection: any[]) => {
   selectedRows.value = selection
@@ -771,8 +843,14 @@ const handleBatchCommand = (command: string | number | object) => {
     case 'audit':
       batchAudit()
       break
+    case 'unaudit':
+      batchUnaudit()
+      break
     case 'post':
       batchPost()
+      break
+    case 'unpost':
+      batchUnpost()
       break
     case 'delete':
       batchDelete()
@@ -881,6 +959,35 @@ const batchAudit = async () => {
   }
 }
 
+const batchUnaudit = async () => {
+  const unauditableRows = selectedRows.value.filter(canUnauditRow)
+  if (unauditableRows.length === 0) {
+    ElMessage.warning('请选择可取消审核的已审核凭证')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认取消选中 ${unauditableRows.length} 张已审核凭证的审核？`, '批量取消审核', {
+      type: 'warning',
+      confirmButtonText: '批量取消审核',
+      cancelButtonText: '取消'
+    })
+    const rowsByPeriod = unauditableRows.reduce((groups: Record<string, string[]>, row: any) => {
+      const period = row.period || topFilter.period_start
+      if (!groups[period]) groups[period] = []
+      groups[period].push(row.voucher_id)
+      return groups
+    }, {})
+    for (const [period, voucherIds] of Object.entries(rowsByPeriod)) {
+      await voucherApi.batchUnaudit(period, voucherIds)
+    }
+    ElMessage.success('凭证已批量取消审核')
+    selectedRows.value = []
+    await load()
+  } catch {
+    // 用户取消时不提示。
+  }
+}
+
 const batchPost = async () => {
   const postableRows = selectedRows.value.filter(canPostRow)
   if (postableRows.length === 0) {
@@ -903,6 +1010,35 @@ const batchPost = async () => {
       await voucherApi.batchPost(period, voucherIds)
     }
     ElMessage.success('凭证已批量记账')
+    selectedRows.value = []
+    await load()
+  } catch {
+    // 用户取消时不提示。
+  }
+}
+
+const batchUnpost = async () => {
+  const unpostableRows = selectedRows.value.filter(canUnpostRow)
+  if (unpostableRows.length === 0) {
+    ElMessage.warning('请选择可反记账的已记账凭证')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认将选中的 ${unpostableRows.length} 张已记账凭证反记账？`, '批量反记账', {
+      type: 'warning',
+      confirmButtonText: '批量反记账',
+      cancelButtonText: '取消'
+    })
+    const rowsByPeriod = unpostableRows.reduce((groups: Record<string, string[]>, row: any) => {
+      const period = row.period || topFilter.period_start
+      if (!groups[period]) groups[period] = []
+      groups[period].push(row.voucher_id)
+      return groups
+    }, {})
+    for (const [period, voucherIds] of Object.entries(rowsByPeriod)) {
+      await voucherApi.batchUnpost(period, voucherIds)
+    }
+    ElMessage.success('凭证已批量反记账')
     selectedRows.value = []
     await load()
   } catch {
@@ -1236,7 +1372,7 @@ const offsetImportErrorNumber = (error: string, offset: number) =>
 
 onMounted(async () => {
   applyVoucherRouteFilter()
-  await load()
+  await Promise.all([load(), loadSubjectOptions()])
 })
 </script>
 
