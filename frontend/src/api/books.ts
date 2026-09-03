@@ -90,6 +90,8 @@ export const booksApi = {
     period?: string
     startPeriod: string
     endPeriod: string
+    startDate: string
+    endDate: string
     subjectStartCode?: string
     subjectEndCode?: string
     levelStart?: number
@@ -103,6 +105,8 @@ export const booksApi = {
       period: params.period || params.endPeriod,
       start_period: params.startPeriod,
       end_period: params.endPeriod,
+      start_date: params.startDate,
+      end_date: params.endDate,
       subject_start_code: params.subjectStartCode,
       subject_end_code: params.subjectEndCode,
       level_start: params.levelStart,
@@ -129,6 +133,8 @@ export const booksApi = {
     period: string
     startPeriod: string
     endPeriod: string
+    startDate: string
+    endDate: string
     subjectStartCode?: string
     subjectEndCode?: string
     levelStart?: number
@@ -139,6 +145,8 @@ export const booksApi = {
       period: params.period,
       start_period: params.startPeriod,
       end_period: params.endPeriod,
+      start_date: params.startDate,
+      end_date: params.endDate,
       subject_start_code: params.subjectStartCode,
       subject_end_code: params.subjectEndCode,
       level_start: params.levelStart,

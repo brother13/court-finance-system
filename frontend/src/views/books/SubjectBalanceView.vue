@@ -2,7 +2,7 @@
   <div class="page-header subject-balance-header">
     <div>
       <h1>科目余额表</h1>
-      <p>{{ context.accountSetName || '当前账套' }} · {{ filters.startPeriod }} 至 {{ filters.endPeriod }}</p>
+      <p>{{ context.accountSetName || '当前账套' }} · {{ filters.startDate }} 至 {{ filters.endDate }}</p>
     </div>
     <div class="page-actions">
       <el-button :icon="Refresh" @click="load">刷新</el-button>
@@ -35,15 +35,25 @@
             <div class="balance-filter-popover">
               <el-form label-position="left" label-width="82px" class="balance-query-form">
                 <div class="filter-form-row">
-                  <el-form-item label="会计期间">
-                    <div class="period-range">
-                      <el-select v-model="filters.startPeriod" placeholder="起始期间" :teleported="false">
-                        <el-option v-for="period in periodOptions" :key="period" :label="periodLabel(period)" :value="period" />
-                      </el-select>
+                  <el-form-item label="日期区间">
+                    <div class="date-range">
+                      <el-date-picker
+                        v-model="filters.startDate"
+                        type="date"
+                        value-format="YYYY-MM-DD"
+                        placeholder="开始日期"
+                        :disabled-date="disabledDate"
+                        :teleported="false"
+                      />
                       <span>至</span>
-                      <el-select v-model="filters.endPeriod" placeholder="结束期间" :teleported="false">
-                        <el-option v-for="period in periodOptions" :key="period" :label="periodLabel(period)" :value="period" />
-                      </el-select>
+                      <el-date-picker
+                        v-model="filters.endDate"
+                        type="date"
+                        value-format="YYYY-MM-DD"
+                        placeholder="结束日期"
+                        :disabled-date="disabledDate"
+                        :teleported="false"
+                      />
                     </div>
                   </el-form-item>
                 </div>
@@ -186,6 +196,15 @@ type BalanceRow = {
 
 const context = useContextStore()
 const levelOptions = [1, 2, 3, 4]
+const periodMonthRange = (period: string): [string, string] => {
+  const matched = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period)
+  const year = matched ? Number(matched[1]) : Number(context.year)
+  const month = matched ? Number(matched[2]) : 1
+  const normalizedPeriod = `${year}-${String(month).padStart(2, '0')}`
+  const lastDay = new Date(year, month, 0).getDate()
+  return [`${normalizedPeriod}-01`, `${normalizedPeriod}-${String(lastDay).padStart(2, '0')}`]
+}
+const [initialStartDate, initialEndDate] = periodMonthRange(context.period)
 const amountFields = [
   'opening_debit_amount',
   'opening_credit_amount',
@@ -202,18 +221,14 @@ const collapsedSubjectCodes = ref<Set<string>>(new Set())
 const filterDropdownVisible = ref(false)
 const printing = ref(false)
 const filters = reactive({
-  startPeriod: context.period,
-  endPeriod: context.period,
+  startDate: initialStartDate,
+  endDate: initialEndDate,
   subjectStartCode: '',
   subjectEndCode: '',
   levelStart: 1,
   levelEnd: 4,
   zeroFilter: 'all' as 'all' | 'nonzero' | 'active' | 'balance'
 })
-
-const periodOptions = computed(() =>
-  Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
-)
 
 const typeLabels: Record<string, string> = {
   ASSET: '资产',
@@ -224,8 +239,9 @@ const typeLabels: Record<string, string> = {
   PROFIT_LOSS: '损益'
 }
 
-const periodLabel = (period: string) => `${period.substring(0, 4)}年第${period.substring(5, 7)}期`
 const numericAmount = (value: string | number | undefined) => Number(value || 0)
+const periodOfDate = (value: string) => value.substring(0, 7)
+const disabledDate = (value: Date) => value.getFullYear() !== Number(context.year)
 
 const amountText = (value: string | number | undefined, keepZero = false) => {
   const amount = numericAmount(value)
@@ -315,7 +331,7 @@ const summaryRows = computed(() => {
 const sumAmount = (field: string) => summaryRows.value.reduce((sum, row) => sum + numericAmount(row[field as keyof BalanceRow] as any), 0)
 const totalDebit = computed(() => sumAmount('debit_amount'))
 const totalCredit = computed(() => sumAmount('credit_amount'))
-const filterSummaryText = computed(() => `${periodLabel(filters.startPeriod)} 至 ${periodLabel(filters.endPeriod)}`)
+const filterSummaryText = computed(() => `${filters.startDate} 至 ${filters.endDate}`)
 const moneyText = (value: string | number | undefined) => {
   const amount = numericAmount(value)
   return Math.abs(amount) < 0.001 ? '' : amount.toFixed(2)
@@ -349,8 +365,9 @@ const tableRowClassName = ({ row }: { row: BalanceRow }) => {
 }
 
 const resetFilters = () => {
-  filters.startPeriod = context.period
-  filters.endPeriod = context.period
+  const [startDate, endDate] = periodMonthRange(context.period)
+  filters.startDate = startDate
+  filters.endDate = endDate
   filters.subjectStartCode = ''
   filters.subjectEndCode = ''
   filters.levelStart = 1
@@ -370,15 +387,25 @@ const closeFilterDropdown = () => {
 }
 
 const load = async () => {
-  if (filters.startPeriod > filters.endPeriod) {
-    ElMessage.warning('起始期间不能晚于结束期间')
+  if (!filters.startDate || !filters.endDate) {
+    ElMessage.warning('请选择完整的日期区间')
+    return
+  }
+  if (filters.startDate > filters.endDate) {
+    ElMessage.warning('开始日期不能晚于结束日期')
+    return
+  }
+  if (filters.startDate.substring(0, 4) !== filters.endDate.substring(0, 4)) {
+    ElMessage.warning('科目余额表暂不支持跨年度查询')
     return
   }
   collapsedSubjectCodes.value = new Set()
   rows.value = await booksApi.subjectBalance({
-    period: filters.endPeriod,
-    startPeriod: filters.startPeriod,
-    endPeriod: filters.endPeriod,
+    period: periodOfDate(filters.endDate),
+    startPeriod: periodOfDate(filters.startDate),
+    endPeriod: periodOfDate(filters.endDate),
+    startDate: filters.startDate,
+    endDate: filters.endDate,
     subjectStartCode: filters.subjectStartCode,
     subjectEndCode: filters.subjectEndCode,
     levelStart: filters.levelStart,
@@ -410,7 +437,7 @@ const exportData = async () => {
   const sheet = XLSX.utils.aoa_to_sheet([['科目余额表'], [context.accountSetName || '当前账套', filterSummaryText.value], headers, ...body, totals])
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, sheet, '科目余额表')
-  XLSX.writeFile(workbook, `科目余额表_${filters.startPeriod}_${filters.endPeriod}.xlsx`)
+  XLSX.writeFile(workbook, `科目余额表_${filters.startDate}_${filters.endDate}.xlsx`)
 }
 
 const printReport = async () => {
@@ -422,9 +449,11 @@ const printReport = async () => {
   printing.value = true
   try {
     const pdf = await booksApi.subjectBalancePdf({
-      period: filters.endPeriod,
-      startPeriod: filters.startPeriod,
-      endPeriod: filters.endPeriod,
+      period: periodOfDate(filters.endDate),
+      startPeriod: periodOfDate(filters.startDate),
+      endPeriod: periodOfDate(filters.endDate),
+      startDate: filters.startDate,
+      endDate: filters.endDate,
       subjectStartCode: filters.subjectStartCode,
       subjectEndCode: filters.subjectEndCode,
       levelStart: filters.levelStart,

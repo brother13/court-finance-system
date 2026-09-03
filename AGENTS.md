@@ -127,6 +127,22 @@
    - 不要直接用浮点数做金额加减乘除和平衡判断。必须先将金额转为整数"分"再运算，运算完再转回元展示。
    - 典型场景：凭证借贷平衡校验、余额汇总、报表合计。
 
+6. **PHP 数组键会把纯数字字符串标识符静默转成 int（严重）**
+   - 错误写法：
+     ```php
+     foreach ($subjectMap as $subjectCode => $subject) {
+         $rows[] = ['subject_code' => $subjectCode]; // 键 "1002" 已被 PHP 转成 int 1002
+     }
+     ```
+   - 后果：接口把 `subject_code` 返回成数字 `1002`，前端 `row.subject_code.startsWith(...)` 抛 `TypeError`，表格渲染中断。金额对、行数对、列也对，唯独类型错，最容易被只验证「有没有数据/金额对不对」的检查漏掉。
+   - 正确写法：标识符字段（`subject_code`、`case_no`、`voucher_no` 等）必须从数据自身的字段取值并显式 `(string)` 强转，禁止复用被 PHP 隐式转 int 过的数组键；凡这类字段都要加「返回值是字符串」的回归断言。
+     ```php
+     $code = (string)($subject['subject_code'] ?? '');
+     $rows[] = ['subject_code' => $code];
+     ```
+   - 验证回归的正确方式：走真实接口断言 JSON 里字段是字符串（非「有没有数据」）；源码结构断言测不出类型。
+   - 受影响文件：`backend/app/finance/model/Book.php::collectSubjectBalanceFromSnapshot()`（2026-08-19 修复）。
+
 后端启动命令：
 
 ```bash
@@ -524,3 +540,4 @@ npm run build
 5. 涉及数据库字段时同步更新 DDL、预置脚本、幂等补丁、模型、前端类型。
 6. 涉及权限时同步更新 `migration_rbac.sql`、后端 `requirePermission()`、前端 `v-permission`/路由 meta。
 7. 涉及凭证、期初、辅助核算、账簿时必须自查总账与辅助账能否对账平衡。
+8. 在 Reasonix 里改完后端文件后，必须按 Codex Hook 等价规则手动归档当天生产更新包：把本次改动涉及的业务文件（保持 `backend/` 相对路径）复制到 `server-update/YYYY-MM-DD/`，并生成 `manifest.json` 与 `更新清单.txt`；归档口径与 `.codex/hooks/archive_backend_changes.py` 一致——排除 `backend/tests`、`backend/runtime`、`backend/vendor`、`backend/thinkphp/vendor`、`backend/public/uploads`、`backend/public/storage` 及 `.DS_Store`，删除文件只写清单不删归档。目的：让用户更新生产环境时可直接按日期目录覆盖部署。

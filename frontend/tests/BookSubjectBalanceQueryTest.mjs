@@ -8,7 +8,9 @@ const view = readFileSync(resolve(__dirname, '../src/views/books/SubjectBalanceV
 const api = readFileSync(resolve(__dirname, '../src/api/books.ts'), 'utf8')
 const styles = readFileSync(resolve(__dirname, '../src/styles/app.css'), 'utf8')
 
-assert(view.includes('会计期间'), 'subject balance should expose accounting period range filters')
+assert(view.includes('日期区间'), 'subject balance should expose exact date range filters')
+assert.strictEqual((view.match(/type="date"/g) || []).length, 2, 'subject balance should expose start and end date pickers')
+assert(view.includes('value-format="YYYY-MM-DD"'), 'subject balance date pickers should submit stable ISO dates')
 assert(view.includes('起始科目'), 'subject balance should expose starting subject filter')
 assert(view.includes('结束科目'), 'subject balance should expose ending subject filter')
 assert(view.includes('科目级别'), 'subject balance should expose subject level range filter')
@@ -20,12 +22,13 @@ assert(view.includes('filter-popover-actions'), 'subject balance dropdown should
 assert(!view.includes('<aside class="balance-query-panel">'), 'subject balance should not reserve a left-side filter panel')
 const filterTemplate = view.slice(view.indexOf('<el-popover'), view.indexOf('</el-popover>'))
 const filterSelectCount = (filterTemplate.match(/<el-select/g) || []).length
+const filterDatePickerCount = (filterTemplate.match(/<el-date-picker/g) || []).length
 const nonTeleportedSelectCount = (filterTemplate.match(/:teleported="false"/g) || []).length
-assert(filterSelectCount > 0, 'subject balance filter dropdown should contain select controls')
+assert(filterSelectCount > 0 && filterDatePickerCount === 2, 'subject balance filter dropdown should contain select and date controls')
 assert.strictEqual(
   nonTeleportedSelectCount,
-  filterSelectCount,
-  'subject balance filter selects should not close the condition panel after choosing an option'
+  filterSelectCount + filterDatePickerCount,
+  'subject balance filter controls should not close the condition panel after choosing a value'
 )
 assert(view.includes('balanceDisplayRows'), 'subject balance should add grouped subtotal rows like the reference report')
 assert(view.includes('row-class-name'), 'subject balance should style subtotal and total rows distinctly')
@@ -50,6 +53,8 @@ assert(view.includes('printing.value = false'), 'subject balance should clear pr
 assert(!view.includes('导出功能开发中'), 'subject balance export should not be a placeholder')
 assert(api.includes('start_period'), 'subject balance API wrapper should send start period')
 assert(api.includes('end_period'), 'subject balance API wrapper should send end period')
+assert(api.includes('start_date'), 'subject balance API wrapper should send start date')
+assert(api.includes('end_date'), 'subject balance API wrapper should send end date')
 assert(api.includes('subject_start_code'), 'subject balance API wrapper should send starting subject code')
 assert(api.includes('subject_end_code'), 'subject balance API wrapper should send ending subject code')
 assert(api.includes('level_start'), 'subject balance API wrapper should send starting subject level')

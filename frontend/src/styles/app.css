@@ -3366,6 +3366,7 @@ body {
 
 .balance-query-form .el-input,
 .balance-query-form .el-select,
+.balance-query-form .el-date-editor,
 .summary-query-form .el-input,
 .summary-query-form .el-select,
 .summary-query-form .el-date-editor {
@@ -3383,6 +3384,7 @@ body {
 }
 
 .period-range,
+.date-range,
 .level-range,
 .detail-period-range {
   display: grid;
@@ -3392,6 +3394,7 @@ body {
 }
 
 .period-range,
+.date-range,
 .level-range {
   grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
 }
@@ -3402,12 +3405,14 @@ body {
 }
 
 .period-range .el-select,
+.date-range .el-date-editor,
 .level-range .el-select,
 .detail-period-range .el-select {
   width: 100%;
 }
 
 .period-range span,
+.date-range span,
 .level-range span,
 .detail-period-range span {
   color: var(--text-secondary);

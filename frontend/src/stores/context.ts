@@ -28,6 +28,29 @@ const savedAccountSetBankName = (auth: Partial<LoginUser>) => {
   return String(accountSets.find((item: AccountSet) => item.account_set_id === accountSetId)?.bank_name || '').trim()
 }
 
+const selectedAccountSet = (auth: Partial<LoginUser>): AccountSet | undefined => {
+  const accountSetId = String(auth.account_set_id || '').trim()
+  const accountSets = Array.isArray(auth.account_sets) ? auth.account_sets : []
+  return accountSets.find((item: AccountSet) => item.account_set_id === accountSetId)
+}
+
+const savedPeriodForAccountSet = (auth: Partial<LoginUser>) => {
+  const accountSet = selectedAccountSet(auth)
+  const accountSetPeriod = accountSet?.current_period || ''
+  if (validPeriod(accountSetPeriod)) {
+    return accountSetPeriod
+  }
+  const enabledPeriod = accountSet?.enabled_period || (auth as any).enabled_period || ''
+  if (validPeriod(enabledPeriod)) {
+    return enabledPeriod
+  }
+  const topPeriod = auth.period || (auth as any).current_period || ''
+  if (validPeriod(topPeriod)) {
+    return topPeriod
+  }
+  return currentMonthPeriod()
+}
+
 const currentMonthPeriod = () => {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -57,8 +80,7 @@ const periodForSelectedYear = (accountSet: AccountSet, year?: number) => {
 export const useContextStore = defineStore('context', {
   state: () => {
     const auth = loadAuth()
-    const savedPeriod = auth.period || (auth as any).current_period || (auth as any).enabled_period || currentMonthPeriod()
-    const period = validPeriod(savedPeriod) ? savedPeriod : currentMonthPeriod()
+    const period = savedPeriodForAccountSet(auth)
     return {
       accountSetId: auth.account_set_id || '00000000-0000-0000-0000-000000000101',
       accountSetCode: (auth as any).set_code || '',

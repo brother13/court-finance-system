@@ -3,7 +3,7 @@
 return [
     'type' => 'mysql',
     'hostname' => 'localhost',
-    'database' => 'court-finance-txfy',
+    'database' => 'court-finance',
     'username' => 'root',
     'password' => 'root',
     'hostport' => '3306',

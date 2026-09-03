@@ -27,8 +27,10 @@ $subjectBalanceView = file_get_contents(__DIR__ . '/../../frontend/src/views/boo
 $checks = [
     [$book, 'loadSubjectBalanceVoucherRows', 'Subject balance should load voucher rows through a shared helper'],
     [$book, 'reportYearStartPeriod', 'Subject balance should calculate the fiscal year start period for cumulative amounts'],
-    [$book, '$yearStartPeriod = $this->reportYearStartPeriod($endPeriod);', 'Subject balance should derive the year-to-date start from the query end period'],
-    [$book, 'loadSubjectBalanceVoucherRows($yearStartPeriod, $endPeriod)', 'Subject balance should load year-to-date voucher rows independently from selected-range rows'],
+    [$book, '$yearStartDate = $yearStartPeriod . \'-01\';', 'Subject balance should derive the year-to-date start date from the query end date'],
+    [$book, 'loadSubjectBalanceVoucherRows($yearStartDate, $endDate)', 'Subject balance should load year-to-date voucher rows independently from selected-range rows'],
+    [$book, '$priorEndDate = date(\'Y-m-d\', strtotime($startDate . \' -1 day\'));', 'Subject balance should derive the day before the selected start date'],
+    [$book, "'opening'", 'Subject balance should add prior activity into selected-start opening balance'],
     [$book, 'openingPeriodFor', 'Subject balance should locate the enabled/opening period instead of using only current period'],
     [$book, 'addSubjectBalanceAmount', 'Subject balance should roll amounts up to ancestor subjects'],
     [$book, "'opening_debit_amount'", 'Subject balance should expose opening debit amount'],
@@ -41,6 +43,8 @@ $checks = [
     [$book, 'formatSubjectBalanceRow', 'Subject balance should format standard balance columns in one place'],
     [$book, "'start_period'", 'Subject balance should accept a start accounting period'],
     [$book, "'end_period'", 'Subject balance should accept an end accounting period'],
+    [$book, "'start_date'", 'Subject balance should accept an exact start date'],
+    [$book, "'end_date'", 'Subject balance should accept an exact end date'],
     [$book, "'subject_start_code'", 'Subject balance should accept a starting subject code filter'],
     [$book, "'subject_end_code'", 'Subject balance should accept an ending subject code filter'],
     [$book, "'level_start'", 'Subject balance should accept a starting subject level filter'],
@@ -67,8 +71,8 @@ if ($openingRead === false || ($periodOnlyOpeningSkip !== false && $periodOnlyOp
     exit(1);
 }
 
-if (strpos($book, '$priorEndPeriod = $this->previousPeriod($startPeriod);') !== false) {
-    fwrite(STDERR, 'Subject balance opening should only come from configured opening balances' . PHP_EOL);
+if (strpos($book, '$priorRows = $this->loadSubjectBalanceVoucherRows($yearStartDate, $priorEndDate);') === false) {
+    fwrite(STDERR, 'Subject balance opening should include movements before the selected start date' . PHP_EOL);
     exit(1);
 }
 
@@ -139,6 +143,25 @@ if ($row['debit_amount'] !== '0.00' || $row['credit_amount'] !== '200.00') {
 
 if ($row['year_debit_amount'] !== '0.00' || $row['year_credit_amount'] !== '500.00') {
     fwrite(STDERR, 'Subject balance should preserve year-to-date amounts independently from selected-range current amounts' . PHP_EOL);
+    exit(1);
+}
+
+$row = $format->invoke($model, [
+    'subject_code' => '1002',
+    'subject_name' => '银行存款',
+    'direction' => 'DEBIT',
+    'level_no' => 1,
+    'leaf_flag' => 0,
+    'opening_debit_cents' => 2226583180,
+    'opening_credit_cents' => 2048453972,
+    'current_debit_cents' => 0,
+    'current_credit_cents' => 0,
+    'year_debit_cents' => 2183737734,
+    'year_credit_cents' => 2048453972,
+]);
+
+if ($row['opening_debit_amount'] !== '1781292.08' || $row['opening_credit_amount'] !== '0.00') {
+    fwrite(STDERR, 'Selected start-date opening should display its net balance on one side only' . PHP_EOL);
     exit(1);
 }
 

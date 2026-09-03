@@ -409,6 +409,25 @@ class Book extends Common
         if ($startPeriod > $endPeriod) {
             return $this->error('起始期间不能晚于结束期间');
         }
+        $startDate = trim((string)($data['start_date'] ?? ''));
+        $endDate = trim((string)($data['end_date'] ?? ''));
+        if ($startDate === '') {
+            $startDate = $startPeriod . '-01';
+        }
+        if ($endDate === '') {
+            $endDate = date('Y-m-t', strtotime($endPeriod . '-01'));
+        }
+        if (!$this->validDate($startDate) || !$this->validDate($endDate)) {
+            return $this->error('查询日期格式不正确');
+        }
+        if (substr($startDate, 0, 4) !== substr($endDate, 0, 4)) {
+            return $this->error('科目余额表暂不支持跨年度查询');
+        }
+        if ($startDate > $endDate) {
+            return $this->error('开始日期不能晚于结束日期');
+        }
+        $startPeriod = substr($startDate, 0, 7);
+        $endPeriod = substr($endDate, 0, 7);
         $codeRule = $this->subjectCodeRule();
         $lengths = $this->subjectCodeRuleLengths($codeRule);
         $maxLevel = empty($lengths) ? 1 : count($lengths);
@@ -486,7 +505,25 @@ class Book extends Common
             );
         }
 
-        $currentRows = $this->loadSubjectBalanceVoucherRows($startPeriod, $endPeriod);
+        $yearStartPeriod = $this->reportYearStartPeriod($endPeriod);
+        $yearStartDate = $yearStartPeriod . '-01';
+        if ($startDate > $yearStartDate) {
+            $priorEndDate = date('Y-m-d', strtotime($startDate . ' -1 day'));
+            $priorRows = $this->loadSubjectBalanceVoucherRows($yearStartDate, $priorEndDate);
+            foreach ($priorRows as $row) {
+                $this->addSubjectBalanceAmount(
+                    $balances,
+                    $row['subject_code'],
+                    $subjectMap,
+                    $codeRule,
+                    'opening',
+                    $this->decimalToCents($row['debit_amount'] ?? 0),
+                    $this->decimalToCents($row['credit_amount'] ?? 0)
+                );
+            }
+        }
+
+        $currentRows = $this->loadSubjectBalanceVoucherRows($startDate, $endDate);
         foreach ($currentRows as $row) {
             $debitCents = $this->decimalToCents($row['debit_amount'] ?? 0);
             $creditCents = $this->decimalToCents($row['credit_amount'] ?? 0);
@@ -501,10 +538,9 @@ class Book extends Common
             );
         }
 
-        $yearStartPeriod = $this->reportYearStartPeriod($endPeriod);
-        $yearRows = $yearStartPeriod === $startPeriod
+        $yearRows = $yearStartDate === $startDate
             ? $currentRows
-            : $this->loadSubjectBalanceVoucherRows($yearStartPeriod, $endPeriod);
+            : $this->loadSubjectBalanceVoucherRows($yearStartDate, $endDate);
         foreach ($yearRows as $row) {
             $debitCents = $this->decimalToCents($row['debit_amount'] ?? 0);
             $creditCents = $this->decimalToCents($row['credit_amount'] ?? 0);
@@ -550,6 +586,14 @@ class Book extends Common
 
         $startPeriod = trim((string)($data['start_period'] ?? ($data['period'] ?? '')));
         $endPeriod = trim((string)($data['end_period'] ?? ($data['period'] ?? '')));
+        $startDate = trim((string)($data['start_date'] ?? ''));
+        $endDate = trim((string)($data['end_date'] ?? ''));
+        if ($startDate === '') {
+            $startDate = $startPeriod . '-01';
+        }
+        if ($endDate === '') {
+            $endDate = date('Y-m-t', strtotime($endPeriod . '-01'));
+        }
         $accountSetName = db('fin_account_set')
             ->where([
                 'account_set_id' => $this->accountSetId,
@@ -574,8 +618,8 @@ class Book extends Common
         $html = $this->buildSubjectBalancePdfHtml(
             $displayRows,
             $accountSetName,
-            $startPeriod,
-            $endPeriod,
+            $startDate,
+            $endDate,
             $totals,
             $fontSizePt
         );
@@ -1158,7 +1202,7 @@ class Book extends Common
         return $name === 'php' || $name === 'php.exe';
     }
 
-    protected function buildSubjectBalancePdfHtml($rows, $accountSetName, $startPeriod, $endPeriod, $totals, $fontSizePt)
+    protected function buildSubjectBalancePdfHtml($rows, $accountSetName, $startDate, $endDate, $totals, $fontSizePt)
     {
         $escape = function ($value) {
             return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
@@ -1220,7 +1264,7 @@ class Book extends Common
   <table class="meta" border="0" cellpadding="0" cellspacing="0">
     <tr>
       <td>账套：' . $escape($accountSetName) . '</td>
-      <td class="meta-right">期间：' . $escape($startPeriod) . ' 至 ' . $escape($endPeriod) . '</td>
+      <td class="meta-right">日期：' . $escape($startDate) . ' 至 ' . $escape($endDate) . '</td>
     </tr>
   </table>
   <table border="1" cellpadding="3" cellspacing="0">
@@ -2443,9 +2487,11 @@ class Book extends Common
         return $this->ok($rows, 'OK', count($rows));
     }
 
-    protected function loadSubjectBalanceVoucherRows($startPeriod, $endPeriod)
+    protected function loadSubjectBalanceVoucherRows($startDate, $endDate)
     {
-        $fiscalYear = $this->fiscalYear($endPeriod);
+        $startPeriod = substr((string)$startDate, 0, 7);
+        $endPeriod = substr((string)$endDate, 0, 7);
+        $fiscalYear = (int)substr((string)$endDate, 0, 4);
         return db('fin_voucher_detail')->alias('d')
             ->join('fin_voucher v', 'v.voucher_id=d.voucher_id and v.account_set_id=d.account_set_id and v.fiscal_year=d.fiscal_year and v.period=d.period')
             ->where([
@@ -2458,6 +2504,7 @@ class Book extends Common
             ])
             ->where('d.period', 'between', [$startPeriod, $endPeriod])
             ->where('v.period', 'between', [$startPeriod, $endPeriod])
+            ->where('v.voucher_date', 'between', [$startDate, $endDate])
             ->where('v.status', 'in', ['SUBMITTED', 'AUDITED', 'POSTED', 'PRINTED'])
             ->field('d.subject_code,coalesce(sum(d.debit_amount),0) as debit_amount,coalesce(sum(d.credit_amount),0) as credit_amount')
             ->group('d.subject_code')
@@ -2503,7 +2550,10 @@ class Book extends Common
         $currentCreditCents = (int)$row['current_credit_cents'];
         $yearDebitCents = (int)$row['year_debit_cents'];
         $yearCreditCents = (int)$row['year_credit_cents'];
-        $endingNetCents = $openingDebitCents - $openingCreditCents + $currentDebitCents - $currentCreditCents;
+        $openingNetCents = $openingDebitCents - $openingCreditCents;
+        $openingDisplayDebitCents = $openingNetCents > 0 ? $openingNetCents : 0;
+        $openingDisplayCreditCents = $openingNetCents < 0 ? abs($openingNetCents) : 0;
+        $endingNetCents = $openingNetCents + $currentDebitCents - $currentCreditCents;
         $endingDebitCents = $endingNetCents > 0 ? $endingNetCents : 0;
         $endingCreditCents = $endingNetCents < 0 ? abs($endingNetCents) : 0;
         $balanceDirection = $endingNetCents > 0 ? 'DEBIT' : ($endingNetCents < 0 ? 'CREDIT' : 'BALANCED');
@@ -2515,8 +2565,8 @@ class Book extends Common
             'subject_type' => $row['subject_type'] ?? '',
             'level_no' => (int)$row['level_no'],
             'leaf_flag' => (int)$row['leaf_flag'],
-            'opening_debit_amount' => $this->centsToDecimal($openingDebitCents),
-            'opening_credit_amount' => $this->centsToDecimal($openingCreditCents),
+            'opening_debit_amount' => $this->centsToDecimal($openingDisplayDebitCents),
+            'opening_credit_amount' => $this->centsToDecimal($openingDisplayCreditCents),
             'debit_amount' => $this->centsToDecimal($currentDebitCents),
             'credit_amount' => $this->centsToDecimal($currentCreditCents),
             'year_debit_amount' => $this->centsToDecimal($yearDebitCents),
@@ -2613,6 +2663,14 @@ class Book extends Common
     protected function validPeriod($period)
     {
         return preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', (string)$period) === 1;
+    }
+
+    protected function validDate($date)
+    {
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', (string)$date, $matches) !== 1) {
+            return false;
+        }
+        return checkdate((int)$matches[2], (int)$matches[3], (int)$matches[1]);
     }
 
     protected function subjectInfoMap()
