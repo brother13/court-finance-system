@@ -160,8 +160,8 @@ bankMatcherAssertSame(
     'Matcher should return statement ids in bank statement order'
 );
 bankMatcherAssertSame([
-    'S-PAYMENT' => 'MATCHED',
-    'S-REUSE' => 'BANK_ONLY',
+    'S-PAYMENT' => 'DUPLICATE',
+    'S-REUSE' => 'DUPLICATE',
     'S-BANK-ONLY' => 'BANK_ONLY',
     'S-DUPLICATE' => 'DUPLICATE',
     'S-UNKNOWN' => 'MATCHED',
@@ -169,17 +169,17 @@ bankMatcherAssertSame([
     'S-REFUND-AMOUNT' => 'MATCHED',
 ], $result['statement_statuses'], 'Matcher should preserve every bank statement status');
 bankMatcherAssertSame(
-    ['MATCHED', 'BANK_ONLY', 'BANK_ONLY', 'DUPLICATE', 'DUPLICATE', 'MATCHED', 'AMOUNT_DIFF', 'MATCHED', 'BIZ_ONLY', 'BIZ_ONLY', 'BIZ_ONLY'],
+    ['DUPLICATE', 'DUPLICATE', 'BANK_ONLY', 'DUPLICATE', 'DUPLICATE', 'MATCHED', 'AMOUNT_DIFF', 'MATCHED', 'BIZ_ONLY', 'BIZ_ONLY', 'BIZ_ONLY', 'BIZ_ONLY', 'BIZ_ONLY'],
     array_column($result['result_rows'], 'status'),
     'Matcher should preserve one-to-one, unknown-payment, duplicate, difference and one-sided results'
 );
 bankMatcherAssertSame(
-    ['SERIAL_NO_DATE', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'SERIAL_NO_DATE', 'SERIAL_NO_DATE', 'PAYER_ACCOUNT_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'SERIAL_NO_DATE', 'PAYER_ACCOUNT_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT'],
+    ['SERIAL_NO_DATE', 'SERIAL_NO_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'SERIAL_NO_DATE', 'SERIAL_NO_DATE', 'PAYER_ACCOUNT_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'SERIAL_NO_DATE', 'PAYER_ACCOUNT_DATE', 'PAYER_ACCOUNT_DATE', 'PAYEE_ACCOUNT_DATE_AMOUNT', 'PAYEE_ACCOUNT_DATE_AMOUNT'],
     array_column($result['result_rows'], 'match_rule'),
     'Matcher should preserve payment, unknown-payment and refund matching rules'
 );
 bankMatcherAssertSame(
-    ['PAYMENT', 'PAYMENT', 'REFUND', 'PAYMENT', 'PAYMENT', 'UNKNOWN_PAYMENT', 'REFUND', 'REFUND', 'PAYMENT', 'UNKNOWN_PAYMENT', 'REFUND'],
+    ['PAYMENT', 'PAYMENT', 'REFUND', 'PAYMENT', 'PAYMENT', 'UNKNOWN_PAYMENT', 'REFUND', 'REFUND', 'PAYMENT', 'UNKNOWN_PAYMENT', 'UNKNOWN_PAYMENT', 'REFUND', 'REFUND'],
     array_column($result['result_rows'], 'biz_type'),
     'Matcher should keep income sources distinguishable in reconcile results'
 );
@@ -192,26 +192,13 @@ bankMatcherAssertSame(
     $refundAmountRows[0]['biz_id'],
     'Refund amount matching should select the exact outgoing amount candidate'
 );
+bankMatcherAssertSame([], $paymentExistenceCalls, 'Existence of a bank candidate must not suppress unresolved payments');
+bankMatcherAssertSame([], $unknownPaymentExistenceCalls, 'Existence of a bank candidate must not suppress unresolved unknown payments');
+bankMatcherAssertSame([], $refundExistenceCalls, 'Existence of a bank candidate must not suppress unresolved refunds');
 bankMatcherAssertSame(
-    [['P-4', 'CCB', '2026-07-01', '2026-07-31']],
-    $paymentExistenceCalls,
-    'Matcher should skip bank existence checks for already matched payments'
-);
-bankMatcherAssertSame(
-    [
-        ['U-2', 'CCB', '2026-07-01', '2026-07-31'],
-        ['U-3', 'CCB', '2026-07-01', '2026-07-31'],
-    ],
-    $unknownPaymentExistenceCalls,
-    'Matcher should only check unmatched unclaimed unknown payments and suppress existing bank rows'
-);
-bankMatcherAssertSame(
-    [
-        ['R-2', 'CCB', '2026-07-01', '2026-07-31'],
-        ['R-3', 'CCB', '2026-07-01', '2026-07-31'],
-    ],
-    $refundExistenceCalls,
-    'Matcher should only check unmatched refunds and suppress existing bank rows'
+    ['P-4', 'U-2', 'U-3', 'R-2', 'R-3'],
+    array_column(array_values(array_filter($result['result_rows'], function ($row) { return $row['status'] === 'BIZ_ONLY'; })), 'biz_id'),
+    'Every business without a result must remain visible'
 );
 
 echo 'Case fund bank reconcile matcher test passed' . PHP_EOL;

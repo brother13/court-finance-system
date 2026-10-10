@@ -1244,7 +1244,23 @@ class FinanceAsyncJobService
 
     protected function normalizeAmount($amount)
     {
-        $amount = str_replace([',', ' '], '', trim((string)$amount));
+        if (is_array($amount) || is_object($amount)) {
+            throw new \InvalidArgumentException('任务明细金额格式不正确');
+        }
+        if (is_float($amount)) {
+            if (!is_finite($amount)) {
+                throw new \InvalidArgumentException('任务明细金额格式不正确');
+            }
+            $roundedAmount = round($amount, 2);
+            if (abs($amount - $roundedAmount) > 0.0000001) {
+                throw new \InvalidArgumentException('任务明细金额格式不正确');
+            }
+            // 显式指定两位小数，避免 PHP precision 暴露二进制浮点尾差。
+            $amount = sprintf('%.2F', $roundedAmount);
+        } else {
+            $amount = trim((string)$amount);
+        }
+        $amount = str_replace([',', ' '], '', $amount);
         if ($amount === '' || !preg_match('/^-?\d{1,16}(?:\.\d{1,2})?$/', $amount)) {
             throw new \InvalidArgumentException('任务明细金额格式不正确');
         }

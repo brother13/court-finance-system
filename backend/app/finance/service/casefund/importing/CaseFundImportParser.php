@@ -50,7 +50,7 @@ class CaseFundImportParser
             '收费方式', '收费员', '承办法官', '书记员', '承办部门', '收款账号',
             '银行流水号', '缴费单号', '内转支出票号', '是否提存撤销',
         ];
-        $index = $this->headerIndex($headers, $required);
+        $index = $this->headerIndex($headers, $required, ['认领日期']);
 
         $rows = [];
         for ($row = 1; $row <= $maxRow; $row++) {
@@ -67,10 +67,20 @@ class CaseFundImportParser
             $invoiceDate = $this->callHook('nullable_date', [$raw['开票日期']]);
             $paymentTime = $this->callHook('normalize_datetime', [$raw['缴费日期']]);
             $paymentDate = $paymentTime === '' ? '' : substr($paymentTime, 0, 10);
+            $claimDateRaw = trim((string)($raw['认领日期'] ?? ''));
+            $claimDate = $claimDateRaw === '' ? null : $this->callHook('nullable_date', [$claimDateRaw]);
+            if ($claimDateRaw !== '' && $claimDate === null) {
+                throw new \Exception('第' . ($row + 1) . '行：认领日期格式不正确');
+            }
+            $paymentMethod = $this->callHook('infer_payment_method', [$raw['银行流水号'], $raw['收费方式']]);
+            if ($claimDate !== null && $paymentMethod !== 'UNKNOWN') {
+                throw new \Exception('第' . ($row + 1) . '行：只有不明款认领可填写认领日期');
+            }
+            $postingDate = $paymentMethod === 'UNKNOWN' && $claimDate !== null ? $claimDate : $paymentDate;
             $amount = $this->callHook('canonical_amount', [$raw['金额']]);
-            $period = $paymentDate === '' ? '' : substr($paymentDate, 0, 7);
+            $period = $postingDate === '' ? '' : substr($postingDate, 0, 7);
             $parsed = [
-                'fiscal_year' => $paymentDate === '' ? '' : substr($paymentDate, 0, 4),
+                'fiscal_year' => $postingDate === '' ? '' : substr($postingDate, 0, 4),
                 'period' => $period,
                 'case_no' => $raw['案号'],
                 'confirmed_flag' => $this->callHook('yes_no_flag', [$raw['确']]),
@@ -84,10 +94,12 @@ class CaseFundImportParser
                 'trial_case_no' => $raw['前审案号'],
                 'payment_date' => $paymentDate,
                 'payment_time' => $paymentTime,
+                'claim_date' => $claimDate,
+                'posting_date' => $postingDate,
                 'receipt_no' => $raw['票据号码'],
                 'invoice_date' => $invoiceDate,
                 'invoice_operator' => $raw['开票员'],
-                'payment_method' => $this->callHook('infer_payment_method', [$raw['银行流水号'], $raw['收费方式']]),
+                'payment_method' => $paymentMethod,
                 'cashier_name' => $raw['收费员'],
                 'judge_name' => $raw['承办法官'],
                 'clerk_name' => $raw['书记员'],

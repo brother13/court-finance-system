@@ -54,6 +54,11 @@ const isUncertainRequestError = (error: unknown) => {
     || !candidate.response
 }
 
+export const isCaseFundJobNotFoundError = (error: unknown) => {
+  const candidate = error as { result?: { data?: { reason?: unknown } } } | null
+  return candidate?.result?.data?.reason === 'JOB_NOT_FOUND'
+}
+
 export const useCaseFundJob = (options: UseCaseFundJobOptions = {}) => {
   const job = shallowRef<CaseFundJob | null>(null)
   const dialogVisible = ref(false)

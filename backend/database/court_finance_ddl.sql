@@ -506,6 +506,8 @@ create table fin_case_fund_payment (
     trial_case_no varchar(100),
     payment_date date not null,
     payment_time datetime,
+    claim_date date,
+    posting_date date not null,
     receipt_no varchar(100),
     invoice_date date,
     invoice_operator varchar(100),
@@ -539,6 +541,7 @@ create table fin_case_fund_payment (
 
 create unique index uk_case_fund_payment_source on fin_case_fund_payment (account_set_id, source_fingerprint);
 create index idx_case_fund_payment_period on fin_case_fund_payment (account_set_id, period, payment_date);
+create index idx_case_fund_payment_posting_date on fin_case_fund_payment (account_set_id, fiscal_year, posting_date, del_flag);
 create index idx_case_fund_payment_case on fin_case_fund_payment (account_set_id, case_no);
 create index idx_case_fund_payment_receipt on fin_case_fund_payment (account_set_id, receipt_no);
 create index idx_case_fund_payment_bank_serial on fin_case_fund_payment (account_set_id, bank_serial_no);
@@ -707,7 +710,7 @@ create table fin_case_fund_unknown_refund_match (
     unknown_payment_id varchar(36) not null,
     refund_id varchar(36) not null,
     match_status varchar(30) not null default 'AUTO_CANDIDATE',
-    match_rule varchar(60) not null default 'SAME_MONTH_NAME_AMOUNT_ACCOUNT',
+    match_rule varchar(60) not null default 'SAME_MONTH_AMOUNT_ACCOUNT',
     candidate_count int not null default 1,
     match_evidence_json text,
     decision_by varchar(36),

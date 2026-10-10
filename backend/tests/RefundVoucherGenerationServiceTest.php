@@ -317,13 +317,23 @@ refundServiceAssertSame([1, 1], $rule->receivedFlags, 'Refund grouping flags sho
 refundServiceAssertSame(['2026-07-14'], array_keys($prepared['groups']), 'Daily refund groups should preserve source order');
 refundServiceAssertSame('QUERY', $prepared['generate_scope'], 'Generation scope should survive preparation');
 
+$fallbackPayeeRows = $rows;
+$fallbackPayeeRows[0]['payee_bank_account_name'] = '';
+$fallbackPayeeRows[0]['actual_payee_name'] = '实际收款人甲';
+$fallbackPayeePrepared = $service->prepareGeneration($fallbackPayeeRows, 'SELECTED');
+refundServiceAssertSame(
+    '',
+    $fallbackPayeePrepared['error'],
+    'Refund voucher generation should accept actual payee name when bank account name is blank'
+);
+
 $missingBankNameRows = $rows;
 $missingBankNameRows[0]['payee_bank_account_name'] = '';
 $missingBankNamePrepared = $service->prepareGeneration($missingBankNameRows, 'SELECTED');
 refundServiceAssertSame(
-    '案号【案一】收款人银行户名不能为空，不能生成凭证',
+    '案号【案一】收款人银行户名和实际收款人不能同时为空，不能生成凭证',
     $missingBankNamePrepared['error'],
-    'Refund voucher generation should reject a blank payee bank account name'
+    'Refund voucher generation should reject rows with neither bank account name nor actual payee name'
 );
 
 $initialRows = [

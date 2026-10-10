@@ -428,6 +428,23 @@ body {
   border-left: 1px solid var(--border-light);
 }
 
+.topbar-period-select {
+  width: 140px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border-light);
+}
+
+.topbar-period-select .el-select__wrapper {
+  min-height: 28px;
+  padding: 2px 8px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border-light) inset;
+}
+
+.topbar-period-select .el-select__selected-item {
+  font-size: 12px;
+}
+
 .account-set-chip {
   display: inline-flex;
   align-items: center;
@@ -1928,6 +1945,17 @@ body {
 .bank-auto-field strong {
   color: var(--text-main);
   font-weight: 600;
+}
+
+.statement-purpose-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 210px;
+}
+
+.statement-purpose-header .el-input {
+  width: 142px;
 }
 
 .case-fund-summary {

@@ -8,7 +8,7 @@
           <el-option label="本月" value="month" />
           <el-option label="本年" value="year" />
         </el-select>
-        <span class="date-filter-label">缴费日期</span>
+        <span class="date-filter-label">制证日期</span>
         <el-date-picker v-model="filters.date_start" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" class="payment-date-picker" />
         <span class="date-separator">至</span>
         <el-date-picker v-model="filters.date_end" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" class="payment-date-picker" />
@@ -91,6 +91,10 @@
       >
         <el-table-column type="selection" width="55" :selectable="isRowSelectable" fixed="left" />
         <el-table-column prop="payment_date" label="缴费日期" width="112" fixed="left" />
+        <el-table-column prop="claim_date" label="认领日期" width="112">
+          <template #default="{ row }">{{ row.claim_date || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="posting_date" label="制证日期" width="112" />
         <el-table-column prop="case_no" label="案号" min-width="190" fixed="left" show-overflow-tooltip />
         <el-table-column prop="business_type" label="业务类型" width="130" show-overflow-tooltip />
         <el-table-column prop="payer_name" label="缴费人" min-width="140" show-overflow-tooltip />
@@ -232,10 +236,12 @@ import { ArrowDown, Search, Setting, Upload, DocumentChecked, Delete, MoreFilled
 import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import CaseFundJobProgressDialog from '../../components/case-fund/CaseFundJobProgressDialog.vue'
-import { createCaseFundClientRequestId, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
+import { createCaseFundClientRequestId, isCaseFundJobNotFoundError, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
 import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
 import type { CaseFundJob, CaseFundPayment, CaseFundSubjectConfig, Subject } from '../../types/api'
+
+defineOptions({ name: 'PaymentRegisterView' })
 
 const context = useContextStore()
 const route = useRoute()
@@ -494,6 +500,17 @@ const restorePaymentJob = async (showMessage = true) => {
     }
     return restoredJob
   } catch (error: any) {
+    if (isCaseFundJobNotFoundError(error)) {
+      removeStoredPaymentJob(jobId)
+      paymentRecoveryUnconfirmed.value = false
+      if (pendingPaymentSubmission.value) {
+        return recoverPendingPaymentJob(showMessage)
+      }
+      if (showMessage) {
+        ElMessage.info('上次缴费后台任务已不存在，失效记录已清除，操作锁定已解除')
+      }
+      return null
+    }
     paymentRecoveryUnconfirmed.value = true
     if (showMessage) {
       ElMessage.warning(error?.message || '暂时无法恢复后台任务状态，原任务可能仍在运行，请勿重复提交')
@@ -961,6 +978,18 @@ watch(
   () => route.query.payment_id,
   async () => {
     if (route.path !== '/case-fund/payments') return
+    page.value = 1
+    await load()
+  }
+)
+
+watch(
+  () => context.period,
+  async (period) => {
+    const range = initialPaymentDateRange(period)
+    filters.quick_range = ''
+    filters.date_start = range.start
+    filters.date_end = range.end
     page.value = 1
     await load()
   }

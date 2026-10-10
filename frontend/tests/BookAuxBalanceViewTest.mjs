@@ -16,6 +16,7 @@ const view = readFileSync(viewPath, 'utf8')
 assert(app.includes('menu:book:aux_balance'), 'sidebar should check auxiliary balance menu permission')
 assert(app.includes('index="/books/aux-balance"'), 'sidebar should route to auxiliary balance page')
 assert(app.includes('辅助核算余额表'), 'sidebar and title map should show auxiliary balance menu item')
+assert(view.includes("defineOptions({ name: 'AuxBalanceView' })"), 'aux balance view should declare a stable name for page caching')
 
 assert(router.includes("const AuxBalanceView = () => import('../views/books/AuxBalanceView.vue')"), 'router should lazy-load auxiliary balance view')
 assert(router.includes("'/books/aux-balance'"), 'router should register auxiliary balance route')

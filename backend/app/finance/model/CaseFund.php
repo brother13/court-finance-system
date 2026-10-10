@@ -96,6 +96,7 @@ class CaseFund extends Common
         'payment_id', 'account_set_id', 'fiscal_year', 'period', 'case_no', 'confirmed_flag',
         'available_flag', 'business_type', 'payer_name', 'party_name', 'invoice_title',
         'payment_amount', 'register_type', 'trial_case_no', 'payment_date', 'payment_time',
+        'claim_date', 'posting_date',
         'receipt_no', 'invoice_date', 'invoice_operator', 'payment_method', 'cashier_name',
         'judge_name', 'clerk_name', 'department_name', 'bank_account_no', 'bank_serial_no',
         'payment_order_no', 'internal_transfer_ticket_no', 'deposit_revoke_flag',
@@ -119,7 +120,8 @@ class CaseFund extends Common
     // 导入原文等大字段载入内存。列表/导出仍继续使用上面的完整字段集。
     const PAYMENT_VOUCHER_FIELD = [
         'payment_id', 'period', 'case_no', 'business_type', 'party_name', 'payment_amount',
-        'payment_date', 'receipt_no', 'payment_method', 'source_row_no', 'voucher_status',
+        'payment_date', 'posting_date', 'receipt_no', 'payment_method', 'source_row_no', 'voucher_status',
+        'payment_time', 'payer_name', 'bank_account_no',
         'voucher_id', 'voucher_period',
     ];
     const REFUND_VOUCHER_FIELD = [
@@ -492,8 +494,11 @@ class CaseFund extends Common
         } catch (\Throwable $e) {
             return $this->error('查询后台任务失败：' . $e->getMessage());
         }
-        if (!$job || !$this->canViewAsyncJob($job)) {
-            return $this->error('后台任务不存在或无权查看');
+        if (!$job) {
+            return $this->error('后台任务不存在', ['reason' => 'JOB_NOT_FOUND']);
+        }
+        if (!$this->canViewAsyncJob($job)) {
+            return $this->error('无权查看该后台任务', ['reason' => 'JOB_FORBIDDEN']);
         }
         return $this->ok($service->publicJob($job));
     }
@@ -552,8 +557,11 @@ class CaseFund extends Common
         try {
             $service = $this->financeAsyncJobService();
             $job = $service->findById($jobId, $this->accountSetId);
-            if (!$job || !$this->canViewAsyncJob($job)) {
-                return $this->error('后台任务不存在或无权查看');
+            if (!$job) {
+                return $this->error('后台任务不存在', ['reason' => 'JOB_NOT_FOUND']);
+            }
+            if (!$this->canViewAsyncJob($job)) {
+                return $this->error('无权查看该后台任务', ['reason' => 'JOB_FORBIDDEN']);
             }
             $result = $service->listErrors($jobId, $this->accountSetId, $page, $pagesize);
         } catch (\Throwable $e) {
@@ -1227,10 +1235,12 @@ class CaseFund extends Common
                 }
             }
             $rows = array_values($rowsById);
-            $dateField = $isPayment ? 'payment_date' : 'refund_date';
+            $dateField = $isPayment ? 'posting_date' : 'refund_date';
             usort($rows, function ($left, $right) use ($dateField, $idField) {
                 foreach ([$dateField, 'source_row_no', $idField] as $field) {
-                    $comparison = ($left[$field] ?? '') <=> ($right[$field] ?? '');
+                    $leftValue = $left[$field] ?? ($field === 'posting_date' ? ($left['payment_date'] ?? '') : '');
+                    $rightValue = $right[$field] ?? ($field === 'posting_date' ? ($right['payment_date'] ?? '') : '');
+                    $comparison = $leftValue <=> $rightValue;
                     if ($comparison !== 0) {
                         return $comparison;
                     }
@@ -3759,6 +3769,13 @@ class CaseFund extends Common
                 },
                 'build_aux_desc' => function ($auxValues) {
                     return $this->buildAuxDesc($auxValues);
+                },
+                'resolve_unknown_claim_aux' => function ($row, $subjectCode) {
+                    $resolver = new \app\finance\service\casefund\voucher\UnknownClaimAuxiliaryResolver(
+                        function ($table) { return $this->getdb($table); },
+                        $this->accountSetId
+                    );
+                    return $resolver->resolve($row, $subjectCode);
                 },
                 'build_payment_summary' => function ($row) {
                     return $this->buildPaymentVoucherSummary($row);

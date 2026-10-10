@@ -120,6 +120,64 @@ $parseMethod = new ReflectionMethod(CaseFund::class, 'parsePaymentImportRowsFrom
 $parseMethod->setAccessible(true);
 $rows = $parseMethod->invoke($caseFund, file_get_contents($xlsPath));
 
+$importParserMethod = new ReflectionMethod(CaseFund::class, 'importParser');
+$importParserMethod->setAccessible(true);
+$importParser = $importParserMethod->invoke($caseFund);
+$headers = [
+    '案号', '确', '可', '业务类型', '缴费人', '当事人', '开票抬头', '金额',
+    '登记类型', '前审案号', '缴费日期', '票据号码', '开票日期', '开票员',
+    '收费方式', '收费员', '承办法官', '书记员', '承办部门', '收款账号',
+    '银行流水号', '缴费单号', '内转支出票号', '是否提存撤销', '认领日期',
+];
+$makeClaimCells = function ($claimDate, $paymentMethod = '不明款认领') use ($headers) {
+    $values = [
+        '案号' => '（2026）辽0106执100号', '业务类型' => '执行、调解款',
+        '缴费人' => '测试缴款人', '当事人' => '测试当事人', '金额' => '100.00',
+        '缴费日期' => '2025-05-10 09:30:00', '票据号码' => 'CLAIM-001',
+        '收费方式' => $paymentMethod, '银行流水号' => '', '认领日期' => $claimDate,
+    ];
+    if ($paymentMethod !== '不明款认领') {
+        $values['银行流水号'] = '1234567890';
+    }
+    $cells = [];
+    foreach ($headers as $column => $header) {
+        $cells['0:' . $column] = $header;
+        $cells['1:' . $column] = $values[$header] ?? '';
+    }
+    return $cells;
+};
+$crossYear = $importParser->parsePaymentCells($makeClaimCells('2026-08-03'));
+if (count($crossYear) !== 1 || $crossYear[0]['payment_time'] !== '2025-05-10 09:30:00'
+    || $crossYear[0]['payment_date'] !== '2025-05-10'
+    || $crossYear[0]['claim_date'] !== '2026-08-03'
+    || $crossYear[0]['posting_date'] !== '2026-08-03'
+    || $crossYear[0]['period'] !== '2026-08'
+    || $crossYear[0]['fiscal_year'] !== '2026') {
+    fwrite(STDERR, 'Cross-year claim import must retain transaction time and use claim date for posting period' . PHP_EOL);
+    exit(1);
+}
+$sameMonth = $importParser->parsePaymentCells($makeClaimCells(''));
+if ($sameMonth[0]['claim_date'] !== null || $sameMonth[0]['posting_date'] !== '2025-05-10'
+    || $sameMonth[0]['period'] !== '2025-05') {
+    fwrite(STDERR, 'Blank claim date must retain the original payment date and period' . PHP_EOL);
+    exit(1);
+}
+if ($sameMonth[0]['source_fingerprint'] !== $crossYear[0]['source_fingerprint']) {
+    fwrite(STDERR, 'Claim date must not change the original payment duplicate fingerprint' . PHP_EOL);
+    exit(1);
+}
+foreach ([['2026-08-03', 'POS', '只有不明款认领'], ['bad-date', '不明款认领', '认领日期格式']] as $invalid) {
+    try {
+        $importParser->parsePaymentCells($makeClaimCells($invalid[0], $invalid[1]));
+        fwrite(STDERR, 'Invalid claim date or method should be rejected' . PHP_EOL);
+        exit(1);
+    } catch (Exception $error) {
+        if (strpos($error->getMessage(), $invalid[2]) === false) {
+            throw $error;
+        }
+    }
+}
+
 if (count($rows) !== 19) {
     fwrite(STDERR, 'Expected 19 payment rows, got ' . count($rows) . PHP_EOL);
     exit(1);

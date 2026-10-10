@@ -654,6 +654,26 @@ watch(
   }
 )
 
+watch(
+  () => context.period,
+  async (period) => {
+    topFilter.year = period.slice(0, 4)
+    topFilter.period_start = period
+    topFilter.period_end = period
+    dateRange.value = []
+    renumberForm.period = period
+    page.value = 1
+    if (route.path === '/vouchers' && (route.query.period || route.query.voucher_id)) {
+      const nextQuery = { ...route.query }
+      delete nextQuery.period
+      delete nextQuery.voucher_id
+      await router.replace({ path: route.path, query: nextQuery })
+      return
+    }
+    await load()
+  }
+)
+
 const buildQueryParams = () => {
   const [dateStart, dateEnd] = dateRange.value || []
   return cleanFilter({

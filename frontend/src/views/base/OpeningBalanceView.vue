@@ -201,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Plus, Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
@@ -211,7 +211,9 @@ import { useContextStore } from '../../stores/context'
 const context = useContextStore()
 const router = useRouter()
 const period = ref(context.period)
-const periodOptions = Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
+const periodOptions = computed(() =>
+  Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
+)
 const rows = ref<any[]>([])
 const saving = ref(false)
 const auxDrawerVisible = ref(false)
@@ -361,6 +363,15 @@ const saveAuxOpening = async () => {
     auxSaving.value = false
   }
 }
+
+watch(
+  () => context.period,
+  async (selectedPeriod) => {
+    period.value = selectedPeriod
+    auxDrawerVisible.value = false
+    await load()
+  }
+)
 
 onMounted(load)
 </script>

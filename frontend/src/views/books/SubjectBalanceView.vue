@@ -171,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CaretBottom, CaretRight, Download, Notebook, Printer, Refresh, Search } from '@element-plus/icons-vue'
 import { booksApi } from '../../api/books'
@@ -469,6 +469,16 @@ const printReport = async () => {
     printing.value = false
   }
 }
+
+watch(
+  () => context.period,
+  async (period) => {
+    const [startDate, endDate] = periodMonthRange(period)
+    filters.startDate = startDate
+    filters.endDate = endDate
+    await load()
+  }
+)
 
 onMounted(load)
 </script>

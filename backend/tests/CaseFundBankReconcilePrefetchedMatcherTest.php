@@ -231,9 +231,7 @@ $referenceHooks['refund_candidates_by_statement'] = function ($statement) use ($
     return $rows;
 };
 $referenceHooks['payment_candidates_in_scope'] = function () use ($scope) {
-    return array_values(array_filter($scope['payments'], function ($row) {
-        return trim((string)($row['bank_serial_no'] ?? '')) !== '';
-    }));
+    return $scope['payments'];
 };
 $referenceHooks['unknown_payment_candidates_in_scope'] = function () use ($scope) {
     return array_values(array_filter($scope['unknown_payments'], 'prefetchedIsUnclaimed'));
@@ -325,13 +323,13 @@ $prefetchedResult = $prefetchedMatcher->matchPrefetched(
 prefetchedMatcherAssertSame(
     $referenceResult,
     $prefetchedResult,
-    'Prefetched matcher must preserve legacy match result semantics'
+    'Prefetched and query-backed matchers must use the same allocation rules'
 );
 prefetchedMatcherAssertSame(0, $unexpectedQueryCalls, 'Prefetched matcher must not call row-by-row query hooks');
 prefetchedMatcherAssertSame(
     [
-        'S-PAYMENT' => 'MATCHED',
-        'S-REUSE' => 'BANK_ONLY',
+        'S-PAYMENT' => 'DUPLICATE',
+        'S-REUSE' => 'DUPLICATE',
         'S-DUPLICATE' => 'DUPLICATE',
         'S-UNKNOWN' => 'MATCHED',
         'S-REFUND-DIFF' => 'AMOUNT_DIFF',
@@ -344,13 +342,13 @@ prefetchedMatcherAssertSame(
     'Prefetched matcher should cover serial suffix, reuse, duplicate, unknown payment and refund rules'
 );
 prefetchedMatcherAssertSame(
-    ['P-4', 'U-2', 'R-4', 'R-5'],
+    ['P-4', 'U-2', 'U-3', 'R-3', 'R-4', 'R-5'],
     array_values(array_map(function ($row) {
         return $row['biz_id'];
     }, array_filter($prefetchedResult['result_rows'], function ($row) {
         return $row['match_status'] === 'BIZ_ONLY';
     }))),
-    'Prefetched matcher should preserve BIZ_ONLY suppression and output'
+    'Prefetched matcher must retain unrepresented business even if a bank candidate exists'
 );
 
 try {

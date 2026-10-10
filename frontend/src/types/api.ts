@@ -298,6 +298,8 @@ export interface CaseFundPayment {
   trial_case_no?: string
   payment_date: string
   payment_time?: string
+  claim_date?: string | null
+  posting_date: string
   receipt_no?: string
   invoice_date?: string
   invoice_operator?: string

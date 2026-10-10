@@ -141,6 +141,21 @@ class OpeningAuxiliaryRule
         if (is_array($amount) || is_object($amount)) {
             throw new \InvalidArgumentException('辅助期初第' . ($index + 1) . '行' . $side . '金额格式不正确');
         }
+
+        // JSON 中的金额会被解码为 float。若 PHP precision 配置较高，直接
+        // 转字符串可能把 39806.54 展开成 39806.540000000001，导致正常的
+        // 两位小数被下面的格式校验误判。数值型金额应直接按“分”校验和转换。
+        if (is_float($amount)) {
+            if (!is_finite($amount) || $amount < 0) {
+                throw new \InvalidArgumentException('辅助期初第' . ($index + 1) . '行' . $side . '金额格式不正确');
+            }
+            $roundedAmount = round($amount, 2);
+            if (abs($amount - $roundedAmount) > 0.0000001) {
+                throw new \InvalidArgumentException('辅助期初第' . ($index + 1) . '行' . $side . '金额格式不正确');
+            }
+            return (int)round($roundedAmount * 100);
+        }
+
         $normalized = str_replace([',', ' '], '', trim((string)$amount));
         if ($normalized === '') {
             return 0;

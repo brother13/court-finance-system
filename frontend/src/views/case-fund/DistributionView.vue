@@ -166,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Delete, DocumentChecked, MoreFilled, Search, Setting, Upload } from '@element-plus/icons-vue'
 import { baseApi } from '../../api/base'
@@ -174,6 +174,8 @@ import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
 import type { CaseFundDistribution, CaseFundSubjectConfig, Subject } from '../../types/api'
+
+defineOptions({ name: 'DistributionView' })
 
 const context = useContextStore()
 const rows = ref<CaseFundDistribution[]>([])
@@ -469,6 +471,18 @@ const handleDeleteDistributions = async () => {
     deleting.value = false
   }
 }
+
+watch(
+  () => context.period,
+  async (period) => {
+    const range = initialDateRange(period)
+    filters.quick_range = ''
+    filters.date_start = range.start
+    filters.date_end = range.end
+    page.value = 1
+    await load()
+  }
+)
 
 onMounted(load)
 </script>

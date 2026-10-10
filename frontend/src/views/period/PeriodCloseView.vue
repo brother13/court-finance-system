@@ -149,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Calendar, CircleCheck, Refresh, RefreshLeft } from '@element-plus/icons-vue'
 import { periodApi, type PeriodCloseCheckResult } from '../../api/period'
@@ -222,8 +222,7 @@ const loadPeriods = async () => {
 
 const switchPeriod = (period: string) => {
   selectedPeriod.value = period
-  context.period = period
-  context.year = Number(period.slice(0, 4))
+  context.setPeriod(period)
   selectedYear.value = context.year
 }
 
@@ -322,6 +321,17 @@ const yearEnd = async () => {
   await loadPeriods()
   await runCheck()
 }
+
+watch(
+  () => context.period,
+  async (period) => {
+    if (period === selectedPeriod.value) return
+    selectedPeriod.value = period
+    selectedYear.value = context.year
+    await loadPeriods()
+    await runCheck()
+  }
+)
 
 onMounted(async () => {
   await loadPeriods()

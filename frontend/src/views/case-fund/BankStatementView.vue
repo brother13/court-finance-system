@@ -27,7 +27,8 @@
       </div>
       <div class="case-fund-actions">
         <input ref="importInputRef" type="file" accept=".xls,.xlsx" class="case-fund-file-input" @change="handleBankStatementImportFile" />
-        <el-button :icon="Download" :loading="exporting" @click="exportReconcileResults">导出对账结果</el-button>
+        <el-button @click="businessOnlyVisible = true">业务待核查</el-button>
+        <el-button :icon="Download" :loading="exporting" @click="exportReconcileResults">导出银行流水对账</el-button>
         <el-button v-if="reconcileJob" type="primary" plain @click="openReconcileJobDialog">后台任务</el-button>
         <el-button v-permission="'case_fund:reconcile'" type="success" :icon="DocumentChecked" :loading="reconciling" :disabled="reconcileJobBusy" @click="runAutoReconcile">自动对账</el-button>
         <el-button v-permission="'case_fund:delete'" type="danger" :icon="Delete" :loading="deleting" @click="handleDeleteBankStatements">删除</el-button>
@@ -82,7 +83,22 @@
         <el-table-column prop="counterparty_account_no" label="对方账号" min-width="190" show-overflow-tooltip />
         <el-table-column prop="counterparty_account_name" label="对方户名" min-width="150" show-overflow-tooltip />
         <el-table-column prop="counterparty_bank_name" label="对方开户行" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="purpose" label="用途" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="purpose" min-width="230" show-overflow-tooltip>
+          <template #header>
+            <div class="statement-purpose-header">
+              <span>用途</span>
+              <el-input
+                v-model="filters.purpose"
+                aria-label="按用途筛选"
+                placeholder="快速筛选"
+                clearable
+                size="small"
+                @keyup.enter="query"
+                @clear="query"
+              />
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="postscript" label="留言" min-width="180" show-overflow-tooltip />
         <el-table-column prop="bank_serial_no" label="交易流水号" min-width="150" show-overflow-tooltip />
         <el-table-column label="关联业务" width="250" fixed="right">
@@ -136,6 +152,9 @@
         @current-change="load"
       />
     </div>
+
+    <BankReconcileBusinessOnlyDrawer v-model="businessOnlyVisible" :date-start="filters.date_start" :date-end="filters.date_end"
+      :can-navigate="canNavigateBusiness" @view-business="viewUnmatchedBusiness" />
 
     <el-drawer v-model="reconcileDetailVisible" title="银行对账详情" size="760px">
       <template v-if="selectedStatement">
@@ -202,7 +221,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, DocumentChecked, Download, Search, Upload } from '@element-plus/icons-vue'
@@ -210,8 +229,11 @@ import * as XLSX from 'xlsx'
 import { caseFundApi } from '../../api/caseFund'
 import { useContextStore } from '../../stores/context'
 import CaseFundJobProgressDialog from '../../components/case-fund/CaseFundJobProgressDialog.vue'
-import { createCaseFundClientRequestId, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
+import BankReconcileBusinessOnlyDrawer from '../../components/case-fund/BankReconcileBusinessOnlyDrawer.vue'
+import { createCaseFundClientRequestId, isCaseFundJobNotFoundError, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
 import type { CaseFundBankReconcile, CaseFundBankStatement, CaseFundJob } from '../../types/api'
+
+defineOptions({ name: 'BankStatementView' })
 
 const context = useContextStore()
 const router = useRouter()
@@ -232,6 +254,7 @@ const deleting = ref(false)
 const importInputRef = ref<HTMLInputElement | null>(null)
 const selectedStatementIds = ref<string[]>([])
 const reconcileDetailVisible = ref(false)
+const businessOnlyVisible = ref(false)
 const selectedStatement = ref<CaseFundBankStatement | null>(null)
 const restoreReconcileDetailOnActivate = ref(false)
 const initialRange = initialStatementDateRange(context.period)
@@ -241,6 +264,7 @@ const filters = reactive({
   date_end: initialRange.end,
   direction: '',
   reconcile_status: '',
+  purpose: '',
   keyword: ''
 })
 
@@ -258,6 +282,7 @@ const statementListParams = (targetPage: number, targetPageSize: number, filterS
   date_end: filterSnapshot.date_end,
   direction: filterSnapshot.direction,
   reconcile_status: filterSnapshot.reconcile_status,
+  purpose: filterSnapshot.purpose,
   keyword: filterSnapshot.keyword,
   page: targetPage,
   pagesize: targetPageSize
@@ -475,6 +500,17 @@ const restoreReconcileJob = async (showMessage = true) => {
     }
     return restoredJob
   } catch (error: any) {
+    if (isCaseFundJobNotFoundError(error)) {
+      removeStoredReconcileJob(jobId)
+      reconcileRecoveryUnconfirmed.value = false
+      if (pendingReconcileSubmission.value) {
+        return recoverPendingReconcileJob(showMessage)
+      }
+      if (showMessage) {
+        ElMessage.info('上次自动对账任务已不存在，失效记录已清除，操作锁定已解除')
+      }
+      return null
+    }
     reconcileRecoveryUnconfirmed.value = true
     if (showMessage) {
       ElMessage.warning(error?.message || '暂时无法恢复自动对账任务状态，原任务可能仍在运行，请勿重复提交')
@@ -582,6 +618,7 @@ const exportReconcileResults = async () => {
       `交易日期：${filterSnapshot.date_start || '不限'} 至 ${filterSnapshot.date_end || '不限'}`,
       `收支方向：${directionLabel}`,
       `对账状态：${statusLabel}`,
+      `用途：${filterSnapshot.purpose || '不限'}`,
       `关键词：${filterSnapshot.keyword || '无'}`
     ].join('    ')
     const summaryText = `银行流水 ${result.total} 条    导出明细 ${body.length} 行    支出合计 ${money(result.debitAmount)}    收入合计 ${money(result.creditAmount)}`
@@ -725,7 +762,7 @@ const navigateToBusiness = async (item: CaseFundBankReconcile) => {
     ElMessage.warning('当前账号没有查看该业务页面的权限')
     return
   }
-  restoreReconcileDetailOnActivate.value = Boolean(selectedStatement.value)
+  restoreReconcileDetailOnActivate.value = reconcileDetailVisible.value && Boolean(selectedStatement.value)
   reconcileDetailVisible.value = false
   await router.push({ path: target.path, query: target.query })
 }
@@ -733,6 +770,11 @@ const navigateToBusiness = async (item: CaseFundBankReconcile) => {
 const navigatePrimaryBusiness = async (row: CaseFundBankStatement) => {
   const item = primaryBusinessItem(row)
   if (item) await navigateToBusiness(item)
+}
+
+const viewUnmatchedBusiness = async (item: CaseFundBankReconcile) => {
+  businessOnlyVisible.value = false
+  await navigateToBusiness(item)
 }
 
 const statementAmount = (row: CaseFundBankStatement) => {
@@ -1027,12 +1069,24 @@ const showReconcileJobErrors = async () => {
   ).catch(() => {})
 }
 
+watch(
+  () => context.period,
+  async (period) => {
+    const range = initialStatementDateRange(period)
+    filters.date_start = range.start
+    filters.date_end = range.end
+    page.value = 1
+    await load()
+  }
+)
+
 onMounted(() => {
   void load()
   void restoreReconcileJob()
 })
 
 onDeactivated(() => {
+  businessOnlyVisible.value = false
   if (reconcileDetailVisible.value && selectedStatement.value) {
     restoreReconcileDetailOnActivate.value = true
     reconcileDetailVisible.value = false

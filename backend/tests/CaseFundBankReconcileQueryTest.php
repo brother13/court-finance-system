@@ -395,6 +395,12 @@ bankQueryAssertSame(
 );
 bankQueryAssertSame(1, count($store->queries[2]['where']), 'Bank reconcile summary should preserve the previous structured-filter-only scope');
 bankQueryAssertSame('match_status', $store->queries[2]['group'], 'Bank reconcile summary should group by status');
-bankQueryAssertSame('reconcile_date asc, bank_serial_no asc', $store->queries[0]['order'], 'Bank reconcile list order should remain stable');
+bankQueryAssertSame('reconcile_date asc, bank_serial_no asc, reconcile_id asc', $store->queries[0]['order'], 'Bank reconcile list order should remain stable');
+
+$store->rows['payment'] = [
+    ['payment_id' => 'P-NO-SERIAL', 'bank_serial_no' => ''],
+    ['payment_id' => 'P-SERIAL', 'bank_serial_no' => 'SERIAL001'],
+];
+bankQueryAssertSame($store->rows['payment'], $repository->paymentCandidatesInScope('2026-07-01', '2026-07-31'), 'Missing serial must not remove payments from completeness checks');
 
 echo 'Case fund bank reconcile query test passed' . PHP_EOL;

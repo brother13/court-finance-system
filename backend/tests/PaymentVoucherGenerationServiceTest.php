@@ -25,6 +25,7 @@ class PaymentVoucherResolverStub
         return [
             'POS' => ['debit_subject_code' => '100202'],
             'TRANSFER' => ['debit_subject_code' => '100201'],
+            'UNKNOWN' => ['debit_subject_code' => '100201'],
         ];
     }
 }
@@ -62,7 +63,7 @@ class PaymentVoucherRuleStub
         $groups = [];
         foreach ($rows as $row) {
             $key = $byDayFlag
-                ? $row['payment_date'] . '|' . ($byMethodFlag ? $row['payment_method'] : 'ALL')
+                ? ($row['posting_date'] ?? $row['payment_date']) . '|' . ($byMethodFlag ? $row['payment_method'] : 'ALL')
                 : $row['payment_id'] . '|ONE';
             $groups[$key][] = $row;
         }
@@ -253,7 +254,7 @@ function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $upda
         $persistence,
         $hooks,
         'fin_case_fund_payment',
-        ['payment_id', 'payment_date', 'payment_amount', 'payment_method', 'business_type', 'case_no', 'voucher_status', 'voucher_id']
+        ['payment_id', 'payment_date', 'posting_date', 'payment_amount', 'payment_method', 'business_type', 'case_no', 'voucher_status', 'voucher_id']
     );
     return [$service, $dbs, $rule, $state];
 }
@@ -359,7 +360,7 @@ paymentServiceAssertSame(
 paymentServiceAssertSame([4], $runtimeState->auxiliaryDetailCounts, 'All payment voucher groups should prepare auxiliary archives in one call');
 paymentServiceAssertSame([true], $runtimeDbs['fin_case_fund_payment']->lockValues, 'Payment source rows should be locked inside generation');
 paymentServiceAssertSame(
-    [['payment_date', '缴费', 2]],
+    [['posting_date', '缴费制证', 2]],
     $runtimeState->periodChecks,
     'Payment periods must be rechecked after locking source rows'
 );
@@ -372,6 +373,28 @@ paymentServiceAssertSame(2, count($runtimeDbs['fin_voucher']->inserts), 'Each pa
 paymentServiceAssertSame('收案款', $runtimeDbs['fin_voucher']->inserts[0]['summary'], 'Payment persistence should keep detail summary');
 paymentServiceAssertSame('20.00', $runtimeDbs['fin_voucher']->inserts[0]['debit_amount'], 'Payment persistence should follow stable date/source order and keep group total');
 paymentServiceAssertSame(2, count($runtimeDbs['fin_case_fund_payment']->updates), 'Every locked payment row should be updated once');
+$crossYearRow = [
+    'payment_id' => 'cross-year-claim',
+    'payment_date' => '2025-05-10',
+    'payment_time' => '2025-05-10 09:30:00',
+    'claim_date' => '2026-08-03',
+    'posting_date' => '2026-08-03',
+    'fiscal_year' => '2026',
+    'period' => '2026-08',
+    'payment_amount' => '100.00',
+    'payment_method' => 'UNKNOWN',
+    'business_type' => '执行、调解款',
+    'case_no' => '跨年案号',
+    'voucher_status' => 'UNGENERATED',
+];
+[$claimService, $claimDbs, $claimRule, $claimState] = paymentRuntimeFixture([$crossYearRow]);
+$claimPrepared = $claimService->prepareGeneration([$crossYearRow], 'SELECTED');
+$claimResult = $claimService->generatePrepared($claimPrepared);
+paymentServiceAssertSame(1, $claimResult['generated_count'], 'Cross-year claim should generate one payment voucher');
+paymentServiceAssertSame(['voucher_no:2026-08', 'aux_archives'], $claimState->lockEvents, 'Cross-year claim should lock voucher number in claim period');
+paymentServiceAssertSame('2026-08-03', $claimDbs['fin_voucher']->inserts[0]['voucher_date'], 'Cross-year claim voucher date must be the claim date');
+paymentServiceAssertSame('2026-08', $claimDbs['fin_voucher']->inserts[0]['period'], 'Cross-year claim voucher period must be the claim period');
+paymentServiceAssertSame('2025-05-10 09:30:00', $claimRule->groupRowsHistory[1][0]['payment_time'], 'Original transaction time must survive voucher generation');
 $paymentUpdateScopeFound = false;
 $paymentIdBatchFound = false;
 foreach ($runtimeDbs['fin_case_fund_payment']->whereCalls as $whereCall) {
@@ -409,6 +432,14 @@ foreach ($queryDbs['fin_case_fund_payment']->whereCalls as $whereCall) {
 }
 paymentServiceAssertSame(true, $paymentSnapshotFound, 'Payment query scope must use the submission snapshot time');
 paymentServiceAssertSame(true, $paymentAmountRangeFound, 'Payment query generation must preserve the visible amount range');
+$paymentPostingFilterFound = false;
+foreach ($queryDbs['fin_case_fund_payment']->whereCalls as $whereCall) {
+    if (isset($whereCall[0]) && is_array($whereCall[0])) {
+        $paymentPostingFilterFound = ($whereCall[0]['period'] ?? null) === '2026-08'
+            && !isset($whereCall[0]['payment_date']);
+    }
+}
+paymentServiceAssertSame(true, $paymentPostingFilterFound, 'Payment query generation should select the claim period without filtering original payment date');
 $queryDbs['fin_case_fund_payment']->selectRows = array_fill(0, 5001, ['payment_id' => 'overflow']);
 $tooLargeQuery = $queryService->rowsByQuery(['period' => '2026-08']);
 paymentServiceAssertSame(

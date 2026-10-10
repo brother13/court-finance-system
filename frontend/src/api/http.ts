@@ -6,6 +6,7 @@ const apiBaseURL = import.meta.env.VITE_API_BASE || '../index.php'
 
 type ApiActionOptions = {
   timeout?: number
+  silentError?: boolean
 }
 
 export const http = axios.create({
@@ -23,7 +24,9 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use((response) => {
   const result = response.data
   if (result && result.code !== 20000) {
-    ElMessage.error(result.message || '请求失败')
+    if (!(response.config as any).silentError) {
+      ElMessage.error(result.message || '请求失败')
+    }
     const error = new Error(result.message || '请求失败')
     ;(error as any).data = result.data
     ;(error as any).result = result
@@ -47,10 +50,11 @@ export const apiAction = <T = any>(
   Object.entries(extra).forEach(([key, value]) => body.set(key, String(value)))
   return http.post('', body, {
     timeout: options.timeout,
+    silentError: options.silentError,
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded'
     }
-  }) as Promise<T>
+  } as any) as Promise<T>
 }
 
 export const apiBlobAction = async (

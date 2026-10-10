@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CaretBottom, CaretRight, Collection, Download, Printer, Refresh, Search } from '@element-plus/icons-vue'
@@ -367,6 +367,15 @@ const printReport = async () => {
     printing.value = false
   }
 }
+
+watch(
+  () => context.period,
+  async (period) => {
+    filters.startPeriod = period
+    filters.endPeriod = period
+    await load()
+  }
+)
 
 onMounted(load)
 </script>

@@ -106,12 +106,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, Grid, Refresh, Search } from '@element-plus/icons-vue'
 import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 import type { AuxBalanceRow, Subject } from '../../types/api'
+
+defineOptions({ name: 'AuxBalanceView' })
 
 const context = useContextStore()
 const filters = reactive({
@@ -245,6 +247,11 @@ const exportData = async () => {
     exporting.value = false
   }
 }
+
+watch(() => context.period, async () => {
+  page.value = 1
+  await load()
+})
 
 onMounted(async () => {
   await loadSubjectOptions()

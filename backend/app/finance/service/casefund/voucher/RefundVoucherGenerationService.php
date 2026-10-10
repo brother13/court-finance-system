@@ -413,8 +413,10 @@ class RefundVoucherGenerationService
         $bizType = $this->callHook('current_biz_type');
         $subjectConfigMap = $this->resolver->configsByBusinessItems($bizType, 'REFUND');
         foreach ($rows as $row) {
-            if (trim((string)($row['payee_bank_account_name'] ?? '')) === '') {
-                return ['error' => '案号【' . ($row['case_no'] ?? '') . '】收款人银行户名不能为空，不能生成凭证'];
+            $payeeBankAccountName = trim((string)($row['payee_bank_account_name'] ?? ''));
+            $actualPayeeName = trim((string)($row['actual_payee_name'] ?? ''));
+            if ($payeeBankAccountName === '' && $actualPayeeName === '') {
+                return ['error' => '案号【' . ($row['case_no'] ?? '') . '】收款人银行户名和实际收款人不能同时为空，不能生成凭证'];
             }
             $outTypeConfigKey = $this->policy->voucherSubjectConfigKey(
                 $bizType,

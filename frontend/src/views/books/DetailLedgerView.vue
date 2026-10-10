@@ -608,6 +608,16 @@ watch(
   { immediate: true }
 )
 
+watch(
+  () => context.period,
+  async (period) => {
+    filters.startPeriod = period
+    filters.endPeriod = period
+    page.value = 1
+    await load()
+  }
+)
+
 onMounted(loadSubjects)
 </script>
 

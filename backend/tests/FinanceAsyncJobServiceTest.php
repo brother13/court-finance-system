@@ -347,6 +347,39 @@ $item = $service->addItem([
     'error_message' => '案号不能为空',
 ]);
 financeAsyncJobAssertSame(true, $item['created'], 'Task item should be created');
+
+$originalPrecision = ini_get('precision');
+ini_set('precision', '30');
+try {
+    $floatAmountItem = $service->addItem([
+        'job_id' => $claimed['job_id'],
+        'account_set_id' => 'set-1',
+        'item_no' => 500,
+        'source_type' => 'PAYMENT_IMPORT_ROW',
+        'source_id' => 'FLOAT-AMOUNT',
+        'amount' => 100.01,
+        'status' => 'SUCCEEDED',
+    ]);
+} finally {
+    ini_set('precision', (string)$originalPrecision);
+}
+financeAsyncJobAssertSame('100.01', $floatAmountItem['item']['amount'], 'Float task amount should ignore PHP precision tails');
+
+try {
+    $service->addItem([
+        'job_id' => $claimed['job_id'],
+        'account_set_id' => 'set-1',
+        'item_no' => 501,
+        'source_type' => 'PAYMENT_IMPORT_ROW',
+        'source_id' => 'FLOAT-EXCESS-PRECISION',
+        'amount' => 10.001,
+        'status' => 'FAILED',
+    ]);
+    financeAsyncJobFail('Float task amount with more than two decimals should be rejected');
+} catch (InvalidArgumentException $e) {
+    financeAsyncJobAssertSame('任务明细金额格式不正确', $e->getMessage(), 'Float task amount should retain two-decimal validation');
+}
+
 $itemDuplicate = $service->addItem([
     'job_id' => $claimed['job_id'],
     'item_no' => 99,

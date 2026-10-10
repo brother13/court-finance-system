@@ -233,10 +233,12 @@ import { baseApi } from '../../api/base'
 import { caseFundApi } from '../../api/caseFund'
 import CaseFundJobProgressDialog from '../../components/case-fund/CaseFundJobProgressDialog.vue'
 import CaseFundReturnMatchDialog from '../../components/case-fund/CaseFundReturnMatchDialog.vue'
-import { createCaseFundClientRequestId, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
+import { createCaseFundClientRequestId, isCaseFundJobNotFoundError, isCaseFundJobTerminal, useCaseFundJob } from '../../composables/useCaseFundJob'
 import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
 import type { CaseFundJob, CaseFundRefund, CaseFundReturnMatchStatus, CaseFundSubjectConfig, Subject } from '../../types/api'
+
+defineOptions({ name: 'RefundRegisterView' })
 
 const context = useContextStore()
 const route = useRoute()
@@ -484,6 +486,17 @@ const restoreRefundJob = async (showMessage = true) => {
     }
     return restoredJob
   } catch (error: any) {
+    if (isCaseFundJobNotFoundError(error)) {
+      removeStoredRefundJob(jobId)
+      refundRecoveryUnconfirmed.value = false
+      if (pendingRefundSubmission.value) {
+        return recoverPendingRefundJob(showMessage)
+      }
+      if (showMessage) {
+        ElMessage.info('上次退付凭证任务已不存在，失效记录已清除，操作锁定已解除')
+      }
+      return null
+    }
     refundRecoveryUnconfirmed.value = true
     if (showMessage) {
       ElMessage.warning(error?.message || '暂时无法恢复后台任务状态，原任务可能仍在运行，请勿重复提交')
@@ -922,6 +935,18 @@ watch(
   () => route.query.refund_id,
   async () => {
     if (route.path !== '/case-fund/refunds') return
+    page.value = 1
+    await load()
+  }
+)
+
+watch(
+  () => context.period,
+  async (period) => {
+    const range = initialRefundDateRange(period)
+    filters.quick_range = ''
+    filters.date_start = range.start
+    filters.date_end = range.end
     page.value = 1
     await load()
   }

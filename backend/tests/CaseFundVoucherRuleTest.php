@@ -194,6 +194,16 @@ voucherRuleAssertSame(
     $probe->paymentGroups($paymentGroupRows, 0, 1),
     'Non-daily payment grouping should keep one voucher per payment row'
 );
+$claimGroupRows = [
+    ['payment_id' => 'c1', 'payment_date' => '2026-05-10', 'posting_date' => '2026-08-03', 'payment_method' => 'UNKNOWN'],
+    ['payment_id' => 'c2', 'payment_date' => '2026-05-11', 'posting_date' => '2026-08-03', 'payment_method' => 'UNKNOWN'],
+    ['payment_id' => 'c3', 'payment_date' => '2026-05-12', 'posting_date' => '2026-08-04', 'payment_method' => 'UNKNOWN'],
+];
+voucherRuleAssertSame(
+    ['2026-08-03|UNKNOWN' => [$claimGroupRows[0], $claimGroupRows[1]], '2026-08-04|UNKNOWN' => [$claimGroupRows[2]]],
+    $probe->paymentGroups($claimGroupRows, 1, 1),
+    'Cross-month claims should group by recognition posting date, not original transaction date'
+);
 
 $unknownRows = [
     [

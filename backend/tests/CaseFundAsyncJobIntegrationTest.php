@@ -312,6 +312,14 @@ foreach (['jobCreate', 'jobStatus', 'jobList', 'jobErrorList'] as $action) {
     );
 }
 caseFundAsyncJobAssert(
+    strpos($caseFundSource, "['reason' => 'JOB_NOT_FOUND']") !== false,
+    'Missing async jobs should expose a stable reason code for safe stale-client recovery'
+);
+caseFundAsyncJobAssert(
+    strpos($caseFundSource, "['reason' => 'JOB_FORBIDDEN']") !== false,
+    'Forbidden async jobs must remain distinguishable from missing jobs'
+);
+caseFundAsyncJobAssert(
     strpos($caseFundSource, 'Db::startTrans();') !== false
         && strpos($caseFundSource, "'GENERATE_ASYNC'") !== false,
     'Async voucher generation must preserve per-voucher transaction and audit markers'

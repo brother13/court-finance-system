@@ -58,6 +58,11 @@ $service = new CaseFundUnknownRefundMatchService([
     'refund' => 'refund',
     'match' => 'match',
 ]);
+returnMatchAssertSame(
+    'SAME_MONTH_AMOUNT_ACCOUNT',
+    CaseFundUnknownRefundMatchService::RULE_SAME_MONTH_AMOUNT_ACCOUNT,
+    'Stored return-match rule must describe the amount/account comparison'
+);
 
 $unknownRows = [
     ['unknown_payment_id' => 'U1', 'period' => '2026-06', 'payer_name' => '张 三', 'unknown_amount' => '100.00', 'payer_account_no' => '6222-0001', 'transaction_date' => '2026-06-10'],
@@ -108,6 +113,46 @@ returnMatchAssertSame('AMBIGUOUS', $statusByPair['U9|R6'] ?? '', 'One unknown pa
 returnMatchAssertSame(false, isset($statusByPair['U6|R3']), 'A refund dated after the incoming unknown payment must not match');
 returnMatchAssertSame(false, isset($statusByPair['U7|R4']), 'A manually rejected pair must not be recreated by scanning');
 returnMatchAssertSame(false, isset($statusByPair['U8|R5']), 'A confirmed pair must not be recalculated as a candidate');
+
+$bankTransitResult = $service->matchRows([
+    [
+        'unknown_payment_id' => 'U-BANK-TRANSIT',
+        'period' => '2026-07',
+        'payer_name' => '辽宁振兴银行掌迅通催收款专用内部户',
+        'unknown_amount' => '27731.22',
+        'payer_account_no' => '99900215695030299000013',
+        'transaction_date' => '2026-07-07',
+    ],
+], [
+    [
+        'refund_id' => 'R-BANK-TRANSIT',
+        'period' => '2026-07',
+        'actual_payee_name' => '银行过渡户',
+        'payee_bank_account_name' => '辽宁振兴银行掌迅通催收款专用内部户',
+        'refund_amount' => '27731.22',
+        'payee_bank_account_no' => '99900215695030299000013',
+        'refund_date' => '2026-07-07',
+    ],
+]);
+returnMatchAssertSame(
+    'AUTO_CANDIDATE',
+    $bankTransitResult['pairs'][0]['match_status'] ?? 'UNMATCHED',
+    'Different payer and actual-payee names must not block an exact amount/account return match'
+);
+$bankTransitEvidence = json_decode(
+    $bankTransitResult['pairs'][0]['match_evidence_json'] ?? '',
+    true
+);
+returnMatchAssertSame(
+    '辽宁振兴银行掌迅通催收款专用内部户',
+    $bankTransitEvidence['unknown_payment']['payer_name'] ?? '',
+    'Payer name must remain in evidence for manual review'
+);
+returnMatchAssertSame(
+    '银行过渡户',
+    $bankTransitEvidence['refund']['actual_payee_name'] ?? '',
+    'Actual payee name must remain in evidence for manual review'
+);
 
 $caseFundSource = file_get_contents(__DIR__ . '/../app/finance/model/CaseFund.php');
 $ddlSource = file_get_contents(__DIR__ . '/../database/court_finance_ddl.sql');

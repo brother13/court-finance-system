@@ -127,9 +127,10 @@ class CaseFundBankReconcileRepository
             $data['date_start'] ?? '',
             $data['date_end'] ?? ''
         );
+        $purpose = trim((string)($data['purpose'] ?? ''));
         $keyword = trim($data['keyword'] ?? '');
-        $query = $this->bankStatementFilteredQuery($where, $keyword);
-        $aggregate = $this->bankStatementFilteredQuery($where, $keyword)
+        $query = $this->bankStatementFilteredQuery($where, $keyword, $purpose);
+        $aggregate = $this->bankStatementFilteredQuery($where, $keyword, $purpose)
             ->field('count(*) as total,sum(debit_amount) as debit_amount,sum(credit_amount) as credit_amount')
             ->find();
         $total = (int)($aggregate['total'] ?? 0);
@@ -304,7 +305,7 @@ class CaseFundBankReconcileRepository
         $totalQuery = $this->bankReconcileFilteredQuery($where, $keyword);
         $total = $totalQuery->count();
         $rows = $query->field($this->fields['reconcile'])
-            ->order('reconcile_date asc, bank_serial_no asc')
+            ->order('reconcile_date asc, bank_serial_no asc, reconcile_id asc')
             ->page($page, $pageSize)
             ->select();
         return [
@@ -346,9 +347,8 @@ class CaseFundBankReconcileRepository
             $query->lock(true);
         }
         $rows = $query->field($this->fields['payment'])->select();
-        return array_values(array_filter($rows, function ($row) {
-            return trim((string)($row['bank_serial_no'] ?? '')) !== '';
-        }));
+        // 无流水号业务也需进入 BIZ_ONLY 待核查清单。
+        return array_values($rows);
     }
 
     public function unknownPaymentCandidatesInScope($dateStart, $dateEnd, $forUpdate = false)
@@ -524,9 +524,12 @@ class CaseFundBankReconcileRepository
             || strtoupper($status) === 'UNCLAIMED';
     }
 
-    protected function bankStatementFilteredQuery($where, $keyword)
+    protected function bankStatementFilteredQuery($where, $keyword, $purpose = '')
     {
         $query = $this->db($this->tables['statement'])->where($where);
+        if ($purpose !== '') {
+            $query->where('purpose', 'like', '%' . $purpose . '%');
+        }
         if ($keyword !== '') {
             $query->where(
                 'counterparty_account_no|counterparty_account_name|counterparty_bank_name|purpose|postscript|bank_serial_no',

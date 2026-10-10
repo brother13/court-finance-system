@@ -266,6 +266,10 @@ if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name
     fwrite(STDERR, 'Normal refund voucher header summary should be 付 + case_no + payee bank account name' . PHP_EOL);
     exit(1);
 }
+if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => '实际收款人孙八', 'payee_bank_account_name' => ''], false, '2026-03-05') !== '付 案五 实际收款人孙八') {
+    fwrite(STDERR, 'Normal refund voucher header summary should fall back to actual payee name when bank account name is blank' . PHP_EOL);
+    exit(1);
+}
 if ($detailProbe->refundVoucherHeaderSummary(['case_no' => '案五', 'party_name' => '钱七', 'actual_payee_name' => ''], true, '2026-03-05') !== '2026-03-05 付合计') {
     fwrite(STDERR, 'Aggregated refund voucher header summary should be date + 付合计' . PHP_EOL);
     exit(1);

@@ -3,7 +3,7 @@
 namespace app\finance\service\casefund\voucher;
 
 /**
- * 案款凭证分组、摘要和分录构造规则；不查询数据库，也不负责凭证号、事务或落库。
+ * 案款凭证分组、摘要和分录构造规则；来源辅助值由调用方回调提供，不负责凭证号、事务或落库。
  */
 class CaseFundVoucherRule
 {
@@ -109,7 +109,23 @@ class CaseFundVoucherRule
 
             $rawAuxValues = $this->paymentVoucherAuxValues($row);
             $debitConfigs = $this->callHook('get_subject_aux_configs', [$debitSubjectCode]);
-            $debitAuxValues = $this->callHook('filter_aux_values', [$rawAuxValues, $debitConfigs]);
+            $debitRawAuxValues = $rawAuxValues;
+            if ($this->callHook('normalize_payment_method', [$row['payment_method'] ?? '']) === 'UNKNOWN'
+                && !empty($debitConfigs)) {
+                $debitRawAuxValues = $this->callHook('resolve_unknown_claim_aux', [$row, $debitSubjectCode]);
+                $originalTypes = [];
+                foreach ($debitRawAuxValues as $aux) {
+                    if (trim((string)($aux['aux_value'] ?? '')) !== '') {
+                        $originalTypes[$aux['aux_type_code']] = true;
+                    }
+                }
+                foreach ($debitConfigs as $auxConfig) {
+                    if (empty($originalTypes[$auxConfig['aux_type_code']])) {
+                        throw new \Exception('不明款认领原入账分录缺少辅助核算：' . $auxConfig['aux_type_code']);
+                    }
+                }
+            }
+            $debitAuxValues = $this->callHook('filter_aux_values', [$debitRawAuxValues, $debitConfigs]);
             $detailsData[] = [
                 'detail_id' => $this->callHook('new_id'),
                 'line_no' => $lineNo++,
@@ -177,7 +193,7 @@ class CaseFundVoucherRule
 
     public function buildPaymentMethodVoucherSummary($paymentMethod, $groupRows)
     {
-        $date = $groupRows[0]['payment_date'] ?? '';
+        $date = $groupRows[0]['posting_date'] ?? ($groupRows[0]['payment_date'] ?? '');
         $label = $this->callHook('normalize_payment_method', [$paymentMethod]);
         return trim($date . ' 收 ' . $label . ' 合计');
     }
@@ -190,7 +206,7 @@ class CaseFundVoucherRule
                 $methodKey = (int)$byPaymentMethodFlag === 1
                     ? $this->callHook('normalize_payment_method', [$row['payment_method'] ?? ''])
                     : 'ALL';
-                $groupKey = $row['payment_date'] . '|' . $methodKey;
+                $groupKey = ($row['posting_date'] ?? $row['payment_date']) . '|' . $methodKey;
                 if (!isset($groups[$groupKey])) {
                     $groups[$groupKey] = [];
                 }
@@ -545,7 +561,11 @@ class CaseFundVoucherRule
 
     public function buildRefundNormalVoucherSummary($row)
     {
-        return trim('付 ' . ($row['case_no'] ?? '') . ' ' . ($row['payee_bank_account_name'] ?? ''));
+        $payeeName = trim((string)($row['payee_bank_account_name'] ?? ''));
+        if ($payeeName === '') {
+            $payeeName = trim((string)($row['actual_payee_name'] ?? ''));
+        }
+        return trim('付 ' . ($row['case_no'] ?? '') . ' ' . $payeeName);
     }
 
     public function buildRefundAggregateCreditSummary($outOrderNo)

@@ -387,6 +387,8 @@ create table if not exists fin_case_fund_payment (
     trial_case_no varchar(100),
     payment_date date not null,
     payment_time datetime,
+    claim_date date,
+    posting_date date not null,
     receipt_no varchar(100),
     invoice_date date,
     invoice_operator varchar(100),
@@ -418,6 +420,7 @@ create table if not exists fin_case_fund_payment (
     remark varchar(500),
     unique key uk_case_fund_payment_source (account_set_id, source_fingerprint),
     key idx_case_fund_payment_period (account_set_id, period, payment_date),
+    key idx_case_fund_payment_posting_date (account_set_id, fiscal_year, posting_date, del_flag),
     key idx_case_fund_payment_case (account_set_id, case_no),
     key idx_case_fund_payment_receipt (account_set_id, receipt_no),
     key idx_case_fund_payment_bank_serial (account_set_id, bank_serial_no),
@@ -425,6 +428,57 @@ create table if not exists fin_case_fund_payment (
     key idx_case_fund_payment_voucher_sync (account_set_id, fiscal_year, voucher_id, voucher_status, del_flag),
     key idx_case_fund_payment_reconcile_scope (account_set_id, fiscal_year, del_flag, payment_date, bank_serial_no)
 );
+
+-- 缴费登记认领日期与制证日期。历史数据沿用原缴费日期，不改原交易时间。
+set @sql = (
+    select if(count(*) = 0,
+        'alter table fin_case_fund_payment add column claim_date date null after payment_time',
+        'select 1')
+    from information_schema.columns
+    where table_schema = database() and table_name = 'fin_case_fund_payment' and column_name = 'claim_date'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(count(*) = 0,
+        'alter table fin_case_fund_payment add column posting_date date null after claim_date',
+        'select 1')
+    from information_schema.columns
+    where table_schema = database() and table_name = 'fin_case_fund_payment' and column_name = 'posting_date'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+update fin_case_fund_payment
+set posting_date = payment_date
+where posting_date is null;
+
+set @sql = (
+    select if(count(*) = 1,
+        'alter table fin_case_fund_payment modify column posting_date date not null',
+        'select 1')
+    from information_schema.columns
+    where table_schema = database() and table_name = 'fin_case_fund_payment'
+      and column_name = 'posting_date' and is_nullable = 'YES'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql = (
+    select if(count(*) = 0,
+        'alter table fin_case_fund_payment add index idx_case_fund_payment_posting_date (account_set_id, fiscal_year, posting_date, del_flag)',
+        'select 1')
+    from information_schema.statistics
+    where table_schema = database() and table_name = 'fin_case_fund_payment'
+      and index_name = 'idx_case_fund_payment_posting_date'
+);
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
 
 create table if not exists fin_case_fund_refund (
     refund_id varchar(36) primary key,
@@ -539,7 +593,7 @@ create table if not exists fin_case_fund_unknown_refund_match (
     unknown_payment_id varchar(36) not null,
     refund_id varchar(36) not null,
     match_status varchar(30) not null default 'AUTO_CANDIDATE',
-    match_rule varchar(60) not null default 'SAME_MONTH_NAME_AMOUNT_ACCOUNT',
+    match_rule varchar(60) not null default 'SAME_MONTH_AMOUNT_ACCOUNT',
     candidate_count int not null default 1,
     match_evidence_json text,
     decision_by varchar(36),

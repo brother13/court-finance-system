@@ -19,9 +19,6 @@ class CaseFundBankReconcileMatcher
             'payment_candidates_in_scope',
             'unknown_payment_candidates_in_scope',
             'refund_candidates_in_scope',
-            'bank_statement_exists_by_payment',
-            'bank_statement_exists_by_unknown_payment',
-            'bank_statement_exists_by_refund',
             'build_reconcile_row',
             'biz_amount_cents',
             'biz_id',
@@ -35,187 +32,113 @@ class CaseFundBankReconcileMatcher
 
     public function match($statements, $bankCode, $dateStart, $dateEnd)
     {
-        $statementIds = [];
-        $resultRows = [];
-        $matchedBiz = [];
-        $candidateBiz = [];
-        $statementStatuses = [];
-
+        $plans = [];
+        $exactUsage = [];
+        // 先收集整个范围的候选。候选和金额差异不占用业务，避免流水顺序影响结果。
         foreach ($statements as $statement) {
+            $income = $statement['direction'] === 'CREDIT';
+            $bankCents = $this->callHook('amount_to_cents', [
+                $income ? $statement['credit_amount'] : $statement['debit_amount'],
+            ]);
+            $bizType = $income ? 'PAYMENT' : 'REFUND';
+            $rule = $income ? 'SERIAL_NO_DATE' : 'PAYEE_ACCOUNT_DATE_AMOUNT';
+            $candidates = $this->callHook($income ? 'payment_candidates_by_statement' : 'refund_candidates_by_statement', [$statement]);
+            // 保持缴费流水号优先的业务规则，不在本次修复中扩大模糊匹配范围。
+            if ($income && empty($candidates)) {
+                $candidates = $this->callHook('unknown_payment_candidates_by_statement', [$statement]);
+                if (!empty($candidates)) {
+                    $bizType = 'UNKNOWN_PAYMENT';
+                    $rule = 'PAYER_ACCOUNT_DATE';
+                }
+            }
+            $byKey = [];
+            $exact = [];
+            foreach ($candidates as $candidate) {
+                $key = $this->bizKey($bizType, $candidate);
+                $byKey[$key] = $candidate;
+                if ($this->callHook('biz_amount_cents', [$bizType, $candidate]) === $bankCents) {
+                    $exact[$key] = $candidate;
+                }
+            }
+            foreach ($exact as $key => $candidate) {
+                $exactUsage[$key] = ($exactUsage[$key] ?? 0) + 1;
+            }
+            $plans[] = [
+                'statement' => $statement, 'biz_type' => $bizType, 'rule' => $rule,
+                'bank_cents' => $bankCents, 'candidates' => $byKey, 'exact' => $exact,
+            ];
+        }
+
+        $confirmed = [];
+        $matchedBiz = [];
+        foreach ($plans as $index => $plan) {
+            if (count($plan['exact']) !== 1) {
+                continue;
+            }
+            $key = key($plan['exact']);
+            // 银行侧和业务侧都唯一才自动确认；两笔流水争用同一业务时全部留待核查。
+            if ($exactUsage[$key] === 1) {
+                $confirmed[$index] = $key;
+                $matchedBiz[$key] = true;
+            }
+        }
+
+        $statementIds = [];
+        $statementStatuses = [];
+        $resultRows = [];
+        $representedBiz = [];
+        foreach ($plans as $index => $plan) {
+            $statement = $plan['statement'];
+            $bizType = $plan['biz_type'];
             $statementIds[] = $statement['statement_id'];
-            $direction = $statement['direction'];
-            $bankAmount = $direction === 'CREDIT'
-                ? $statement['credit_amount']
-                : $statement['debit_amount'];
-            $bankCents = $this->callHook('amount_to_cents', [$bankAmount]);
-            if ($direction === 'CREDIT') {
-                $candidates = $this->callHook('payment_candidates_by_statement', [$statement]);
-                $bizType = 'PAYMENT';
-                $matchRule = 'SERIAL_NO_DATE';
-                // 缴费登记优先；仅在没有流水号候选时再匹配未认领不明款。
-                if (empty($candidates)) {
-                    $candidates = $this->callHook('unknown_payment_candidates_by_statement', [$statement]);
-                    if (!empty($candidates)) {
-                        $bizType = 'UNKNOWN_PAYMENT';
-                        $matchRule = 'PAYER_ACCOUNT_DATE';
-                    }
-                }
+            if (isset($confirmed[$index])) {
+                $key = $confirmed[$index];
+                $candidates = [$key => $plan['exact'][$key]];
+                $status = 'MATCHED';
             } else {
-                $candidates = $this->callHook('refund_candidates_by_statement', [$statement]);
-                $bizType = 'REFUND';
-                $matchRule = 'PAYEE_ACCOUNT_DATE_AMOUNT';
+                $available = array_diff_key($plan['candidates'], $matchedBiz);
+                $exact = array_diff_key($plan['exact'], $matchedBiz);
+                $candidates = !empty($exact) ? $exact : $available;
+                $status = empty($candidates) ? 'BANK_ONLY'
+                    : ((!empty($exact) || count($candidates) > 1) ? 'DUPLICATE' : 'AMOUNT_DIFF');
             }
-
-            if (!empty($candidates)) {
-                $matchRule = trim((string)($candidates[0]['__match_rule'] ?? $matchRule));
-                foreach ($candidates as $candidate) {
-                    $candidateBiz[$this->bizKey($bizType, $candidate)] = true;
-                }
-                if ($direction === 'CREDIT') {
-                    $candidates = array_values(array_filter($candidates, function ($candidate) use ($bizType, $matchedBiz) {
-                        return !isset($matchedBiz[$this->bizKey($bizType, $candidate)]);
-                    }));
-                }
-            }
-
+            $statementStatuses[$statement['statement_id']] = $status;
             if (empty($candidates)) {
                 $resultRows[] = $this->callHook('build_reconcile_row', [
-                    $statement,
-                    $bizType,
-                    null,
-                    'BANK_ONLY',
-                    $bankCents,
-                    0,
-                    $matchRule,
+                    $statement, $bizType, null, $status, $plan['bank_cents'], 0, $plan['rule'],
                 ]);
-                $statementStatuses[$statement['statement_id']] = 'BANK_ONLY';
                 continue;
             }
+            foreach ($candidates as $key => $candidate) {
+                $resultRows[] = $this->callHook('build_reconcile_row', [
+                    $statement, $bizType, $candidate, $status, $plan['bank_cents'],
+                    $this->callHook('biz_amount_cents', [$bizType, $candidate]),
+                    trim((string)($candidate['__match_rule'] ?? $plan['rule'])),
+                ]);
+                // 已在差异/候选结果中出现不等于已匹配，仅避免再生成重复的业务单边行。
+                $representedBiz[$key] = true;
+            }
+        }
 
-            // 同一识别条件命中多条业务时，以“分”为单位按金额消除歧义；出账因此
-            // 同时执行交易日期、收款账号/户名和出账金额匹配。单条候选仍保留
-            // 金额不符状态，便于财务人员定位差异。
-            if (count($candidates) > 1) {
-                $amountMatches = array_values(array_filter($candidates, function ($candidate) use ($bizType, $bankCents) {
-                    return $this->callHook('biz_amount_cents', [$bizType, $candidate]) === $bankCents;
-                }));
-                if (!empty($amountMatches)) {
-                    $candidates = $amountMatches;
+        foreach ([
+            ['PAYMENT', 'payment_candidates_in_scope', 'SERIAL_NO_DATE'],
+            ['UNKNOWN_PAYMENT', 'unknown_payment_candidates_in_scope', 'PAYER_ACCOUNT_DATE'],
+            ['REFUND', 'refund_candidates_in_scope', 'PAYEE_ACCOUNT_DATE_AMOUNT'],
+        ] as $source) {
+            list($bizType, $hook, $rule) = $source;
+            foreach ($this->callHook($hook, [$dateStart, $dateEnd]) as $biz) {
+                if (isset($representedBiz[$this->bizKey($bizType, $biz)])) {
+                    continue;
                 }
-            }
-
-            if (count($candidates) > 1) {
-                foreach ($candidates as $candidate) {
-                    $bizCents = $this->callHook('biz_amount_cents', [$bizType, $candidate]);
-                    $resultRows[] = $this->callHook('build_reconcile_row', [
-                        $statement,
-                        $bizType,
-                        $candidate,
-                        'DUPLICATE',
-                        $bankCents,
-                        $bizCents,
-                        $matchRule,
-                    ]);
-                    $matchedBiz[$this->bizKey($bizType, $candidate)] = true;
-                }
-                $statementStatuses[$statement['statement_id']] = 'DUPLICATE';
-                continue;
-            }
-
-            $candidate = $candidates[0];
-            $bizCents = $this->callHook('biz_amount_cents', [$bizType, $candidate]);
-            $status = $bankCents === $bizCents ? 'MATCHED' : 'AMOUNT_DIFF';
-            $resultRows[] = $this->callHook('build_reconcile_row', [
-                $statement,
-                $bizType,
-                $candidate,
-                $status,
-                $bankCents,
-                $bizCents,
-                $matchRule,
-            ]);
-            $statementStatuses[$statement['statement_id']] = $status;
-            $matchedBiz[$this->bizKey($bizType, $candidate)] = true;
-        }
-
-        foreach ($this->callHook('payment_candidates_in_scope', [$dateStart, $dateEnd]) as $payment) {
-            $key = $this->bizKey('PAYMENT', $payment);
-            if (isset($matchedBiz[$key])) {
-                continue;
-            }
-            $bankExists = $this->callHook('bank_statement_exists_by_payment', [
-                $payment,
-                $bankCode,
-                $dateStart,
-                $dateEnd,
-            ]);
-            if (!$bankExists || isset($candidateBiz[$key])) {
-                $bizCents = $this->callHook('biz_amount_cents', ['PAYMENT', $payment]);
+                // 存在同日同账号的银行记录不能证明这笔业务已对账，必须保留待核查项。
                 $resultRows[] = $this->callHook('build_reconcile_row', [
-                    null,
-                    'PAYMENT',
-                    $payment,
-                    'BIZ_ONLY',
-                    0,
-                    $bizCents,
-                    'SERIAL_NO_DATE',
+                    null, $bizType, $biz, 'BIZ_ONLY', 0,
+                    $this->callHook('biz_amount_cents', [$bizType, $biz]), $rule,
                 ]);
             }
         }
-
-        foreach ($this->callHook('unknown_payment_candidates_in_scope', [$dateStart, $dateEnd]) as $unknownPayment) {
-            $key = $this->bizKey('UNKNOWN_PAYMENT', $unknownPayment);
-            if (isset($matchedBiz[$key])) {
-                continue;
-            }
-            $bankExists = $this->callHook('bank_statement_exists_by_unknown_payment', [
-                $unknownPayment,
-                $bankCode,
-                $dateStart,
-                $dateEnd,
-            ]);
-            if (!$bankExists || isset($candidateBiz[$key])) {
-                $bizCents = $this->callHook('biz_amount_cents', ['UNKNOWN_PAYMENT', $unknownPayment]);
-                $resultRows[] = $this->callHook('build_reconcile_row', [
-                    null,
-                    'UNKNOWN_PAYMENT',
-                    $unknownPayment,
-                    'BIZ_ONLY',
-                    0,
-                    $bizCents,
-                    'PAYER_ACCOUNT_DATE',
-                ]);
-            }
-        }
-
-        foreach ($this->callHook('refund_candidates_in_scope', [$dateStart, $dateEnd]) as $refund) {
-            $key = $this->bizKey('REFUND', $refund);
-            if (isset($matchedBiz[$key])) {
-                continue;
-            }
-            $bankExists = $this->callHook('bank_statement_exists_by_refund', [
-                $refund,
-                $bankCode,
-                $dateStart,
-                $dateEnd,
-            ]);
-            if (!$bankExists) {
-                $bizCents = $this->callHook('biz_amount_cents', ['REFUND', $refund]);
-                $resultRows[] = $this->callHook('build_reconcile_row', [
-                    null,
-                    'REFUND',
-                    $refund,
-                    'BIZ_ONLY',
-                    0,
-                    $bizCents,
-                    'PAYEE_ACCOUNT_DATE_AMOUNT',
-                ]);
-            }
-        }
-
         return [
-            'statement_ids' => $statementIds,
-            'result_rows' => $resultRows,
+            'statement_ids' => $statementIds, 'result_rows' => $resultRows,
             'statement_statuses' => $statementStatuses,
         ];
     }
@@ -234,9 +157,8 @@ class CaseFundBankReconcileMatcher
         }
 
         $statements = array_values($scope['statements']);
-        $payments = array_values(array_filter($scope['payments'], function ($row) {
-            return trim((string)($row['bank_serial_no'] ?? '')) !== '';
-        }));
+        // 缺少流水号只影响候选匹配资格，不影响业务侧完整性检查。
+        $payments = array_values($scope['payments']);
         $unknownPayments = array_values(array_filter($scope['unknown_payments'], function ($row) {
             return $this->isUnclaimedUnknownPayment($row);
         }));
@@ -272,41 +194,6 @@ class CaseFundBankReconcileMatcher
             if ($accountNo !== '') {
                 $refundByDateAccount[$date][$accountNo][] = $position;
             }
-        }
-
-        $creditStatementByDateSerial = [];
-        $ccbCreditStatementByDateSuffix = [];
-        $creditStatementByDateAccount = [];
-        $debitStatementByDateAccountAmount = [];
-        $debitStatementsByDate = [];
-        foreach ($statements as $position => $statement) {
-            $date = trim((string)($statement['transaction_date'] ?? ''));
-            $direction = strtoupper(trim((string)($statement['direction'] ?? '')));
-            if ($date === '' || !in_array($direction, ['CREDIT', 'DEBIT'], true)) {
-                continue;
-            }
-            if ($direction === 'CREDIT') {
-                $serial = $this->normalizeStatementSerialNo($statement['bank_serial_no'] ?? '');
-                if ($serial !== '') {
-                    $creditStatementByDateSerial[$date][$serial] = true;
-                    if (strtoupper(trim((string)($statement['bank_code'] ?? ''))) === 'CCB'
-                        && strlen($serial) === 26
-                    ) {
-                        $ccbCreditStatementByDateSuffix[$date][substr($serial, -19)] = true;
-                    }
-                }
-                $accountNo = $this->normalizeAccountNo($statement['counterparty_account_no'] ?? '');
-                if ($accountNo !== '') {
-                    $creditStatementByDateAccount[$date][$accountNo] = true;
-                }
-                continue;
-            }
-            $accountNo = trim((string)($statement['counterparty_account_no'] ?? ''));
-            $debitCents = $this->callHook('amount_to_cents', [$statement['debit_amount'] ?? '0']);
-            if ($accountNo !== '') {
-                $debitStatementByDateAccountAmount[$date][$accountNo][$debitCents] = true;
-            }
-            $debitStatementsByDate[$date][] = $position;
         }
 
         $hooks = $this->hooks;
@@ -387,57 +274,6 @@ class CaseFundBankReconcileMatcher
         $hooks['refund_candidates_in_scope'] = function () use ($refunds) {
             return $refunds;
         };
-        $hooks['bank_statement_exists_by_payment'] = function ($payment) use (
-            $creditStatementByDateSerial,
-            $ccbCreditStatementByDateSuffix
-        ) {
-            $date = trim((string)($payment['payment_date'] ?? ''));
-            $serial = $this->normalizeSerialNo($payment['bank_serial_no'] ?? '');
-            if ($date === '' || $serial === '') {
-                return false;
-            }
-            return isset($creditStatementByDateSerial[$date][$serial])
-                || isset($ccbCreditStatementByDateSuffix[$date][$serial]);
-        };
-        $hooks['bank_statement_exists_by_unknown_payment'] = function ($unknownPayment) use ($creditStatementByDateAccount) {
-            $date = trim((string)($unknownPayment['transaction_date'] ?? ''));
-            $accountNo = $this->normalizeAccountNo($unknownPayment['payer_account_no'] ?? '');
-            return $date !== '' && $accountNo !== ''
-                && isset($creditStatementByDateAccount[$date][$accountNo]);
-        };
-        $hooks['bank_statement_exists_by_refund'] = function ($refund) use (
-            $debitStatementByDateAccountAmount,
-            $debitStatementsByDate,
-            $statements
-        ) {
-            $date = trim((string)($refund['refund_date'] ?? ''));
-            if ($date === '') {
-                return false;
-            }
-            $refundCents = $this->callHook('biz_amount_cents', ['REFUND', $refund]);
-            $accountNo = trim((string)($refund['payee_bank_account_no'] ?? ''));
-            if ($accountNo !== '') {
-                return isset($debitStatementByDateAccountAmount[$date][$accountNo][$refundCents]);
-            }
-            $accountName = trim((string)($refund['payee_bank_account_name'] ?? ''));
-            if ($accountName === '') {
-                $accountName = trim((string)($refund['actual_payee_name'] ?? ''));
-            }
-            if ($accountName === '') {
-                return false;
-            }
-            foreach ($debitStatementsByDate[$date] ?? [] as $position) {
-                $statement = $statements[$position];
-                $statementCents = $this->callHook('amount_to_cents', [$statement['debit_amount'] ?? '0']);
-                if ($statementCents === $refundCents
-                    && $this->containsText($statement['counterparty_account_name'] ?? '', $accountName)
-                ) {
-                    return true;
-                }
-            }
-            return false;
-        };
-
         $matcher = new self($hooks);
         return $matcher->match($statements, $bankCode, $dateStart, $dateEnd);
     }

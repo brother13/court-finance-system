@@ -94,6 +94,29 @@ openingAuxExpectError(function () use ($rule, $configs, $types) {
     ]], $configs, $types);
 }, '金额格式不正确');
 
+$originalPrecision = ini_get('precision');
+ini_set('precision', '17');
+try {
+    $floatAmountResult = $rule->prepare([[
+        'aux_values' => ['customer' => 'C001', 'case_no' => '浮点金额'],
+        'debit_amount' => 0,
+        'credit_amount' => 39806.54,
+    ]], $configs, $types);
+} finally {
+    ini_set('precision', (string)$originalPrecision);
+}
+openingAuxAssert(
+    $floatAmountResult['credit_total_cents'] === 3980654,
+    'Numeric amounts should not be rejected because PHP exposes a binary floating-point tail'
+);
+
+openingAuxExpectError(function () use ($rule, $configs, $types) {
+    $rule->prepare([[
+        'aux_values' => ['customer' => 'C001', 'case_no' => '超位小数'],
+        'debit_amount' => 1.001,
+    ]], $configs, $types);
+}, '金额格式不正确');
+
 $openingModel = file_get_contents(__DIR__ . '/../app/finance/model/Opening.php');
 openingAuxAssert(strpos($openingModel, 'Db::startTrans()') !== false, 'Auxiliary opening save should run in a transaction');
 openingAuxAssert(strpos($openingModel, 'ensureManualAuxArchive') !== false, 'Manual auxiliary opening values should synchronize archives');

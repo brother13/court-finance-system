@@ -1096,6 +1096,16 @@ watch(
 )
 
 watch(
+  () => context.period,
+  async (period) => {
+    if (!isNewMode.value || !period || period === form.period) return
+    form.period = period
+    form.voucherDate = todayInPeriod()
+    await loadNextNo()
+  }
+)
+
+watch(
   () => form.details.length,
   () => clampDetailPage()
 )

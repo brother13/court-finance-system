@@ -177,10 +177,10 @@ $paymentWhere = $store->queries[0]['where'][0][1];
 businessQueryAssertSame('account-query', $paymentWhere['account_set_id'], 'Payment list should scope current account set');
 businessQueryAssertSame(2026, $paymentWhere['fiscal_year'], 'Payment list should scope current fiscal year');
 businessQueryAssertSame('POS', $paymentWhere['payment_method'], 'Payment method filter should be normalized against the dictionary');
-businessQueryAssertSame([['>=', '2026-07-01'], ['<=', '2026-07-31']], $paymentWhere['payment_date'], 'Payment list should preserve date range filters');
+businessQueryAssertSame([['>=', '2026-07-01'], ['<=', '2026-07-31']], $paymentWhere['posting_date'], 'Payment list should filter by voucher posting date');
 businessQueryAssertSame([['>=', '100.00'], ['<=', '200.50']], $paymentWhere['payment_amount'], 'Payment list should apply the inclusive amount range');
 businessQueryAssertSame(['in', ['执行、调解款']], $paymentWhere['business_type'], 'Payment list should enforce the account-set business whitelist');
-businessQueryAssertSame('payment_date asc, source_row_no asc', $store->queries[0]['order'], 'Payment list ordering should remain stable');
+businessQueryAssertSame('posting_date asc, source_row_no asc', $store->queries[0]['order'], 'Payment list should order by voucher posting date');
 businessQueryAssertSame([2, 25], $store->queries[0]['page'], 'Payment list pagination should remain stable');
 businessQueryAssertSame(
     ['case_no|trial_case_no|payer_name|party_name|receipt_no|bank_serial_no|payment_order_no', 'like', '%CASE-001%'],

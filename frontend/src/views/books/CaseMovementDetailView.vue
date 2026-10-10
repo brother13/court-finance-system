@@ -117,6 +117,8 @@ import { booksApi } from '../../api/books'
 import { useContextStore } from '../../stores/context'
 import type { CaseMovementDetailRow, Subject } from '../../types/api'
 
+defineOptions({ name: 'CaseMovementDetailView' })
+
 const context = useContextStore()
 const router = useRouter()
 const query = reactive({ subjectCode: '', caseNo: '', receiptNo: '' })

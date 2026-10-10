@@ -226,7 +226,7 @@ export const caseFundApi = {
     return apiAction('/caseFund/jobCreate', request, {}, { timeout: 120000 }) as Promise<CaseFundJob>
   },
   jobStatus(jobId: string) {
-    return apiAction('/caseFund/jobStatus', { job_id: jobId }) as Promise<CaseFundJob>
+    return apiAction('/caseFund/jobStatus', { job_id: jobId }, {}, { silentError: true }) as Promise<CaseFundJob>
   },
   jobList(payload: CaseFundJobListParams = {}) {
     return apiAction('/caseFund/jobList', payload) as Promise<CaseFundJobListResult>

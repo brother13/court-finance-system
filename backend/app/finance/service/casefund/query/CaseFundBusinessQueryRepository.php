@@ -50,7 +50,7 @@ class CaseFundBusinessQueryRepository
                     $where['payment_method'] = $paymentMethod;
                 }
             }
-            $this->applyRawDateRange($where, 'payment_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
+            $this->applyRawDateRange($where, 'posting_date', $data['date_start'] ?? '', $data['date_end'] ?? '');
             $this->applyAmountRange($where, 'payment_amount', $data);
         }
         $where['business_type'] = ['in', $allowedBusinessTypes];
@@ -63,7 +63,7 @@ class CaseFundBusinessQueryRepository
         $this->applyKeyword($totalQuery, $keywordFields, $keyword);
         $total = $totalQuery->count();
         $rows = $query->field($this->fields['payment'])
-            ->order('payment_date asc, source_row_no asc')
+            ->order('posting_date asc, source_row_no asc')
             ->page($page, $pageSize)
             ->select();
         return ['items' => $rows, 'total' => $total];

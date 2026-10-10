@@ -92,10 +92,10 @@ class PaymentVoucherGenerationService
             }
         }
         if (!empty($data['date_start'])) {
-            $where['payment_date'][] = ['>=', $data['date_start']];
+            $where['posting_date'][] = ['>=', $data['date_start']];
         }
         if (!empty($data['date_end'])) {
-            $where['payment_date'][] = ['<=', $data['date_end']];
+            $where['posting_date'][] = ['<=', $data['date_end']];
         }
         $this->applyAmountRange($where, 'payment_amount', $data);
         $snapshotTime = trim((string)($data['scope_snapshot_time'] ?? ''));
@@ -120,7 +120,7 @@ class PaymentVoucherGenerationService
             );
         }
         $rows = $query->field($this->paymentField)
-            ->order('payment_date asc, source_row_no asc')
+            ->order('posting_date asc, source_row_no asc')
             ->limit(self::MAX_QUERY_ROWS + 1)
             ->select();
         if (count($rows) > self::MAX_QUERY_ROWS) {
@@ -184,7 +184,7 @@ class PaymentVoucherGenerationService
     public function generatePrepared($prepared)
     {
         $rows = $this->lockPreparedRows($prepared);
-        $this->callHook('assert_periods_open', [$rows, 'payment_date', '缴费']);
+        $this->callHook('assert_periods_open', [$rows, 'posting_date', '缴费制证']);
         $generationCheck = $this->callHook('assert_rows_can_generate', [$rows, '缴费记录']);
         if ($generationCheck !== null) {
             throw new \Exception($generationCheck);
@@ -206,13 +206,13 @@ class PaymentVoucherGenerationService
         $allDetailsData = [];
         foreach ($groups as $groupRows) {
             $firstRow = $groupRows[0];
-            $period = substr($firstRow['payment_date'], 0, 7);
-            $voucherDate = $firstRow['payment_date'];
+            $voucherDate = $firstRow['posting_date'] ?? $firstRow['payment_date'];
+            $period = substr($voucherDate, 0, 7);
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $voucherDate)) {
-                throw new \Exception('缴费日期格式不正确：' . $voucherDate);
+                throw new \Exception('缴费制证日期格式不正确：' . $voucherDate);
             }
             if (substr($voucherDate, 0, 7) !== $period) {
-                throw new \Exception('缴费日期不在会计期间内：' . $voucherDate);
+                throw new \Exception('缴费制证日期不在会计期间内：' . $voucherDate);
             }
 
             $detailBuildResult = $this->rule->buildPaymentVoucherDetailsData(
@@ -344,8 +344,10 @@ class PaymentVoucherGenerationService
             $rows = array_merge($rows, $query->select());
         }
         usort($rows, function ($left, $right) {
-            foreach (['payment_date', 'source_row_no', 'payment_id'] as $field) {
-                $comparison = ($left[$field] ?? '') <=> ($right[$field] ?? '');
+            foreach (['posting_date', 'source_row_no', 'payment_id'] as $field) {
+                $leftValue = $left[$field] ?? ($field === 'posting_date' ? ($left['payment_date'] ?? '') : '');
+                $rightValue = $right[$field] ?? ($field === 'posting_date' ? ($right['payment_date'] ?? '') : '');
+                $comparison = $leftValue <=> $rightValue;
                 if ($comparison !== 0) {
                     return $comparison;
                 }

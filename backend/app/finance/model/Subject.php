@@ -830,8 +830,15 @@ class Subject extends Common
 
     protected function normalizeImportCellText($value)
     {
-        if (is_float($value) || is_int($value)) {
-            return floor((float)$value) == (float)$value ? (string)(int)$value : (string)$value;
+        if (is_int($value)) {
+            return (string)$value;
+        }
+        if (is_float($value)) {
+            if (!is_finite($value)) {
+                return '';
+            }
+            $text = rtrim(rtrim(sprintf('%.14F', $value), '0'), '.');
+            return $text === '-0' ? '0' : $text;
         }
         $text = trim((string)$value);
         if (preg_match('/^\d+\.0$/', $text)) {

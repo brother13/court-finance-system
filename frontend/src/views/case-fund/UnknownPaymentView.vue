@@ -218,6 +218,8 @@ import { useContextStore } from '../../stores/context'
 import { buildSubjectTreeOptions } from '../../utils/subjectTree'
 import type { CaseFundReturnMatchStatus, CaseFundSubjectConfig, CaseFundUnknownPayment, Subject } from '../../types/api'
 
+defineOptions({ name: 'UnknownPaymentView' })
+
 const context = useContextStore()
 const route = useRoute()
 const router = useRouter()
@@ -633,6 +635,18 @@ watch(
   () => route.query.unknown_payment_id,
   async () => {
     if (route.path !== '/case-fund/unknown-payments') return
+    page.value = 1
+    await load()
+  }
+)
+
+watch(
+  () => context.period,
+  async (period) => {
+    const range = initialPaymentDateRange(period)
+    filters.quick_range = ''
+    filters.date_start = range.start
+    filters.date_end = range.end
     page.value = 1
     await load()
   }

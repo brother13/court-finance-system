@@ -13,6 +13,7 @@ for (const action of ['jobCreate', 'jobStatus', 'jobList', 'jobErrorList']) {
   assert(api.includes(`apiAction('/caseFund/${action}'`), `case fund API should expose /caseFund/${action}`)
 }
 assert(api.includes("apiAction('/caseFund/jobCreate', request, {}, { timeout: 120000 })"), 'job creation should allow enough time to upload an import file')
+assert(api.includes("apiAction('/caseFund/jobStatus', { job_id: jobId }, {}, { silentError: true })"), 'job status recovery should handle expected stale-task errors in context without a duplicate global toast')
 
 assert(types.includes('export interface CaseFundJobCreateRequest'), 'async job creation payload should have a shared type')
 assert(types.includes('filename?: string'), 'import jobs should accept the original file name at job creation')
@@ -34,6 +35,8 @@ assert(composable.includes('consecutivePollErrors += 1'), 'temporary polling err
 assert(composable.includes('schedulePoll(() => { void pollCurrentJob() })'), 'polling should continue after a temporary status error')
 assert(!composable.includes("job.value.status = 'FAILED'"), 'a polling request error must not mark the backend job failed')
 assert(composable.includes('recoverCreatedJob'), 'an uncertain create response should be recovered by client request id')
+assert(composable.includes("export const isCaseFundJobNotFoundError"), 'job recovery should distinguish a confirmed missing task from uncertain failures')
+assert(composable.includes("candidate?.result?.data?.reason === 'JOB_NOT_FOUND'"), 'missing-task recovery should rely on a stable backend reason code')
 assert(composable.includes('job_type: request.job_type'), 'create-response recovery should filter by job type')
 assert(composable.includes('item.client_request_id === request.client_request_id'), 'create-response recovery should match the client request id')
 assert(composable.includes('item.job_type === request.job_type'), 'create-response recovery should also match the job type')

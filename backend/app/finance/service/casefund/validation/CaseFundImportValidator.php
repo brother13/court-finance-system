@@ -59,6 +59,21 @@ class CaseFundImportValidator
         if ($row['payment_date'] === '') {
             $errors[] = $prefix . '缴费日期不能为空或格式不正确';
         }
+        $claimDate = trim((string)($row['claim_date'] ?? ''));
+        $paymentDate = trim((string)($row['payment_date'] ?? ''));
+        if ($claimDate !== '' && ($row['payment_method'] ?? '') !== 'UNKNOWN') {
+            $errors[] = $prefix . '只有不明款认领可填写认领日期';
+        }
+        if ($claimDate !== '' && $paymentDate !== '' && $claimDate < $paymentDate) {
+            $errors[] = $prefix . '认领日期不能早于原缴费日期';
+        }
+        $postingDate = trim((string)($row['posting_date'] ?? $paymentDate));
+        if ($postingDate !== '' && (
+            (string)($row['period'] ?? substr($postingDate, 0, 7)) !== substr($postingDate, 0, 7)
+            || (string)($row['fiscal_year'] ?? substr($postingDate, 0, 4)) !== substr($postingDate, 0, 4)
+        )) {
+            $errors[] = $prefix . '制证日期与所属会计期间不一致';
+        }
         if (!$this->paymentRowHasTraceKey($row)) {
             $errors[] = $prefix . '票据号码、银行流水号、缴费单号、收款账号+金额至少填写一项用于追溯';
         }

@@ -9,7 +9,7 @@ namespace app\finance\service\casefund\returning;
  */
 class CaseFundUnknownRefundMatchService
 {
-    const RULE_SAME_MONTH_NAME_AMOUNT_ACCOUNT = 'SAME_MONTH_NAME_AMOUNT_ACCOUNT';
+    const RULE_SAME_MONTH_AMOUNT_ACCOUNT = 'SAME_MONTH_AMOUNT_ACCOUNT';
 
     const STATUS_INELIGIBLE = 'INELIGIBLE';
     const STATUS_UNMATCHED = 'UNMATCHED';
@@ -136,7 +136,6 @@ class CaseFundUnknownRefundMatchService
                 continue;
             }
             $key = $this->businessMatchKey(
-                $refund['actual_payee_name'] ?? '',
                 $refund['refund_amount'] ?? '',
                 $refund['payee_bank_account_no'] ?? ''
             );
@@ -155,7 +154,6 @@ class CaseFundUnknownRefundMatchService
                 continue;
             }
             $key = $this->businessMatchKey(
-                $unknown['payer_name'] ?? '',
                 $unknown['unknown_amount'] ?? '',
                 $unknown['payer_account_no'] ?? ''
             );
@@ -526,7 +524,7 @@ class CaseFundUnknownRefundMatchService
                 'account_set_id' => $this->accountSetId(),
                 'fiscal_year' => $this->currentYear(),
                 'period' => $period,
-                'match_rule' => self::RULE_SAME_MONTH_NAME_AMOUNT_ACCOUNT,
+                'match_rule' => self::RULE_SAME_MONTH_AMOUNT_ACCOUNT,
                 'decision_by' => null,
                 'decision_time' => null,
                 'del_flag' => 0,
@@ -678,17 +676,15 @@ class CaseFundUnknownRefundMatchService
             throw new \RuntimeException('缺少缴款人或付款账号的不明款不参与退汇匹配');
         }
         $unknownKey = $this->businessMatchKey(
-            $unknown['payer_name'] ?? '',
             $unknown['unknown_amount'] ?? '',
             $unknown['payer_account_no'] ?? ''
         );
         $refundKey = $this->businessMatchKey(
-            $refund['actual_payee_name'] ?? '',
             $refund['refund_amount'] ?? '',
             $refund['payee_bank_account_no'] ?? ''
         );
         if ($unknownKey === '' || $unknownKey !== $refundKey) {
-            throw new \RuntimeException('双方姓名、金额或账号已经不再满足严格匹配规则');
+            throw new \RuntimeException('双方金额或账号已经不再满足严格匹配规则');
         }
         if (!$this->datesCanBeReturn(
             $refund['refund_date'] ?? '',
@@ -706,15 +702,14 @@ class CaseFundUnknownRefundMatchService
             && $this->normalizeAccountNo($row['payer_account_no'] ?? '') !== '';
     }
 
-    protected function businessMatchKey($name, $amount, $accountNo)
+    protected function businessMatchKey($amount, $accountNo)
     {
-        $name = $this->normalizeName($name);
         $accountNo = $this->normalizeAccountNo($accountNo);
         $amountCents = $this->decimalToCents($amount);
-        if ($name === '' || $accountNo === '' || $amountCents <= 0) {
+        if ($accountNo === '' || $amountCents <= 0) {
             return '';
         }
-        return $name . '|' . $amountCents . '|' . $accountNo;
+        return $amountCents . '|' . $accountNo;
     }
 
     protected function normalizeName($value)

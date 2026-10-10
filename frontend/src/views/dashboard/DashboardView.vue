@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   Coin,
   CreditCard,
@@ -265,6 +265,8 @@ const load = async () => {
     auxMonitorAmount.value = null
   }
 }
+
+watch(() => context.period, load)
 
 onMounted(load)
 </script>

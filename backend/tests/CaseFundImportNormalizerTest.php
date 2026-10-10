@@ -169,6 +169,18 @@ foreach ($cellCases as $index => $cellCase) {
     );
 }
 
+$originalPrecision = ini_get('precision');
+ini_set('precision', '30');
+try {
+    importNormalizerAssertSame(
+        '123.45',
+        $normalizer->normalizeImportCellText(123.45),
+        'Numeric import cells should ignore PHP precision tails'
+    );
+} finally {
+    ini_set('precision', (string)$originalPrecision);
+}
+
 // 日期时间按生产 PRC 时区刻画 Excel serial、普通文本、宽松日期和非法值，并恢复进程原时区。
 $originalTimezone = date_default_timezone_get();
 date_default_timezone_set('PRC');

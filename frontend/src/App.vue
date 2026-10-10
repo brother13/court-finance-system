@@ -54,9 +54,15 @@
           </template>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:payment')" index="/case-fund/payments">缴费登记</el-menu-item>
           <el-menu-item v-if="context.hasPermission('menu:case_fund:refund')" index="/case-fund/refunds">出账查询</el-menu-item>
-          <el-menu-item v-if="context.hasPermission('menu:case_fund:bank_statement')" index="/case-fund/bank-statements">银行对账单</el-menu-item>
           <el-menu-item v-if="context.bizType === 'CASE_FUND' && context.hasPermission('menu:case_fund:unknown_payment')" index="/case-fund/unknown-payments">不明款</el-menu-item>
           <el-menu-item v-if="context.bizType === 'CASE_FUND' && context.hasPermission('menu:case_fund:distribution')" index="/case-fund/distributions">案款分配</el-menu-item>
+        </el-sub-menu>
+        <el-sub-menu v-if="fundBusinessMenuBizTypes.includes(context.bizType) && context.hasPermission('menu:case_fund:bank_statement')" index="/bank-reconciliation">
+          <template #title>
+            <el-icon><CreditCard /></el-icon>
+            <span>银行对账</span>
+          </template>
+          <el-menu-item index="/case-fund/bank-statements">银行对账单</el-menu-item>
         </el-sub-menu>
         <el-menu-item v-if="context.hasPermission('period:close')" index="/period/close">
           <el-icon><Calendar /></el-icon>
@@ -108,7 +114,19 @@
             <small>
               <span>{{ bizTypeLabel }}</span>
               <span>{{ context.year }}年</span>
-              <span>{{ context.period }} 期间</span>
+              <el-select
+                class="topbar-period-select"
+                :model-value="context.period"
+                aria-label="当前会计期间"
+                @change="handleGlobalPeriodChange"
+              >
+                <el-option
+                  v-for="period in globalPeriodOptions"
+                  :key="period"
+                  :label="`${period} 期间`"
+                  :value="period"
+                />
+              </el-select>
             </small>
           </div>
           <span class="topbar-divider" />
@@ -134,7 +152,7 @@
       </div>
       <el-main class="main">
         <router-view v-slot="{ Component }">
-          <KeepAlive include="VoucherListView,BankStatementView">
+          <KeepAlive include="VoucherListView,AuxBalanceView,CaseMovementDetailView,PaymentRegisterView,RefundRegisterView,UnknownPaymentView,DistributionView,BankStatementView">
             <component :is="Component" />
           </KeepAlive>
         </router-view>
@@ -150,7 +168,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Calendar, Close, Coin, DataLine, Expand, Fold, Grid, Key, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
+import { Calendar, Close, Coin, CreditCard, DataLine, Expand, Fold, Grid, Key, Notebook, Setting, SwitchButton, Tickets, UserFilled } from '@element-plus/icons-vue'
 import type { MenuInstance } from 'element-plus'
 import ForceChangePasswordDialog from './components/ForceChangePasswordDialog.vue'
 import { useContextStore } from './stores/context'
@@ -161,7 +179,7 @@ const router = useRouter()
 const context = useContextStore()
 const tabsStorageKey = 'court-finance-page-tabs'
 const bookMenuPermissions = ['menu:book:detail_ledger', 'menu:book:subject_balance', 'menu:book:subject_summary', 'menu:book:aux_balance', 'menu:book:case_movement_detail']
-const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:bank_statement', 'menu:case_fund:unknown_payment', 'menu:case_fund:distribution']
+const caseFundMenuPermissions = ['menu:case_fund:payment', 'menu:case_fund:refund', 'menu:case_fund:unknown_payment', 'menu:case_fund:distribution']
 const fundBusinessMenuBizTypes = ['CASE_FUND', 'LITIGATION_FEE']
 const baseMenuPermissions = ['menu:base:subject', 'menu:base:opening', 'menu:base:aux', 'menu:base:carry_forward']
 const systemMenuPermissions = ['menu:system:user', 'menu:system:role', 'menu:system:role_permission', 'menu:system:account_set', 'menu:system:audit_log']
@@ -212,6 +230,9 @@ const changePasswordDialogVisible = ref(false)
 const sidebarWidth = computed(() => sidebarCollapsed.value ? '64px' : '200px')
 const sidebarToggleTitle = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
+const globalPeriodOptions = computed(() =>
+  Array.from({ length: 12 }, (_, index) => `${context.year}-${String(index + 1).padStart(2, '0')}`)
+)
 const bizTypeLabel = computed(() => {
   const map: Record<string, string> = {
     CASE_FUND: '案款',
@@ -289,6 +310,10 @@ const switchAccountSet = () => {
 
 const openChangePasswordDialog = () => {
   changePasswordDialogVisible.value = true
+}
+
+const handleGlobalPeriodChange = (period: string) => {
+  context.setPeriod(period)
 }
 
 const toggleSidebar = () => {
