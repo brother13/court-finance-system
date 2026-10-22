@@ -1,5 +1,5 @@
 import { apiAction, apiBlobAction } from './http'
-import type { Voucher } from '../types/api'
+import type { Voucher, VoucherExportResult } from '../types/api'
 
 export const voucherApi = {
   nextNo(period: string) {
@@ -11,6 +11,9 @@ export const voucherApi = {
   },
   detail(period: string, voucherId: string) {
     return apiAction('/voucher/info', { period, voucher_id: voucherId }) as Promise<Voucher>
+  },
+  exportData(params: Record<string, any>) {
+    return apiAction<VoucherExportResult>('/voucher/exportData', params, {}, { timeout: 120000 })
   },
   saveDraft(payload: Voucher) {
     return apiAction('/voucher/draft', payload) as Promise<Voucher>

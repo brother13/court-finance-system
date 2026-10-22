@@ -101,6 +101,33 @@ export interface ManagedUser {
   account_set_ids?: string[]
 }
 
+export interface VoucherExportRow {
+  voucher_id: string
+  period: string
+  voucher_date: string
+  voucher_word: string
+  voucher_no: string
+  line_no: number
+  summary: string
+  subject_code: string
+  subject_name: string
+  aux_desc: string
+  debit_amount: string
+  credit_amount: string
+  attachment_count: number
+  prepared_by_name: string
+  audit_by_name: string
+  posted_by_name: string
+  status: string
+  printed_flag: string
+  source_type: string
+}
+
+export interface VoucherExportResult {
+  items: VoucherExportRow[]
+  voucher_count: number
+}
+
 export interface VoucherDetail {
   detailId?: string
   lineNo?: number

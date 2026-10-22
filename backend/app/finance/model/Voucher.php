@@ -28,6 +28,8 @@ class Voucher extends Common
                 return $this->getList($data);
             case 'info':
                 return $this->getInfo($data);
+            case 'exportData':
+                return $this->exportData($data);
             case 'draft':
                 return $this->saveVoucher($data, 'DRAFT');
             case 'add':
@@ -105,6 +107,81 @@ class Voucher extends Common
         return $this->ok(['items' => $rows, 'total' => $num], 'OK', $num);
     }
 
+    public function exportData($data = [])
+    {
+        foreach (['voucher:export', 'voucher:view'] as $permission) {
+            $auth = $this->requirePermission($permission);
+            if ($auth) {
+                return $auth;
+            }
+        }
+        $periodRange = $this->resolveVoucherListPeriodRange($data);
+        if (!$periodRange) {
+            return $this->error('会计期间不能为空');
+        }
+        $voucherIds = $this->voucherIdsByDetailFilters($periodRange, $data);
+        if (is_array($voucherIds) && empty($voucherIds)) {
+            return $this->ok(['items' => [], 'voucher_count' => 0], 'OK', 0);
+        }
+        // Reuse all list filters and SELF visibility, but never its pagination.
+        $vouchers = $this->buildVoucherListQuery(self::TABLE, $periodRange, $data, $voucherIds)
+            ->order('voucher_date asc, voucher_no asc, voucher_id asc')->select();
+        $this->fillUserDisplayNames($vouchers);
+        $items = $this->collectVoucherExportRows($vouchers, $periodRange);
+        return $this->ok(['items' => $items, 'voucher_count' => count($vouchers)], 'OK', count($items));
+    }
+
+    protected function collectVoucherExportRows($vouchers, $periodRange)
+    {
+        if (empty($vouchers)) {
+            return [];
+        }
+        $subjectMap = [];
+        foreach ($this->getdb('fin_subject')->where($this->accountWhere())->field('subject_code,subject_name')->select() as $subject) {
+            $subjectMap[(string)$subject['subject_code']] = (string)$subject['subject_name'];
+        }
+        $items = [];
+        // Bounded IN clauses and one detail query per chunk avoid per-voucher queries.
+        foreach (array_chunk($vouchers, 500) as $chunk) {
+            $where = $this->accountWhere();
+            $where['fiscal_year'] = $periodRange['year'];
+            $where['period'] = [['>=', $periodRange['start']], ['<=', $periodRange['end']]];
+            $where['voucher_id'] = ['in', array_column($chunk, 'voucher_id')];
+            $details = $this->getdb(self::TABLE_DETAIL)->where($where)->order('line_no asc, detail_id asc')->select();
+            $detailMap = [];
+            foreach ($details as $detail) {
+                $detailMap[(string)$detail['voucher_id']][] = $detail;
+            }
+            foreach ($chunk as $voucher) {
+                foreach ($detailMap[(string)$voucher['voucher_id']] ?? [] as $detail) {
+                    // Repeat the header on each row so Excel filtering remains unambiguous.
+                    $items[] = [
+                        'voucher_id' => (string)$voucher['voucher_id'],
+                        'period' => (string)$voucher['period'],
+                        'voucher_date' => (string)$voucher['voucher_date'],
+                        'voucher_word' => (string)($voucher['voucher_word'] ?? '记'),
+                        'voucher_no' => (string)$voucher['voucher_no'],
+                        'line_no' => (int)$detail['line_no'],
+                        'summary' => (string)($detail['summary'] ?? ''),
+                        'subject_code' => (string)($detail['subject_code'] ?? ''),
+                        'subject_name' => $subjectMap[(string)($detail['subject_code'] ?? '')] ?? '',
+                        'aux_desc' => (string)($detail['aux_desc'] ?? ''),
+                        'debit_amount' => $this->centsToDecimal($this->decimalToCents($detail['debit_amount'] ?? 0)),
+                        'credit_amount' => $this->centsToDecimal($this->decimalToCents($detail['credit_amount'] ?? 0)),
+                        'attachment_count' => (int)($voucher['attachment_count'] ?? 0),
+                        'prepared_by_name' => (string)($voucher['prepared_by_name'] ?? ''),
+                        'audit_by_name' => (string)($voucher['audit_by_name'] ?? ''),
+                        'posted_by_name' => (string)($voucher['posted_by_name'] ?? ''),
+                        'status' => (string)($voucher['status'] ?? ''),
+                        'printed_flag' => (string)($voucher['printed_flag'] ?? '0'),
+                        'source_type' => (string)($voucher['source_type'] ?? ''),
+                    ];
+                }
+            }
+        }
+        return $items;
+    }
+
     protected function resolveVoucherListPeriodRange($data)
     {
         $period = $data['period'] ?? input('param.period', '');
@@ -136,10 +213,34 @@ class Voucher extends Common
     protected function buildVoucherListQuery($table, $periodRange, $data, $voucherIds)
     {
         $query = $this->getdb($table)->where($this->buildVoucherHeaderWhere($periodRange, $data));
+        foreach (['prepared_by', 'audit_by', 'posted_by'] as $field) {
+            $keyword = trim((string)($data[$field] ?? ''));
+            if ($keyword === '') {
+                continue;
+            }
+            $condition = $this->voucherUserFilterCondition($keyword);
+            // A nested AND keeps the name filter separate from SELF ownership.
+            $query->where(function ($nested) use ($field, $condition) {
+                $nested->where([$field => $condition]);
+            });
+        }
         if (is_array($voucherIds)) {
             $query->where('voucher_id', 'in', $voucherIds);
         }
         return $query;
+    }
+
+    protected function voucherUserFilterCondition($keyword)
+    {
+        // Include historical/disabled users: their vouchers still display these names.
+        $userIds = $this->getdb('sys_user')
+            ->where('real_name|username|user_id', 'like', '%' . $keyword . '%')
+            ->column('user_id');
+        $like = ['like', '%' . $keyword . '%'];
+        if (empty($userIds)) {
+            return $like;
+        }
+        return [$like, ['in', array_values(array_unique($userIds))], 'or'];
     }
 
     protected function buildVoucherHeaderWhere($periodRange, $data)
@@ -177,17 +278,8 @@ class Voucher extends Common
         if (!empty($data['date_end'])) {
             $where['voucher_date'][] = ['<=', $data['date_end']];
         }
-        if (!empty($data['prepared_by'])) {
-            $where['prepared_by'] = ['like', '%' . trim($data['prepared_by']) . '%'];
-        }
         if ($this->currentViewScope() === 'SELF') {
             $where['prepared_by'] = $this->userid;
-        }
-        if (!empty($data['audit_by'])) {
-            $where['audit_by'] = ['like', '%' . trim($data['audit_by']) . '%'];
-        }
-        if (!empty($data['posted_by'])) {
-            $where['posted_by'] = ['like', '%' . trim($data['posted_by']) . '%'];
         }
         $redSourceTypes = ['RED', 'RED_REVERSAL', 'REVERSAL'];
         $sourceType = $data['source_type'] ?? '';
@@ -1526,8 +1618,20 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         $tableHeightMm = $this->voucherPrintTableHeightMm($accountSet);
         $headerHeightMm = 8;
         $totalRowHeightMm = 8;
-        $detailRowHeightMm = round(max(4, ($tableHeightMm - $headerHeightMm - $totalRowHeightMm) / max(1, (int)$lineCount)), 2);
-        $detailCellStyle = ' style="height: ' . $detailRowHeightMm . 'mm"';
+        $isMultiPage = ($page['page_count'] ?? 1) > 1;
+        $isLastPage = ($page['page_no'] ?? 1) === ($page['page_count'] ?? 1);
+        // Reserve the same space on every split page to keep detail rows aligned.
+        $grandTotalHeightMm = 8;
+        $summaryHeightMm = $isMultiPage ? $totalRowHeightMm + $grandTotalHeightMm : $grandTotalHeightMm;
+        // mPDF adds cell padding to explicit heights. Include that padding in
+        // the budget so the totals and signatures stay on the same sheet.
+        $summaryPaddingMm = $isMultiPage ? 6.6 : 4.4;
+        $detailRowHeightMm = ($tableHeightMm - $headerHeightMm - $summaryHeightMm - $summaryPaddingMm) / max(1, (int)$lineCount);
+        $denseRows = $detailRowHeightMm < 6;
+        $detailPaddingMm = $denseRows ? 0.6 : 2.2;
+        $detailCellHeightMm = round(max(2.4, $detailRowHeightMm - $detailPaddingMm), 2);
+        $detailCellStyle = ' style="height: ' . $detailCellHeightMm . 'mm'
+            . ($denseRows ? '; padding: 0.3mm 1mm; font-size: 8pt; line-height: 1;' : '') . '"';
         $totalCellStyle = ' style="height: ' . $totalRowHeightMm . 'mm"';
 
         $body = '';
@@ -1550,6 +1654,29 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         $voucherNo = ($voucher['voucher_word'] ?? '记') . '-' . ($voucher['voucher_no'] ?? '');
         if (($page['page_count'] ?? 1) > 1) {
             $voucherNo .= '(' . $page['page_no'] . '/' . $page['page_count'] . ')';
+        }
+
+        $totalsHtml = '';
+        if ($isMultiPage) {
+            $totalsHtml .= '<tr class="total-row"><td colspan="2"' . $totalCellStyle . '>'
+                . $this->voucherPrintTotalText('本页合计：', $debitCents, $creditCents, $accountSet) . '</td>'
+                . '<td class="amount"' . $totalCellStyle . '>' . $escape(number_format($debitCents / 100, 2, '.', ',')) . '</td>'
+                . '<td class="amount"' . $totalCellStyle . '>' . $escape(number_format($creditCents / 100, 2, '.', ',')) . '</td></tr>';
+        }
+        if ($isLastPage) {
+            $voucherDebitCents = 0;
+            $voucherCreditCents = 0;
+            foreach ($voucher['details'] ?? [] as $detail) {
+                $voucherDebitCents += $this->decimalToCents($detail['debit_amount'] ?? 0);
+                $voucherCreditCents += $this->decimalToCents($detail['credit_amount'] ?? 0);
+            }
+            $grandStyle = ' style="height: ' . $grandTotalHeightMm . 'mm"';
+            $totalsHtml .= '<tr class="total-row grand-total-row"><td colspan="2"' . $grandStyle . '>'
+                . $this->voucherPrintTotalText('凭证总合计：', $voucherDebitCents, $voucherCreditCents, $accountSet) . '</td>'
+                . '<td class="amount"' . $grandStyle . '>' . $escape(number_format($voucherDebitCents / 100, 2, '.', ',')) . '</td>'
+                . '<td class="amount"' . $grandStyle . '>' . $escape(number_format($voucherCreditCents / 100, 2, '.', ',')) . '</td></tr>';
+        } else {
+            $totalsHtml .= '<tr><td colspan="4" style="height: ' . $grandTotalHeightMm . 'mm; border: 0;"></td></tr>';
         }
 
         return '<div class="voucher-page">
@@ -1575,13 +1702,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         <th class="amount" style="height: ' . $headerHeightMm . 'mm">贷方金额</th>
       </tr>
     </thead>
-    <tbody>' . $body . '
-      <tr class="total-row">
-        <td class="summary"' . $totalCellStyle . '>合计：</td>
-        <td class="subject"' . $totalCellStyle . '></td>
-        <td class="amount"' . $totalCellStyle . '>' . $escape(number_format($debitCents / 100, 2, '.', ',')) . '</td>
-        <td class="amount"' . $totalCellStyle . '>' . $escape(number_format($creditCents / 100, 2, '.', ',')) . '</td>
-      </tr>
+    <tbody>' . $body . $totalsHtml . '
     </tbody>
   </table>
   <table class="footer" border="0" cellpadding="0" cellspacing="0">
@@ -1592,6 +1713,77 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
     </tr>
   </table>
 </div>';
+    }
+
+    protected function voucherPrintTotalText($label, $debitCents, $creditCents, $accountSet)
+    {
+        $amountText = $this->voucherPrintUppercaseMoney($debitCents);
+        if ($debitCents !== $creditCents) {
+            $amountText = '借方' . $amountText . '；贷方' . $this->voucherPrintUppercaseMoney($creditCents);
+        }
+        $text = $label . $amountText;
+        // The merged summary/subject cell holds the label and uppercase amount
+        // together. Fit long values before mPDF lays out the single line.
+        $maxWidth = strtoupper((string)($accountSet['paper_size'] ?? 'A5')) === 'A4' ? 90 : 60;
+        $fontSize = max(4, min(9, round(9 * $maxWidth / max(1, $this->voucherPrintDisplayWidth($text)), 2)));
+        return '<span style="font-size: ' . $fontSize . 'pt; white-space: nowrap; word-break: keep-all;">'
+            . htmlspecialchars($text, ENT_QUOTES, 'UTF-8') . '</span>';
+    }
+
+    protected function voucherPrintUppercaseMoney($cents)
+    {
+        $negative = $cents < 0 ? '负' : '';
+        $cents = abs((int)$cents);
+        $digits = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖'];
+        $units = ['', '拾', '佰', '仟'];
+        $groupUnits = ['', '万', '亿', '兆'];
+        $integer = intdiv($cents, 100);
+        $groups = [];
+        while ($integer > 0) {
+            $groups[] = $integer % 10000;
+            $integer = intdiv($integer, 10000);
+        }
+        $result = '';
+        $zero = false;
+        for ($index = count($groups) - 1; $index >= 0; $index--) {
+            $group = $groups[$index];
+            if ($group === 0) {
+                $zero = $result !== '';
+                continue;
+            }
+            if ($result !== '' && ($zero || $group < 1000)) {
+                $result .= '零';
+            }
+            $zero = false;
+            $groupText = '';
+            for ($position = 3; $position >= 0; $position--) {
+                $divisor = (int)pow(10, $position);
+                $digit = intdiv($group, $divisor) % 10;
+                if ($digit === 0) {
+                    $zero = $groupText !== '';
+                } else {
+                    $groupText .= ($zero ? '零' : '') . $digits[$digit] . $units[$position];
+                    $zero = false;
+                }
+            }
+            $result .= $groupText . $groupUnits[$index];
+            $zero = false;
+        }
+        $result = ($result === '' ? '零' : $result) . '元';
+        $jiao = intdiv($cents % 100, 10);
+        $fen = $cents % 10;
+        if ($jiao === 0 && $fen === 0) {
+            return $negative . $result . '整';
+        }
+        if ($jiao > 0) {
+            $result .= $digits[$jiao] . '角';
+        } elseif ($cents >= 100) {
+            $result .= '零';
+        }
+        if ($fen > 0) {
+            $result .= $digits[$fen] . '分';
+        }
+        return $negative . $result;
     }
 
     protected function voucherPrintSummaryStyle($summary)

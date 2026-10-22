@@ -63,7 +63,7 @@
             打印凭证
           </el-button>
           <el-dropdown v-if="hasBatchActions" trigger="click" @command="handleBatchCommand">
-            <el-button plain :icon="Operation" :loading="importing" size="small">
+            <el-button plain :icon="Operation" :loading="importing || exporting" size="small">
               批量操作
               <el-icon class="el-icon--right"><ArrowDown /></el-icon>
             </el-button>
@@ -86,6 +86,9 @@
                 </el-dropdown-item>
                 <el-dropdown-item v-if="context.hasPermission('voucher:import')" command="import">
                   批量导入
+                </el-dropdown-item>
+                <el-dropdown-item v-if="context.hasPermission('voucher:export')" command="export" :disabled="exporting || loading">
+                  批量导出
                 </el-dropdown-item>
                 <el-dropdown-item v-if="context.hasPermission('voucher:renumber')" command="renumber">
                   凭证号整理
@@ -126,13 +129,13 @@
         <span class="muted">共 {{ pageTotal }} 条记录</span>
       </div>
       <div class="panel-body compact">
-        <el-table v-loading="loading" :data="rows" height="100%" @row-dblclick="openDetail" @selection-change="handleSelectionChange">
+        <el-table v-loading="loading" :data="rows" height="100%" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="46" :selectable="canSelectRow" />
         <el-table-column prop="voucher_no" label="凭证号" width="92" align="left">
           <template #default="{ row }">
-            <span class="text-mono voucher-no-text">
+            <el-link type="primary" class="text-mono voucher-no-text" @click.stop="openDetail(row)">
               {{ row.voucher_word || '记' }}-{{ String(row.voucher_no).padStart(4, '0') }}
-            </span>
+            </el-link>
           </template>
         </el-table-column>
         <el-table-column prop="voucher_date" label="制单日期" width="112" align="left">
@@ -471,6 +474,7 @@ import { voucherApi } from '../../api/voucher'
 import { useContextStore } from '../../stores/context'
 import type { Subject } from '../../types/api'
 import * as XLSX from 'xlsx'
+import { buildVoucherExportWorkbook } from '../../utils/voucherExport'
 
 defineOptions({ name: 'VoucherListView' })
 
@@ -603,6 +607,7 @@ const periodRangeLabel = computed(() => {
 
 const showFundAuxFilters = computed(() => ['CASE_FUND', 'LITIGATION_FEE'].includes(context.bizType))
 const hasBatchActions = computed(() =>
+  context.hasPermission('voucher:export') ||
   context.hasPermission('voucher:audit') ||
   context.hasPermission('voucher:unaudit') ||
   context.hasPermission('voucher:post') ||
@@ -858,6 +863,26 @@ const printSelectedVouchers = async () => {
   }
 }
 
+const exporting = ref(false)
+const batchExport = async () => {
+  if (exporting.value) return
+  exporting.value = true
+  const { page: _page, pagesize: _pagesize, ...filters } = buildQueryParams()
+  try {
+    const result = await voucherApi.exportData(filters)
+    if (result.items.length === 0) {
+      ElMessage.warning('当前筛选条件下没有可导出的凭证明细')
+      return
+    }
+    XLSX.writeFile(buildVoucherExportWorkbook(result.items), `凭证明细_${filters.period_start}_${filters.period_end}.xlsx`)
+    ElMessage.success(`已导出 ${result.voucher_count} 张凭证，共 ${result.items.length} 条分录`)
+  } catch (error: any) {
+    ElMessage.error(error?.message || '导出凭证明细失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 const handleBatchCommand = (command: string | number | object) => {
   switch (command) {
     case 'audit':
@@ -877,6 +902,9 @@ const handleBatchCommand = (command: string | number | object) => {
       break
     case 'import':
       openImportDialog()
+      break
+    case 'export':
+      batchExport()
       break
     case 'renumber':
       openRenumberDialog()
