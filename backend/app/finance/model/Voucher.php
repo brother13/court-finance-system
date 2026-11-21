@@ -559,6 +559,7 @@ class Voucher extends Common
         Db::startTrans();
         try {
             $before = null;
+            $this->voucherNumberService()->lock($period);
             if ($isNew) {
                 $voucherId = uuid();
                 $customVoucherNo = isset($data['voucher_no']) ? (int)$data['voucher_no'] : null;
@@ -725,6 +726,9 @@ class Voucher extends Common
                 }
             }
 
+            if ($isNew && isset($customVoucherNo)) {
+                $this->voucherNumberService()->synchronize($period);
+            }
             $this->logAudit('VOUCHER', $voucherId, $isNew ? 'CREATE' : 'UPDATE', $before, $data);
             Db::commit();
         } catch (\Exception $e) {
@@ -1094,6 +1098,7 @@ class Voucher extends Common
         Db::startTrans();
         try {
             $deletedVoucherNumbers = [];
+            $this->voucherNumberService()->lock($period);
             foreach ($beforeRows as $voucher) {
                 $voucherId = $voucher['voucher_id'];
                 $deletedVoucherNumbers[] = (int)($voucher['voucher_no'] ?? 0);
@@ -1122,6 +1127,7 @@ class Voucher extends Common
                 $this->logAudit('VOUCHER', $voucherId, 'DELETE', $voucher, $auditAfter);
             }
             $this->evacuateSoftDeletedVoucherNoConflicts($period, $deletedVoucherNumbers);
+            $this->voucherNumberService()->synchronize($period);
             Db::commit();
         } catch (\Exception $e) {
             Db::rollback();
@@ -2094,6 +2100,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 
         Db::startTrans();
         try {
+            $this->voucherNumberService()->lock($period);
             $planResult = $this->buildVoucherRenumberPlan($period, $startNo, true);
             if ($planResult['code'] !== self::CODE_SUCCESS) {
                 Db::rollback();
@@ -2103,6 +2110,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             $plan = $planResult['data'];
             $items = $plan['items'];
             if (empty($items) || (int)($plan['change_count'] ?? 0) === 0) {
+                $this->voucherNumberService()->synchronize($period);
                 Db::commit();
                 return $this->ok([
                     'period' => $period,
@@ -2526,15 +2534,9 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         if ($period === '') {
             return $this->error('会计期间不能为空');
         }
-        $row = $this->getdb(self::TABLE_NO)->where([
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
-            'period' => $period,
-            'del_flag' => 0,
-        ])->find();
         return $this->ok([
             'period' => $period,
-            'voucher_no' => $row ? ((int)$row['current_no'] + 1) : 1,
+            'voucher_no' => $this->voucherNumberService()->peek($period),
         ]);
     }
 
@@ -2649,30 +2651,7 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 
     protected function nextVoucherNo($period)
     {
-        $where = [
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
-            'period' => $period,
-            'del_flag' => 0,
-        ];
-        $row = $this->getdb(self::TABLE_NO)->where($where)->lock(true)->find();
-        if (!$row) {
-            $data = [
-                'sequence_id' => uuid(),
-                'account_set_id' => $this->accountSetId,
-                'fiscal_year' => $this->fiscalYear($period),
-                'period' => $period,
-                'current_no' => 1,
-            ];
-            $this->fillCreate($data);
-            $this->getdb(self::TABLE_NO)->insert($data);
-            return 1;
-        }
-        $next = ((int)$row['current_no']) + 1;
-        $update = ['current_no' => $next];
-        $this->fillUpdate($update);
-        $this->getdb(self::TABLE_NO)->where(['sequence_id' => $row['sequence_id']])->update($update);
-        return $next;
+        return $this->voucherNumberService()->allocate($period, 1)[0];
     }
 
     public function importVouchers($data = [])
@@ -2690,9 +2669,6 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
         $success = 0;
         $failed = 0;
         $errors = [];
-        $maxNoByPeriod = [];
-
-        $this->prepareImportSoftDeletedVoucherNoConflicts($vouchers);
 
         foreach ($vouchers as $index => $voucherData) {
             $period = $voucherData['period'] ?? '';
@@ -2729,8 +2705,8 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             $voucherData['prepared_by'] = $preparedBy;
             $voucherData['audit_by'] = $auditBy;
 
-            $conflictsPrepared = $voucherNo !== null && $voucherNo > 0;
-            $result = $this->saveVoucher($voucherData, 'AUDITED', false, $conflictsPrepared);
+            // 在单张凭证事务中持序列锁后处理软删号避让，失败时与本张凭证一起回滚。
+            $result = $this->saveVoucher($voucherData, 'AUDITED', false);
             if ($result['code'] !== self::CODE_SUCCESS) {
                 $failed++;
                 $errors[] = '第' . ($index + 1) . '张凭证（' . $period . ' ' . $voucherWord . '-' . ($voucherNo ?? '?') . '）：' . $result['message'];
@@ -2739,15 +2715,6 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
 
             $success++;
 
-            if ($voucherNo !== null) {
-                if (!isset($maxNoByPeriod[$period]) || $voucherNo > $maxNoByPeriod[$period]) {
-                    $maxNoByPeriod[$period] = $voucherNo;
-                }
-            }
-        }
-
-        foreach ($maxNoByPeriod as $period => $maxNo) {
-            $this->updateVoucherNoSequence($period, $maxNo);
         }
 
         return $this->ok([
@@ -2775,48 +2742,6 @@ h1 { text-align: center; margin: 0 0 8px; font-size: 18pt; font-weight: bold; }
             ->find();
         $this->importUserIdCache[$name] = $user ? $user['user_id'] : $this->userid;
         return $this->importUserIdCache[$name];
-    }
-
-    protected function prepareImportSoftDeletedVoucherNoConflicts($vouchers)
-    {
-        $numbersByPeriod = [];
-        foreach ($vouchers as $voucherData) {
-            $period = trim((string)($voucherData['period'] ?? ''));
-            $voucherNo = isset($voucherData['voucher_no']) ? (int)$voucherData['voucher_no'] : 0;
-            if ($period === '' || $voucherNo <= 0) {
-                continue;
-            }
-            $numbersByPeriod[$period][$voucherNo] = true;
-        }
-        foreach ($numbersByPeriod as $period => $numberSet) {
-            $this->evacuateSoftDeletedVoucherNoConflicts($period, array_keys($numberSet));
-        }
-    }
-
-    protected function updateVoucherNoSequence($period, $maxNo)
-    {
-        $where = [
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
-            'period' => $period,
-            'del_flag' => 0,
-        ];
-        $row = $this->getdb(self::TABLE_NO)->where($where)->find();
-        if (!$row) {
-            $data = [
-                'sequence_id' => uuid(),
-                'account_set_id' => $this->accountSetId,
-                'fiscal_year' => $this->fiscalYear($period),
-                'period' => $period,
-                'current_no' => $maxNo,
-            ];
-            $this->fillCreate($data);
-            $this->getdb(self::TABLE_NO)->insert($data);
-        } elseif ((int)$row['current_no'] < $maxNo) {
-            $update = ['current_no' => $maxNo];
-            $this->fillUpdate($update);
-            $this->getdb(self::TABLE_NO)->where(['sequence_id' => $row['sequence_id']])->update($update);
-        }
     }
 
     protected function updateVoucherNoSequenceExact($period, $maxNo)

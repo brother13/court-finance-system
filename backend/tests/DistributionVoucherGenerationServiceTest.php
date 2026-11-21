@@ -232,6 +232,63 @@ distributionServiceAssertSame(
     'Distribution source rows should only update after voucher persistence succeeds'
 );
 
+$batchRows = [];
+$distributionTemplate = $dbs['fin_case_fund_distribution']->selectRows[0];
+foreach (['2026-07-14', '2026-07-15', '2026-08-03'] as $index => $batchDate) {
+    $batchRows[] = array_merge($distributionTemplate, [
+        'distribution_id' => 'distribution-batch-' . $index,
+        'distribution_no' => 'D-BATCH-' . $index,
+        'receive_date' => $batchDate,
+        'period' => substr($batchDate, 0, 7),
+    ]);
+}
+$dbs['fin_case_fund_distribution']->selectRows = $batchRows;
+foreach (['fin_voucher', 'fin_voucher_detail', 'fin_voucher_aux_value'] as $table) {
+    $dbs[$table] = new DistributionVoucherDbStub();
+}
+$batchCalls = [];
+$batchScalarCalls = 0;
+$batchHooks = $hooks;
+$batchHooks['generate_next_voucher_no'] = function () use (&$batchScalarCalls) {
+    $batchScalarCalls++;
+    return 1;
+};
+$batchHooks['generate_voucher_nos'] = function ($period, $count) use (&$batchCalls, &$dbs) {
+    $batchCalls[] = [$period, $count];
+    distributionServiceAssertSame(0, count($dbs['fin_voucher']->inserts), 'All distribution batches must allocate before the first voucher is persisted');
+    return $period === '2026-07' ? [4, 6] : [2];
+};
+$batchService = new DistributionVoucherGenerationService(
+    $resolver, $manager, $rule, new CaseFundVoucherPersistenceService($batchHooks),
+    $batchHooks, 'fin_case_fund_distribution', ['distribution_id']
+);
+$batchPrepared = $batchService->prepareGeneration(array_column($batchRows, 'distribution_id'));
+$batchResult = $batchService->generatePrepared($batchPrepared);
+distributionServiceAssertSame([['2026-07', 2], ['2026-08', 1]], $batchCalls, 'Distribution must allocate all missing numbers once per period in stable period order');
+distributionServiceAssertSame(0, $batchScalarCalls, 'Distribution batch allocation must not fall back to repeated scalar allocation');
+distributionServiceAssertSame([4, 6, 2], array_column($dbs['fin_voucher']->inserts, 'voucher_no'), 'Distribution plans must keep their order and consume distinct batch numbers including gaps');
+distributionServiceAssertSame([4, 6, 2], array_column($batchResult['vouchers'], 'voucher_no'), 'Distribution result numbers must match persisted voucher numbers');
+
+$dbs['fin_case_fund_distribution']->selectRows = array_slice($batchRows, 0, 2);
+foreach ([[4], [4, 4], [4, 0]] as $invalidNumbers) {
+    $dbs['fin_voucher']->inserts = [];
+    $invalidBatchHooks = $batchHooks;
+    $invalidBatchHooks['generate_voucher_nos'] = function () use ($invalidNumbers) { return $invalidNumbers; };
+    $invalidBatchService = new DistributionVoucherGenerationService(
+        $resolver, $manager, $rule, new CaseFundVoucherPersistenceService($invalidBatchHooks),
+        $invalidBatchHooks, 'fin_case_fund_distribution', ['distribution_id']
+    );
+    $invalidBatchPrepared = $invalidBatchService->prepareGeneration(array_column($dbs['fin_case_fund_distribution']->selectRows, 'distribution_id'));
+    try {
+        $invalidBatchService->generatePrepared($invalidBatchPrepared);
+        fwrite(STDERR, 'Distribution must reject incomplete, duplicate or nonpositive batch numbers' . PHP_EOL);
+        exit(1);
+    } catch (\RuntimeException $e) {
+        distributionServiceAssertSame('凭证批量取号结果无效', $e->getMessage(), 'Distribution invalid number batch should fail explicitly');
+    }
+    distributionServiceAssertSame(0, count($dbs['fin_voucher']->inserts), 'Invalid distribution number batches must fail before any voucher is persisted');
+}
+
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/DistributionVoucherGenerationService.php');
 foreach (['requirePermission', 'Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {
     if (strpos($source, $forbidden) !== false) {

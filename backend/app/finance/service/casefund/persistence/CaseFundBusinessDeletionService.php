@@ -8,10 +8,9 @@ namespace app\finance\service\casefund\persistence;
 class CaseFundBusinessDeletionService
 {
     protected $hooks;
-    protected $reconcileTable;
     protected $fieldsByBizType;
 
-    public function __construct(array $hooks, $reconcileTable, array $fieldsByBizType)
+    public function __construct(array $hooks, array $fieldsByBizType)
     {
         foreach ([
             'get_db',
@@ -28,7 +27,6 @@ class CaseFundBusinessDeletionService
             }
         }
         $this->hooks = $hooks;
-        $this->reconcileTable = $reconcileTable;
         $this->fieldsByBizType = $fieldsByBizType;
     }
 
@@ -51,14 +49,6 @@ class CaseFundBusinessDeletionService
         $deleteCheck = $this->callHook('assert_rows_can_delete', [$rows, $label]);
         if ($deleteCheck !== null) {
             return ['error' => $deleteCheck];
-        }
-        $reconcileCount = $this->db($this->reconcileTable)->where([
-            'account_set_id' => $this->callHook('account_set_id'),
-            'biz_type' => $bizType,
-            'del_flag' => 0,
-        ])->where('biz_id', 'in', $ids)->count();
-        if ((int)$reconcileCount > 0) {
-            return ['error' => '只能删除未对账的' . $label];
         }
         return [
             'rows' => $rows,
@@ -107,7 +97,7 @@ class CaseFundBusinessDeletionService
                 continue;
             }
             if ($status === 'GENERATED') {
-                return '案号【' . ($row['case_no'] ?? '') . '】的' . $label . '已生成凭证且原凭证仍有效，不允许删除';
+                return '案号【' . ($row['case_no'] ?? '') . '】的' . $label . '已生成凭证且原凭证仍有效，不允许删除，请先删除原凭证';
             }
             return '案号【' . ($row['case_no'] ?? '') . '】的' . $label . '制证状态为【' . $status . '】，不允许删除';
         }

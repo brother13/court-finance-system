@@ -4,6 +4,8 @@ namespace app\finance\model;
 
 use think\Db;
 
+require_once __DIR__ . '/../service/voucher/VoucherNumberService.php';
+
 class Common
 {
     const CODE_SUCCESS = 20000;
@@ -96,6 +98,18 @@ class Common
     protected function currentYear()
     {
         return (int)$this->year;
+    }
+
+    protected function voucherNumberService()
+    {
+        return new \app\finance\service\voucher\VoucherNumberService([
+            'get_db' => function ($table) { return $this->getdb($table); },
+            'account_set_id' => function () { return $this->accountSetId; },
+            'fiscal_year' => function ($period) { return $this->fiscalYear($period); },
+            'prepare_create' => function ($row) { $this->fillCreate($row); return $row; },
+            'prepare_update' => function ($row) { $this->fillUpdate($row); return $row; },
+            'new_id' => function () { return uuid(); },
+        ]);
     }
 
     protected function periodYear($period)

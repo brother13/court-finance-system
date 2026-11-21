@@ -124,7 +124,7 @@ function deletionConcurrencyService($store)
         'should_physical_delete' => function ($bizType) use (&$service) {
             return $service->shouldPhysicalDeleteCaseFundBusinessRows($bizType);
         },
-    ], 'reconcile', [
+    ], [
         'PAYMENT' => ['payment_id', 'case_no', 'voucher_status'],
     ]);
     return $service;
@@ -147,6 +147,17 @@ $prepared = $service->prepareBusinessDeletion(
 );
 if (!empty($prepared['error']) || empty($store->queries[0]['locked'])) {
     deletionConcurrencyFail('Deletion validation should lock selected source rows before checking status');
+}
+
+$store->rows['reconcile'] = [[
+    'reconcile_id' => 'REC-1',
+    'biz_type' => 'PAYMENT',
+    'biz_id' => 'P-1',
+    'match_status' => 'MATCHED',
+]];
+$reconciled = $service->prepareBusinessDeletion('business', 'payment_id', ['P-1'], 'PAYMENT', '缴费记录');
+if (!empty($reconciled['error'])) {
+    deletionConcurrencyFail('Reconciled ungenerated business must be deletable: ' . $reconciled['error']);
 }
 
 $store->rows['business'][0]['voucher_status'] = 'GENERATED';

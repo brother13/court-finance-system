@@ -920,12 +920,12 @@ const handleGenerateVoucherByQuery = async () => {
 
 const handleDeletePayments = async () => {
   if (selectedPaymentIds.value.length === 0) {
-    ElMessage.warning('请选择要删除的未制证缴费记录')
+    ElMessage.warning('请选择要删除的缴费记录')
     return
   }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedPaymentIds.value.length} 条缴费记录吗？已制证且原凭证仍有效、或已对账的数据不能删除。`,
+      `确定要删除选中的 ${selectedPaymentIds.value.length} 条缴费记录吗？已制证且原凭证仍有效的数据不能删除。删除已对账记录会使相关对账结果失效，银行流水保留，请重新对账。`,
       '确认删除缴费记录',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -935,7 +935,7 @@ const handleDeletePayments = async () => {
   deleting.value = true
   try {
     const result = await caseFundApi.deletePayments(selectedPaymentIds.value)
-    ElMessage.success(`已删除 ${result.deleted_count} 条缴费记录`)
+    ElMessage.success(`已删除 ${result.deleted_count} 条缴费记录；如已执行过银行对账，请重新对账`)
     selectedPaymentIds.value = []
     await load()
   } catch (e: any) {

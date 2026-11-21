@@ -443,16 +443,12 @@ const handleGenerateVoucher = async () => {
 
 const handleDeleteDistributions = async () => {
   if (selectedDistributionIds.value.length === 0) {
-    ElMessage.warning('请选择要删除的未制证案款分配记录')
-    return
-  }
-  if (selectedDistributionRows.value.some((row) => row.voucher_status !== 'UNGENERATED')) {
-    ElMessage.warning('已制证案款分配记录不能删除；如原凭证已删除，请使用生成凭证重新制证')
+    ElMessage.warning('请选择要删除的案款分配记录')
     return
   }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedDistributionIds.value.length} 条案款分配记录吗？已制证或已对账的数据不能删除。`,
+      `确定要删除选中的 ${selectedDistributionIds.value.length} 条案款分配记录吗？已制证且原凭证仍有效的数据不能删除。删除已对账记录会使相关对账结果失效，银行流水保留，请重新对账。`,
       '确认删除案款分配记录',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -462,7 +458,7 @@ const handleDeleteDistributions = async () => {
   deleting.value = true
   try {
     const result = await caseFundApi.deleteDistributions(selectedDistributionIds.value)
-    ElMessage.success(`已删除 ${result.deleted_count} 条案款分配记录`)
+    ElMessage.success(`已删除 ${result.deleted_count} 条案款分配记录；如已执行过银行对账，请重新对账`)
     selectedDistributionIds.value = []
     await load()
   } catch (e: any) {

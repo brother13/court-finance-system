@@ -162,6 +162,7 @@ class PaymentVoucherRuntimeState
 {
     public $guardSnapshots = [];
     public $voucherNoCalls = 0;
+    public $voucherNoBatchCalls = [];
     public $idSequence = 0;
     public $lockEvents = [];
     public $auxiliaryDetailCounts = [];
@@ -196,7 +197,7 @@ function paymentServiceAssertThrows($expectedMessage, $callback, $message)
     exit(1);
 }
 
-function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [], $failPersistence = false)
+function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $updateResults = [], $failPersistence = false, $batchNumbersByPeriod = null)
 {
     $policy = new CaseFundBusinessPolicy();
     $resolver = new PaymentVoucherResolverStub();
@@ -243,6 +244,14 @@ function paymentRuntimeFixture($lockedRows, $blockLockedGenerated = false, $upda
         'current_user_id' => function () { return 'user-1'; },
         'now' => function () { return '2026-07-14 12:00:00'; },
     ];
+    if ($batchNumbersByPeriod !== null) {
+        $hooks['generate_voucher_nos'] = function ($period, $count) use ($state, &$dbs, $batchNumbersByPeriod) {
+            $state->voucherNoBatchCalls[] = [$period, $count];
+            $state->lockEvents[] = 'voucher_no_batch:' . $period;
+            paymentServiceAssertSame(0, count($dbs['fin_voucher']->inserts), 'All payment batches must allocate before the first voucher is persisted');
+            return $batchNumbersByPeriod[$period];
+        };
+    }
     $persistence = $failPersistence
         ? new PaymentFailingPersistenceStub()
         : new CaseFundVoucherPersistenceService($hooks);
@@ -495,6 +504,44 @@ paymentServiceAssertSame(
     count($failedPersistenceDbs['fin_case_fund_payment']->updates),
     'Payment source rows should only update after voucher persistence succeeds'
 );
+
+$batchRows = [];
+foreach (['2026-08-03', '2026-07-15', '2026-07-14'] as $index => $batchDate) {
+    $batchRows[] = array_merge($initialRows[0], [
+        'payment_id' => 'payment-batch-' . $index,
+        'payment_date' => $batchDate,
+        'posting_date' => $batchDate,
+        'payment_method' => 'TRANSFER',
+        'voucher_status' => 'UNGENERATED',
+        'voucher_id' => null,
+    ]);
+}
+[$batchService, $batchDbs, $batchRule, $batchState] = paymentRuntimeFixture(
+    $batchRows, false, [], false, ['2026-07' => [4, 6], '2026-08' => [2]]
+);
+$batchPrepared = $batchService->prepareGeneration($batchRows, 'QUERY');
+$batchResult = $batchService->generatePrepared($batchPrepared);
+paymentServiceAssertSame([['2026-07', 2], ['2026-08', 1]], $batchState->voucherNoBatchCalls, 'Payment must allocate all missing numbers once per period in stable period order');
+paymentServiceAssertSame(0, $batchState->voucherNoCalls, 'Payment batch allocation must not fall back to repeated scalar allocation');
+paymentServiceAssertSame([4, 6, 2], array_column($batchDbs['fin_voucher']->inserts, 'voucher_no'), 'Payment plans must keep their order and consume distinct batch numbers including gaps');
+paymentServiceAssertSame([4, 6, 2], array_column($batchResult['vouchers'], 'voucher_no'), 'Payment result numbers must match persisted voucher numbers');
+paymentServiceAssertSame(['voucher_no_batch:2026-07', 'voucher_no_batch:2026-08', 'aux_archives'], $batchState->lockEvents, 'Payment batch number locks must precede all auxiliary preparation');
+
+$julyBatchRows = array_slice($batchRows, 1);
+foreach ([[4], [4, 4], [4, 0]] as $invalidNumbers) {
+    [$invalidBatchService, $invalidBatchDbs] = paymentRuntimeFixture(
+        $julyBatchRows, false, [], false, ['2026-07' => $invalidNumbers]
+    );
+    $invalidBatchPrepared = $invalidBatchService->prepareGeneration($julyBatchRows, 'QUERY');
+    paymentServiceAssertThrows(
+        '凭证批量取号结果无效',
+        function () use ($invalidBatchService, $invalidBatchPrepared) {
+            $invalidBatchService->generatePrepared($invalidBatchPrepared);
+        },
+        'Payment must reject incomplete, duplicate or nonpositive batch numbers'
+    );
+    paymentServiceAssertSame(0, count($invalidBatchDbs['fin_voucher']->inserts), 'Invalid payment number batches must fail before any voucher is persisted');
+}
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/PaymentVoucherGenerationService.php');
 foreach (['requirePermission', 'Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {

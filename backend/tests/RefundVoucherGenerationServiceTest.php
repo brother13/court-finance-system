@@ -139,6 +139,7 @@ class RefundVoucherRuntimeState
 {
     public $guardSnapshots = [];
     public $voucherNoCalls = 0;
+    public $voucherNoBatchCalls = [];
     public $idSequence = 0;
     public $lockEvents = [];
     public $auxiliaryDetailCounts = [];
@@ -179,7 +180,8 @@ function refundRuntimeFixture(
     $updateResults = [],
     $failPersistence = false,
     $skipConfirmedReturnFlag = false,
-    $confirmedRefundIds = []
+    $confirmedRefundIds = [],
+    $batchNumbersByPeriod = null
 )
 {
     $policy = new CaseFundBusinessPolicy();
@@ -233,6 +235,14 @@ function refundRuntimeFixture(
         'current_user_id' => function () { return 'user-1'; },
         'now' => function () { return '2026-07-14 12:00:00'; },
     ];
+    if ($batchNumbersByPeriod !== null) {
+        $hooks['generate_voucher_nos'] = function ($period, $count) use ($state, &$dbs, $batchNumbersByPeriod) {
+            $state->voucherNoBatchCalls[] = [$period, $count];
+            $state->lockEvents[] = 'voucher_no_batch:' . $period;
+            refundServiceAssertSame(0, count($dbs['fin_voucher']->inserts), 'All refund batches must allocate before the first voucher is persisted');
+            return $batchNumbersByPeriod[$period];
+        };
+    }
     $persistence = $failPersistence
         ? new RefundFailingPersistenceStub()
         : new CaseFundVoucherPersistenceService($hooks);
@@ -554,6 +564,42 @@ refundServiceAssertSame(
     count($failedPersistenceDbs['fin_case_fund_refund']->updates),
     'Refund source rows should only update after voucher persistence succeeds'
 );
+
+$batchRows = [];
+foreach (['2026-08-03', '2026-07-15', '2026-07-14'] as $index => $batchDate) {
+    $batchRows[] = array_merge($initialRows[0], [
+        'refund_id' => 'refund-batch-' . $index,
+        'refund_date' => $batchDate,
+        'voucher_status' => 'UNGENERATED',
+        'voucher_id' => null,
+    ]);
+}
+[$batchService, $batchDbs, $batchRule, $batchState] = refundRuntimeFixture(
+    $batchRows, false, [], false, false, [], ['2026-07' => [4, 6], '2026-08' => [2]]
+);
+$batchPrepared = $batchService->prepareGeneration($batchRows, 'QUERY');
+$batchResult = $batchService->generatePrepared($batchPrepared);
+refundServiceAssertSame([['2026-07', 2], ['2026-08', 1]], $batchState->voucherNoBatchCalls, 'Refund must allocate all missing numbers once per period in stable period order');
+refundServiceAssertSame(0, $batchState->voucherNoCalls, 'Refund batch allocation must not fall back to repeated scalar allocation');
+refundServiceAssertSame([4, 6, 2], array_column($batchDbs['fin_voucher']->inserts, 'voucher_no'), 'Refund plans must keep their order and consume distinct batch numbers including gaps');
+refundServiceAssertSame([4, 6, 2], array_column($batchResult['vouchers'], 'voucher_no'), 'Refund result numbers must match persisted voucher numbers');
+refundServiceAssertSame(['voucher_no_batch:2026-07', 'voucher_no_batch:2026-08', 'aux_archives'], $batchState->lockEvents, 'Refund batch number locks must precede all auxiliary preparation');
+
+$julyBatchRows = array_slice($batchRows, 1);
+foreach ([[4], [4, 4], [4, 0]] as $invalidNumbers) {
+    [$invalidBatchService, $invalidBatchDbs] = refundRuntimeFixture(
+        $julyBatchRows, false, [], false, false, [], ['2026-07' => $invalidNumbers]
+    );
+    $invalidBatchPrepared = $invalidBatchService->prepareGeneration($julyBatchRows, 'QUERY');
+    refundServiceAssertThrows(
+        '凭证批量取号结果无效',
+        function () use ($invalidBatchService, $invalidBatchPrepared) {
+            $invalidBatchService->generatePrepared($invalidBatchPrepared);
+        },
+        'Refund must reject incomplete, duplicate or nonpositive batch numbers'
+    );
+    refundServiceAssertSame(0, count($invalidBatchDbs['fin_voucher']->inserts), 'Invalid refund number batches must fail before any voucher is persisted');
+}
 
 $source = file_get_contents(__DIR__ . '/../app/finance/service/casefund/voucher/RefundVoucherGenerationService.php');
 foreach (['requirePermission', 'Db::startTrans', 'Db::commit', 'Db::rollback', 'logAudit'] as $forbidden) {

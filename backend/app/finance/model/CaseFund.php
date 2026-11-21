@@ -3041,36 +3041,7 @@ class CaseFund extends Common
 
     protected function generateNextVoucherNo($period)
     {
-        $where = [
-            'account_set_id' => $this->accountSetId,
-            'fiscal_year' => $this->fiscalYear($period),
-            'period' => $period,
-            'del_flag' => 0,
-        ];
-        $row = $this->getdb('fin_voucher_no_sequence')->where($where)->lock(true)->find();
-        if (!$row) {
-            $data = [
-                'sequence_id' => uuid(),
-                'account_set_id' => $this->accountSetId,
-                'fiscal_year' => $this->fiscalYear($period),
-                'period' => $period,
-                'current_no' => 1,
-                'created_by' => $this->userid,
-                'created_time' => $this->now(),
-                'updated_by' => $this->userid,
-                'updated_time' => $this->now(),
-                'version' => 0,
-            ];
-            $this->getdb('fin_voucher_no_sequence')->insert($data);
-            return 1;
-        }
-        $nextNo = (int)$row['current_no'] + 1;
-        $this->getdb('fin_voucher_no_sequence')->where($where)->update([
-            'current_no' => $nextNo,
-            'updated_by' => $this->userid,
-            'updated_time' => $this->now(),
-        ]);
-        return $nextNo;
+        return $this->voucherNumberService()->allocate($period, 1)[0];
     }
 
     protected function parsePaymentImportRowsFromXls($binary)
@@ -3211,6 +3182,8 @@ class CaseFund extends Common
     {
         Db::startTrans();
         try {
+            // 与自动对账按相同顺序先锁账套，避免删除后又写入指向旧业务的对账结果。
+            $this->bankingPersistenceService()->lockReconcileScope();
             $prepared = $this->businessDeletionService()->prepareBusinessDeletion(
                 $table,
                 $idField,
@@ -3234,14 +3207,17 @@ class CaseFund extends Common
                 }
                 $this->unknownRefundMatchService()->detachDeletedSources($entity, $ids);
             }
+            $reconcileInvalidation = $this->bankingPersistenceService()
+                ->invalidateBusinessReconcileResults($bizType, $ids);
             $this->businessDeletionService()->executeBusinessDeletion($table, $idField, $ids, $hardDelete);
             $this->logAudit($auditBizType, 'DELETE', 'DELETE', $rows, [
                 $idField . 's' => $ids,
                 'deleted_count' => count($rows),
                 'delete_mode' => $hardDelete ? 'PHYSICAL' : 'SOFT',
+                'bank_reconcile_invalidation' => $reconcileInvalidation,
             ]);
             Db::commit();
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Db::rollback();
             return $this->error('删除' . $label . '失败：' . $e->getMessage());
         }
@@ -3936,6 +3912,9 @@ class CaseFund extends Common
                     'generate_next_voucher_no' => function ($period) {
                         return $this->generateNextVoucherNo($period);
                     },
+                    'generate_voucher_nos' => function ($period, $count) {
+                        return $this->voucherNumberService()->allocate($period, $count);
+                    },
                     'ensure_aux_archives' => function ($detailsData) {
                         $this->voucherAuxiliaryService()->ensureArchivesForVoucherDetails($detailsData);
                     },
@@ -4004,6 +3983,9 @@ class CaseFund extends Common
                     'generate_next_voucher_no' => function ($period) {
                         return $this->generateNextVoucherNo($period);
                     },
+                    'generate_voucher_nos' => function ($period, $count) {
+                        return $this->voucherNumberService()->allocate($period, $count);
+                    },
                     'ensure_aux_archives' => function ($detailsData) {
                         $this->voucherAuxiliaryService()->ensureArchivesForVoucherDetails($detailsData);
                     },
@@ -4069,6 +4051,9 @@ class CaseFund extends Common
                     'generate_next_voucher_no' => function ($period) {
                         return $this->generateNextVoucherNo($period);
                     },
+                    'generate_voucher_nos' => function ($period, $count) {
+                        return $this->voucherNumberService()->allocate($period, $count);
+                    },
                     'ensure_aux_archives' => function ($detailsData) {
                         $this->voucherAuxiliaryService()->ensureArchivesForVoucherDetails($detailsData);
                     },
@@ -4132,6 +4117,9 @@ class CaseFund extends Common
                     },
                     'generate_next_voucher_no' => function ($period) {
                         return $this->generateNextVoucherNo($period);
+                    },
+                    'generate_voucher_nos' => function ($period, $count) {
+                        return $this->voucherNumberService()->allocate($period, $count);
                     },
                     'new_id' => function () {
                         return uuid();
@@ -4206,7 +4194,7 @@ class CaseFund extends Common
                 'should_physical_delete' => function ($bizType) {
                     return $this->shouldPhysicalDeleteCaseFundBusinessRows($bizType);
                 },
-            ], self::TABLE_BANK_RECONCILE, [
+            ], [
                 'PAYMENT' => self::PAYMENT_FIELD,
                 'REFUND' => self::REFUND_FIELD,
                 'UNKNOWN_PAYMENT' => self::UNKNOWN_PAYMENT_FIELD,

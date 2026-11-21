@@ -602,16 +602,12 @@ const handleGenerateVoucher = async () => {
 
 const handleDeleteUnknownPayments = async () => {
   if (selectedUnknownPaymentIds.value.length === 0) {
-    ElMessage.warning('请选择要删除的未制证不明款记录')
-    return
-  }
-  if (selectedUnknownPaymentRows.value.some((row) => row.voucher_status !== 'UNGENERATED')) {
-    ElMessage.warning('已制证不明款记录不能删除；如原凭证已删除，请使用生成凭证重新制证')
+    ElMessage.warning('请选择要删除的不明款记录')
     return
   }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedUnknownPaymentIds.value.length} 条不明款记录吗？已制证或已对账的数据不能删除。`,
+      `确定要删除选中的 ${selectedUnknownPaymentIds.value.length} 条不明款记录吗？已制证且原凭证仍有效的数据不能删除。删除已对账记录会使相关对账结果失效，银行流水保留，请重新对账。`,
       '确认删除不明款记录',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -621,7 +617,7 @@ const handleDeleteUnknownPayments = async () => {
   deleting.value = true
   try {
     const result = await caseFundApi.deleteUnknownPayments(selectedUnknownPaymentIds.value)
-    ElMessage.success(`已删除 ${result.deleted_count} 条不明款记录`)
+    ElMessage.success(`已删除 ${result.deleted_count} 条不明款记录；如已执行过银行对账，请重新对账`)
     selectedUnknownPaymentIds.value = []
     await load()
   } catch (e: any) {

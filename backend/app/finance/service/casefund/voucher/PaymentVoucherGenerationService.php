@@ -50,6 +50,9 @@ class PaymentVoucherGenerationService
                 throw new \InvalidArgumentException('缴费凭证生成服务缺少回调：' . $name);
             }
         }
+        if (array_key_exists('generate_voucher_nos', $hooks) && !is_callable($hooks['generate_voucher_nos'])) {
+            throw new \InvalidArgumentException('缴费凭证生成服务回调无效：generate_voucher_nos');
+        }
 
         $this->policy = $policy;
         $this->resolver = $resolver;
@@ -239,17 +242,35 @@ class PaymentVoucherGenerationService
             $allDetailsData = array_merge($allDetailsData, $detailsData);
         }
 
-        // 与通用凭证保存保持一致：先按期间稳定顺序取完本批凭证号，再准备辅助档案。
+        // 同期间所有计划一次取号；凭证尚未落库时，不能反复扫描同一个最小空号。
+        // 仍按期间稳定顺序先取完本批号码，再准备辅助档案。
         $planIndexesByPeriod = [];
         foreach ($voucherPlans as $index => $plan) {
             $planIndexesByPeriod[$plan['period']][] = $index;
         }
         ksort($planIndexesByPeriod, SORT_STRING);
         foreach ($planIndexesByPeriod as $period => $planIndexes) {
-            foreach ($planIndexes as $index) {
+            $voucherNos = null;
+            if (isset($this->hooks['generate_voucher_nos'])) {
+                $voucherNos = $this->callHook('generate_voucher_nos', [$period, count($planIndexes)]);
+                if (!is_array($voucherNos) || count($voucherNos) !== count($planIndexes)) {
+                    throw new \RuntimeException('凭证批量取号结果无效');
+                }
+                $voucherNos = array_values($voucherNos);
+                $usedNumbers = [];
+                foreach ($voucherNos as $voucherNo) {
+                    if (!is_int($voucherNo) || $voucherNo <= 0 || isset($usedNumbers[$voucherNo])) {
+                        throw new \RuntimeException('凭证批量取号结果无效');
+                    }
+                    $usedNumbers[$voucherNo] = true;
+                }
+            }
+            foreach ($planIndexes as $position => $index) {
                 $voucherPlans[$index]['fiscal_year'] = $this->callHook('fiscal_year', [$period]);
                 $voucherPlans[$index]['voucher_id'] = $this->newId();
-                $voucherPlans[$index]['voucher_no'] = $this->callHook('generate_next_voucher_no', [$period]);
+                $voucherPlans[$index]['voucher_no'] = $voucherNos === null
+                    ? $this->callHook('generate_next_voucher_no', [$period])
+                    : $voucherNos[$position];
             }
         }
         $this->callHook('ensure_aux_archives', [$allDetailsData]);

@@ -427,7 +427,7 @@ $deletion = new CaseFundBusinessDeletionService([
     'should_physical_delete' => function ($bizType) use (&$deletion) {
         return $deletion->shouldPhysicalDeleteCaseFundBusinessRows($bizType);
     },
-], 'delete_reconcile', [
+], [
     'PAYMENT' => ['payment_id', 'voucher_status'],
 ]);
 $prepared = $deletion->prepareBusinessDeletion('business', 'payment_id', ['payment-delete-1'], 'PAYMENT', '缴费记录');

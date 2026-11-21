@@ -100,6 +100,77 @@ class CaseFundBankingPersistenceService
         return (int)$affectedRows;
     }
 
+    /**
+     * 删除业务前撤销关联对账。调用方须持有账套锁和外层事务，并已通过凭证校验。
+     * 同一流水的所有旧候选共同失效，银行流水保留，等待用户重新对账。
+     */
+    public function invalidateBusinessReconcileResults($bizType, array $bizIds)
+    {
+        if (!in_array($bizType, ['PAYMENT', 'REFUND', 'UNKNOWN_PAYMENT', 'DISTRIBUTION'], true)
+            || empty($bizIds)
+        ) {
+            throw new \InvalidArgumentException('撤销业务对账的类型或ID不能为空');
+        }
+        $scope = [
+            'account_set_id' => $this->accountSetId(),
+            'fiscal_year' => $this->currentYear(),
+            'del_flag' => 0,
+        ];
+        $businessResults = $this->db($this->tables['reconcile'])->where($scope)
+            ->where('biz_type', $bizType)
+            ->where('biz_id', 'in', $bizIds)
+            ->lock(true)->select();
+        $reconcileRows = [];
+        $statementIds = [];
+        foreach ($businessResults as $row) {
+            $reconcileRows[(string)$row['reconcile_id']] = $row;
+            $statementId = trim((string)($row['statement_id'] ?? ''));
+            if ($statementId !== '') {
+                $statementIds[$statementId] = $statementId;
+            }
+        }
+
+        $currentStatementStatuses = [];
+        if (!empty($statementIds)) {
+            $statementIds = array_values($statementIds);
+            $statements = $this->db($this->tables['statement'])->where($scope)
+                ->where('statement_id', 'in', $statementIds)
+                ->field('statement_id,reconcile_status')->lock(true)->select();
+            if (count($statements) !== count($statementIds)) {
+                throw new \RuntimeException('关联银行流水不存在或已删除，请刷新后重试');
+            }
+            foreach ($statements as $statement) {
+                $statementId = (string)$statement['statement_id'];
+                $currentStatementStatuses[$statementId] = (string)$statement['reconcile_status'];
+            }
+            $statementResults = $this->db($this->tables['reconcile'])->where($scope)
+                ->where('statement_id', 'in', $statementIds)
+                ->lock(true)->select();
+            foreach ($statementResults as $row) {
+                $reconcileRows[(string)$row['reconcile_id']] = $row;
+            }
+        }
+
+        if (!empty($reconcileRows)) {
+            $update = $this->callHook('prepare_update', [['del_flag' => 1]]);
+            $affectedRows = $this->db($this->tables['reconcile'])->where($scope)
+                ->where('reconcile_id', 'in', array_keys($reconcileRows))->update($update);
+            if ((int)$affectedRows !== count($reconcileRows)) {
+                throw new \RuntimeException('关联银行对账结果状态已变化，请刷新后重试');
+            }
+        }
+        if (!empty($currentStatementStatuses)) {
+            $this->updateStatementStatuses(
+                array_fill_keys($statementIds, 'UNMATCHED'),
+                $currentStatementStatuses
+            );
+        }
+        return [
+            'reconcile_rows' => array_values($reconcileRows),
+            'statement_statuses' => $currentStatementStatuses,
+        ];
+    }
+
     public function persistReconcileResult(
         $dateStart,
         $dateEnd,
